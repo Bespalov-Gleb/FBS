@@ -1,0 +1,114 @@
+"""
+API endpoints для настроек печати (Диспетчер печати)
+"""
+from typing import Optional
+
+from fastapi import APIRouter, Depends
+from fastapi.responses import Response
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
+
+from app.core.database import get_db
+from app.core.dependencies import CurrentUser
+from app.models.print_settings import PrintSettings
+from app.models.user import User
+
+router = APIRouter(prefix="/print-settings", tags=["Print Settings"])
+
+
+class PrintSettingsResponse(BaseModel):
+    """Настройки печати"""
+    default_printer: Optional[str] = None
+    label_format: Optional[str] = None
+    label_template: Optional[str] = None
+    auto_print_on_click: Optional[bool] = None
+    auto_print_kiz_duplicate: Optional[bool] = None
+
+
+class PrintSettingsUpdate(BaseModel):
+    """Обновление настроек"""
+    default_printer: Optional[str] = None
+    label_format: Optional[str] = None
+    label_template: Optional[str] = None
+    auto_print_on_click: Optional[bool] = None
+    auto_print_kiz_duplicate: Optional[bool] = None
+
+
+@router.get("", response_model=PrintSettingsResponse)
+def get_print_settings(
+    db: Session = Depends(get_db),
+    current_user: User = CurrentUser,
+):
+    """Получить настройки печати"""
+    ps = db.query(PrintSettings).filter(
+        PrintSettings.user_id == current_user.id,
+    ).first()
+    if not ps:
+        return PrintSettingsResponse()
+    return PrintSettingsResponse(
+        default_printer=ps.default_printer,
+        label_format=ps.label_format,
+        label_template=ps.label_template,
+        auto_print_on_click=ps.auto_print_on_click == "true" if ps.auto_print_on_click else None,
+        auto_print_kiz_duplicate=ps.auto_print_kiz_duplicate == "true" if ps.auto_print_kiz_duplicate else None,
+    )
+
+
+@router.patch("", response_model=PrintSettingsResponse)
+def update_print_settings(
+    data: PrintSettingsUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = CurrentUser,
+):
+    """Обновить настройки печати"""
+    ps = db.query(PrintSettings).filter(
+        PrintSettings.user_id == current_user.id,
+    ).first()
+    if not ps:
+        ps = PrintSettings(user_id=current_user.id)
+        db.add(ps)
+        db.flush()
+    if data.default_printer is not None:
+        ps.default_printer = data.default_printer
+    if data.label_format is not None:
+        ps.label_format = data.label_format
+    if data.label_template is not None:
+        ps.label_template = data.label_template
+    if data.auto_print_on_click is not None:
+        ps.auto_print_on_click = "true" if data.auto_print_on_click else "false"
+    if data.auto_print_kiz_duplicate is not None:
+        ps.auto_print_kiz_duplicate = "true" if data.auto_print_kiz_duplicate else "false"
+    db.commit()
+    db.refresh(ps)
+    return PrintSettingsResponse(
+        default_printer=ps.default_printer,
+        label_format=ps.label_format,
+        label_template=ps.label_template,
+        auto_print_on_click=ps.auto_print_on_click == "true" if ps.auto_print_on_click else None,
+        auto_print_kiz_duplicate=ps.auto_print_kiz_duplicate == "true" if ps.auto_print_kiz_duplicate else None,
+    )
+
+
+@router.get("/test-label")
+def get_test_label(
+    current_user: User = CurrentUser,
+):
+    """
+    Тестовая этикетка для проверки печати.
+    Возвращает PNG с QR-кодом «ТЕСТ».
+    """
+    import io
+    import qrcode
+
+    qr = qrcode.QRCode(version=1, box_size=6, border=2)
+    qr.add_data("ТЕСТ")
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return Response(
+        content=buf.getvalue(),
+        media_type="image/png",
+        headers={"Content-Disposition": "inline; filename=test-label.png"},
+    )

@@ -1,0 +1,30 @@
+# Production override для docker-compose.yml
+# Запуск: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Перед запуском задайте VITE_API_URL в .env или при сборке:
+#   VITE_API_URL=https://yourdomain.com/api/v1
+
+services:
+  backend:
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2"
+    environment:
+      DEBUG: "false"
+      ENVIRONMENT: production
+    volumes:
+      - backend_logs:/app/logs
+
+  frontend:
+    profiles: []
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:8000/api/v1}
+    container_name: fbs_frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+
+volumes:
+  backend_logs:

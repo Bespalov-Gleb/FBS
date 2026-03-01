@@ -1,0 +1,107 @@
+import { useState } from 'react';
+import { Card, CardContent, Typography, Chip, Box } from '@mui/material';
+import type { Order } from '../../types/api';
+import { palette } from '../../theme/theme';
+import { getProductImageUrl } from '../../api/client';
+
+interface OrderCardProps {
+  order: Order;
+  onClick: () => void;
+}
+
+export default function OrderCard({ order, onClick }: OrderCardProps) {
+  const [imageError, setImageError] = useState(false);
+  const imageUrl = getProductImageUrl(order.product_image_url);
+  const displayId = order.posting_number || order.external_id || `#${order.id}`;
+  const isLockedByOther = order.is_locked_by_other;
+  const isLockedByMe = order.is_locked_by_me;
+  const isCompleted = order.status === 'completed';
+  const borderColor = order.warehouse_color || palette.sidebar.lighter;
+
+  return (
+    <Card
+      onClick={isLockedByOther ? undefined : onClick}
+      sx={{
+        cursor: isLockedByOther ? 'not-allowed' : 'pointer',
+        opacity: isLockedByOther ? 0.8 : 1,
+        borderLeft: 4,
+        borderLeftColor: borderColor,
+        '&:hover': isLockedByOther ? {} : { boxShadow: 2 },
+      }}
+    >
+      <CardContent sx={{ '&:last-child': { pb: 2 } }}>
+        <Box sx={{ display: 'flex', gap: 1.5, mb: 1 }}>
+          {imageUrl && !imageError && (
+            <Box
+              component="img"
+              src={imageUrl}
+              alt={order.product_name}
+              onError={() => setImageError(true)}
+              sx={{
+                width: 56,
+                height: 56,
+                objectFit: 'cover',
+                borderRadius: 1,
+                flexShrink: 0,
+              }}
+            />
+          )}
+          <Box sx={{ flex: 1, minWidth: 0 }}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <Typography variant="subtitle1" fontWeight={600} noWrap>
+                {displayId}
+              </Typography>
+              <Chip
+                label={isCompleted ? 'Собран' : 'New'}
+                size="small"
+                color={isCompleted ? 'success' : 'default'}
+                variant={isCompleted ? 'filled' : 'outlined'}
+              />
+            </Box>
+        <Typography variant="body1" color="text.primary">
+          {order.article}
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+          {order.product_name}
+        </Typography>
+        <Box sx={{ display: 'flex', gap: 1, mt: 1, flexWrap: 'wrap', alignItems: 'center' }}>
+          <Typography
+            variant="body2"
+            component="span"
+            sx={{ color: order.quantity >= 2 ? palette.accent.red : 'inherit', fontWeight: 500 }}
+          >
+            ×{order.quantity}
+          </Typography>
+          {order.warehouse_name && (
+            <Chip
+              label={order.warehouse_name}
+              size="small"
+              sx={{
+                bgcolor: order.warehouse_color || palette.sidebar.lighter,
+                color: '#fff',
+                fontSize: '0.75rem',
+              }}
+            />
+          )}
+          {order.marketplace_type && (
+            <Typography variant="caption" color="text.secondary">
+              {order.marketplace_type === 'ozon' ? 'Ozon' : order.marketplace_type === 'wildberries' ? 'WB' : order.marketplace_type}
+            </Typography>
+          )}
+        </Box>
+        {isLockedByOther && (
+          <Typography variant="caption" color="error" sx={{ display: 'block', mt: 1 }}>
+            Занят: {order.assigned_to_name}
+          </Typography>
+        )}
+        {isLockedByMe && (
+          <Typography variant="caption" color="success.main" sx={{ display: 'block', mt: 1 }}>
+            Вы работаете
+          </Typography>
+        )}
+          </Box>
+        </Box>
+      </CardContent>
+    </Card>
+  );
+}

@@ -1,0 +1,244 @@
+"""
+Репозиторий для работы с заказами
+"""
+from datetime import datetime
+from typing import Optional
+
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+
+from app.models.order import Order, OrderStatus
+
+
+class OrderRepository:
+    """CRUD операции для заказов"""
+
+    def __init__(self, db: Session):
+        self.db = db
+
+    def get_by_id(self, order_id: int) -> Optional[Order]:
+        """Получить заказ по ID"""
+        return self.db.query(Order).filter(Order.id == order_id).first()
+
+    def get_by_external_id(
+        self,
+        marketplace_id: int,
+        external_id: str,
+    ) -> Optional[Order]:
+        """Получить заказ по marketplace и external_id"""
+        return (
+            self.db.query(Order)
+            .filter(
+                Order.marketplace_id == marketplace_id,
+                Order.external_id == str(external_id),
+            )
+            .first()
+        )
+
+    def create(
+        self,
+        marketplace_id: int,
+        external_id: str,
+        posting_number: str,
+        article: str,
+        product_name: str,
+        quantity: int = 1,
+        warehouse_id: Optional[int] = None,
+        warehouse_name: Optional[str] = None,
+        marketplace_status: Optional[str] = None,
+        marketplace_created_at: Optional[datetime] = None,
+        metadata: Optional[dict] = None,
+    ) -> Order:
+        """Создать заказ"""
+        order = Order(
+            marketplace_id=marketplace_id,
+            external_id=str(external_id),
+            posting_number=posting_number,
+            article=article,
+            product_name=product_name,
+            quantity=quantity,
+            warehouse_id=warehouse_id,
+            warehouse_name=warehouse_name,
+            marketplace_status=marketplace_status,
+            marketplace_created_at=marketplace_created_at,
+            status=OrderStatus.AWAITING_PACKAGING,
+            extra_data=metadata,
+        )
+        self.db.add(order)
+        self.db.commit()
+        self.db.refresh(order)
+        return order
+
+    def get_list(
+        self,
+        user_id: int,
+        *,
+        skip: int = 0,
+        limit: int = 100,
+        marketplace_id: Optional[int] = None,
+        marketplace_type: Optional[str] = None,
+        warehouse_id: Optional[int] = None,
+        status: Optional[OrderStatus] = None,
+        article_search: Optional[str] = None,
+        sort_by: str = "marketplace_created_at",
+        sort_desc: bool = True,
+    ) -> list[Order]:
+        """Список заказов пользователя с фильтрами"""
+        from app.models.marketplace import Marketplace, MarketplaceType
+
+        query = (
+            self.db.query(Order)
+            .join(Marketplace)
+            .filter(Marketplace.user_id == user_id)
+            .filter(Order.status != OrderStatus.CANCELLED)
+        )
+        if marketplace_id:
+            query = query.filter(Order.marketplace_id == marketplace_id)
+        elif marketplace_type:
+            try:
+                mp_type = MarketplaceType(marketplace_type)
+                query = query.filter(Marketplace.type == mp_type)
+            except ValueError:
+                pass
+        if warehouse_id:
+            query = query.filter(Order.warehouse_id == warehouse_id)
+        if status:
+            query = query.filter(Order.status == status)
+        if article_search:
+            search = f"%{article_search}%"
+            query = query.filter(Order.article.ilike(search))
+        order_col = getattr(Order, sort_by, Order.marketplace_created_at)
+        if sort_desc:
+            query = query.order_by(order_col.desc())
+        else:
+            query = query.order_by(order_col.asc())
+        return query.offset(skip).limit(limit).all()
+
+    def get_list_count(
+        self,
+        user_id: int,
+        *,
+        marketplace_id: Optional[int] = None,
+        marketplace_type: Optional[str] = None,
+        warehouse_id: Optional[int] = None,
+        status: Optional[OrderStatus] = None,
+        article_search: Optional[str] = None,
+    ) -> int:
+        """Количество заказов по тем же фильтрам, что и get_list"""
+        from app.models.marketplace import Marketplace, MarketplaceType
+
+        query = (
+            self.db.query(func.count(Order.id))
+            .join(Marketplace)
+            .filter(Marketplace.user_id == user_id)
+            .filter(Order.status != OrderStatus.CANCELLED)
+        )
+        if marketplace_id:
+            query = query.filter(Order.marketplace_id == marketplace_id)
+        elif marketplace_type:
+            try:
+                mp_type = MarketplaceType(marketplace_type)
+                query = query.filter(Marketplace.type == mp_type)
+            except ValueError:
+                pass
+        if warehouse_id:
+            query = query.filter(Order.warehouse_id == warehouse_id)
+        if status:
+            query = query.filter(Order.status == status)
+        if article_search:
+            search = f"%{article_search}%"
+            query = query.filter(Order.article.ilike(search))
+        return query.scalar() or 0
+
+    def get_stats(self, user_id: int) -> dict:
+        """
+        Общая статистика по заказам пользователя.
+        Заказы считаются только из маркетплейсов пользователя.
+        """
+        from app.models.marketplace import Marketplace
+
+        base = (
+            self.db.query(Order)
+            .join(Marketplace, Order.marketplace_id == Marketplace.id)
+            .filter(Marketplace.user_id == user_id)
+        )
+        today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+
+        total = base.count()
+        on_assembly = base.filter(Order.status != OrderStatus.COMPLETED).count()
+        completed = base.filter(Order.status == OrderStatus.COMPLETED).count()
+        completed_today = (
+            base.filter(Order.status == OrderStatus.COMPLETED)
+            .filter(Order.completed_at >= today_start)
+            .count()
+        )
+
+        # По маркетплейсам: отдельно total и completed для надёжности
+        completed_counts = (
+            self.db.query(Order.marketplace_id, func.count(Order.id).label("cnt"))
+            .join(Marketplace, Order.marketplace_id == Marketplace.id)
+            .filter(Marketplace.user_id == user_id)
+            .filter(Order.status == OrderStatus.COMPLETED)
+            .group_by(Order.marketplace_id)
+            .all()
+        )
+        completed_by_mp = {r.marketplace_id: r.cnt for r in completed_counts}
+
+        mp_stats = (
+            self.db.query(
+                Marketplace.id,
+                Marketplace.name,
+                Marketplace.type,
+                func.count(Order.id).label("total"),
+            )
+            .join(Order, Order.marketplace_id == Marketplace.id)
+            .filter(Marketplace.user_id == user_id)
+            .group_by(Marketplace.id, Marketplace.name, Marketplace.type)
+            .all()
+        )
+        by_marketplace = [
+            {
+                "marketplace_id": r.id,
+                "name": r.name,
+                "type": r.type.value if r.type else None,
+                "total": r.total or 0,
+                "completed": completed_by_mp.get(r.id, 0),
+            }
+            for r in mp_stats
+        ]
+
+        return {
+            "total": total,
+            "on_assembly": on_assembly,
+            "completed": completed,
+            "completed_today": completed_today,
+            "by_marketplace": by_marketplace,
+        }
+
+    def release_order(self, order: Order) -> None:
+        """Освободить заказ (закрыть окно без «Собрано»)"""
+        order.release()
+        self.db.commit()
+        self.db.refresh(order)
+
+    def update_from_marketplace(
+        self,
+        order: Order,
+        *,
+        status: Optional[str] = None,
+        warehouse_id: Optional[int] = None,
+        warehouse_name: Optional[str] = None,
+        metadata: Optional[dict] = None,
+    ) -> Order:
+        """Обновить заказ данными из маркетплейса"""
+        if status:
+            order.marketplace_status = status
+        if warehouse_id is not None:
+            order.warehouse_id = warehouse_id
+        if warehouse_name is not None:
+            order.warehouse_name = warehouse_name
+        if metadata is not None:
+            order.extra_data = metadata
+        self.db.commit()
+        self.db.refresh(order)
+        return order

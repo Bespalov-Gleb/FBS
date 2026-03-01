@@ -1,0 +1,147 @@
+# FBS — полный стек: frontend, backend, postgres, redis, celery
+# Запуск: docker compose up -d
+# Автосинхронизация заказов: celery-beat каждые 5 мин, celery-worker выполняет задачи
+# Frontend: http://localhost:5173
+# Backend API: http://localhost:8000
+#
+# Для production создайте .env в корне и задайте SECRET_KEY, ENCRYPTION_KEY,
+# POSTGRES_PASSWORD, BACKEND_CORS_ORIGINS, VITE_API_URL и т.д.
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: fbs_postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-fbs_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fbs_password}
+      POSTGRES_DB: ${POSTGRES_DB:-fbs_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fbs_user -d fbs_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: fbs_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: docker/Dockerfile
+    container_name: fbs_backend
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+    environment:
+      DEBUG: ${DEBUG:-true}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      POSTGRES_SERVER: postgres
+      POSTGRES_USER: ${POSTGRES_USER:-fbs_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fbs_password}
+      POSTGRES_DB: ${POSTGRES_DB:-fbs_db}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://fbs_user:fbs_password@postgres:5432/fbs_db}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/1}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/2}
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-key-change-in-production}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-8O_9cAwoS1hXb3W4_uJ86vr0HwgH0OXunrywgTbcv_U=}
+      BACKEND_CORS_ORIGINS: ${BACKEND_CORS_ORIGINS:-["http://localhost:5173","http://127.0.0.1:5173"]}
+      FIRST_SUPERUSER_EMAIL: ${FIRST_SUPERUSER_EMAIL:-admin@fbs.example}
+      FIRST_SUPERUSER_PASSWORD: ${FIRST_SUPERUSER_PASSWORD:-admin123}
+      FIRST_SUPERUSER_FULLNAME: ${FIRST_SUPERUSER_FULLNAME:-System Administrator}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/app:/app/app
+      - ./backend/logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  celery-worker:
+    build:
+      context: ./backend
+      dockerfile: docker/Dockerfile
+    container_name: fbs_celery_worker
+    command: celery -A app.core.celery_app worker --loglevel=info --concurrency=2
+    environment:
+      DEBUG: ${DEBUG:-true}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      POSTGRES_SERVER: postgres
+      POSTGRES_USER: ${POSTGRES_USER:-fbs_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fbs_password}
+      POSTGRES_DB: ${POSTGRES_DB:-fbs_db}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://fbs_user:fbs_password@postgres:5432/fbs_db}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/1}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/2}
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-key-change-in-production}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-8O_9cAwoS1hXb3W4_uJ86vr0HwgH0OXunrywgTbcv_U=}
+    volumes:
+      - ./backend/app:/app/app
+      - ./backend/logs:/app/logs
+    depends_on:
+      backend:
+        condition: service_started
+      redis:
+        condition: service_healthy
+
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: docker/Dockerfile
+    container_name: fbs_celery_beat
+    command: celery -A app.core.celery_app beat --loglevel=info
+    environment:
+      DEBUG: ${DEBUG:-true}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      POSTGRES_SERVER: postgres
+      POSTGRES_USER: ${POSTGRES_USER:-fbs_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fbs_password}
+      POSTGRES_DB: ${POSTGRES_DB:-fbs_db}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://fbs_user:fbs_password@postgres:5432/fbs_db}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/1}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/2}
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-key-change-in-production}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-8O_9cAwoS1hXb3W4_uJ86vr0HwgH0OXunrywgTbcv_U=}
+    volumes:
+      - ./backend/app:/app/app
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  frontend:
+    profiles:
+      - full  # frontend собирается только при: docker compose --profile full up
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    container_name: fbs_frontend
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      VITE_API_URL: http://localhost:8000/api/v1
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+  redis_data:
