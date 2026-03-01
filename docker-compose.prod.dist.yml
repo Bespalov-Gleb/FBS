@@ -1,0 +1,17 @@
+# Production с готовым dist (без сборки frontend в Docker)
+# Использование:
+#   docker-compose -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.prod.dist.yml up -d
+#
+# Локально: cd frontend && VITE_API_URL=https://yourdomain.com/api/v1 npm run build
+# На сервер: scp -r dist root@SERVER:~/FBS/frontend/
+
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod.dist
+    container_name: fbs_frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend

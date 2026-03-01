@@ -139,6 +139,25 @@ PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple docker-compose -f docker-
 docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
 
+**4.1a Деплой с готовым dist (если сборка на сервере тормозит/OOM):**
+
+Соберите frontend локально и скопируйте `dist` на сервер:
+
+```bash
+# 1. Локально (в PowerShell или bash)
+cd frontend
+npm ci
+$env:VITE_API_URL="https://fbs-upakovka.ru/api/v1"; npm run build   # PowerShell
+# или: VITE_API_URL=https://fbs-upakovka.ru/api/v1 npm run build   # bash
+
+# 2. Копирование на сервер
+scp -r dist root@72.56.85.171:~/FBS/frontend/
+
+# 3. На сервере
+cd ~/FBS
+docker-compose -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.prod.dist.yml up -d --build
+```
+
 ### 4.2 Запуск в dev-режиме
 
 ```bash
