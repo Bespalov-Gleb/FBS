@@ -142,11 +142,11 @@ docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ### 4.2 Запуск в dev-режиме
 
 ```bash
-# Только backend, postgres, redis
+# Полный стек (backend, frontend, postgres, redis, celery)
 docker compose up -d
 
-# С frontend (Vite dev-сервер)
-docker compose --profile full up -d
+# Только backend, postgres, redis (без frontend)
+docker compose up -d postgres redis backend celery-worker celery-beat
 ```
 
 **Доступ (production):**

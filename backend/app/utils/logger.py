@@ -73,24 +73,26 @@ def setup_logging() -> logging.Logger:
         datefmt="%Y-%m-%d %H:%M:%S"
     )
     
-    # Console handler
+    # Console handler (всегда)
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(getattr(logging, settings.LOG_LEVEL.upper()))
     console_handler.setFormatter(formatter)
     root_logger.addHandler(console_handler)
     
-    # File handler для всех логов
-    file_handler = logging.FileHandler(settings.LOG_FILE_PATH, encoding="utf-8")
-    file_handler.setLevel(logging.INFO)
-    file_handler.setFormatter(formatter)
-    root_logger.addHandler(file_handler)
-    
-    # File handler для ошибок
-    error_log_path = log_path.parent / "error.log"
-    error_handler = logging.FileHandler(error_log_path, encoding="utf-8")
-    error_handler.setLevel(logging.ERROR)
-    error_handler.setFormatter(formatter)
-    root_logger.addHandler(error_handler)
+    # File handlers — опционально (если Permission denied — только stdout)
+    try:
+        file_handler = logging.FileHandler(settings.LOG_FILE_PATH, encoding="utf-8")
+        file_handler.setLevel(logging.INFO)
+        file_handler.setFormatter(formatter)
+        root_logger.addHandler(file_handler)
+
+        error_log_path = log_path.parent / "error.log"
+        error_handler = logging.FileHandler(error_log_path, encoding="utf-8")
+        error_handler.setLevel(logging.ERROR)
+        error_handler.setFormatter(formatter)
+        root_logger.addHandler(error_handler)
+    except (PermissionError, OSError):
+        pass  # логи только в stdout
     
     # Создание логгера приложения
     app_logger = logging.getLogger("app")

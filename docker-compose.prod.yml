@@ -14,7 +14,6 @@ services:
       - backend_logs:/app/logs
 
   frontend:
-    profiles: []
     build:
       context: ./frontend
       dockerfile: Dockerfile.prod

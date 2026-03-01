@@ -98,7 +98,7 @@ services:
       FIRST_SUPERUSER_FULLNAME: ${FIRST_SUPERUSER_FULLNAME:-System Administrator}
     volumes:
       - ./backend/app:/app/app
-      - ./backend/logs:/app/logs
+      - celery_worker_logs:/app/logs
     depends_on:
       backend:
         condition: service_started
@@ -135,8 +135,6 @@ services:
         condition: service_healthy
 
   frontend:
-    profiles:
-      - full  # frontend собирается только при: docker compose --profile full up
     build:
       context: ./frontend
       dockerfile: Dockerfile.dev
@@ -155,3 +153,4 @@ volumes:
   postgres_data:
   redis_data:
   celery_beat_schedule:
+  celery_worker_logs:
