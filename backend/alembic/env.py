@@ -28,7 +28,9 @@ from app.models import (  # noqa: F401
 config = context.config
 
 # Установка DATABASE_URL из настроек приложения
-config.set_main_option("sqlalchemy.url", settings.database_url_sync)
+# Экранируем % для ConfigParser (иначе %25, %21 в пароле вызывают "invalid interpolation")
+db_url = settings.database_url_sync.replace("%", "%%")
+config.set_main_option("sqlalchemy.url", db_url)
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.

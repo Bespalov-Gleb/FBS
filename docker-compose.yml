@@ -42,6 +42,8 @@ services:
     build:
       context: ./backend
       dockerfile: docker/Dockerfile
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-}
     container_name: fbs_backend
     command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
     environment:
@@ -91,6 +93,9 @@ services:
       CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/2}
       SECRET_KEY: ${SECRET_KEY:-dev-secret-key-change-in-production}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:-8O_9cAwoS1hXb3W4_uJ86vr0HwgH0OXunrywgTbcv_U=}
+      FIRST_SUPERUSER_EMAIL: ${FIRST_SUPERUSER_EMAIL:-admin@fbs.example}
+      FIRST_SUPERUSER_PASSWORD: ${FIRST_SUPERUSER_PASSWORD:-admin123}
+      FIRST_SUPERUSER_FULLNAME: ${FIRST_SUPERUSER_FULLNAME:-System Administrator}
     volumes:
       - ./backend/app:/app/app
       - ./backend/logs:/app/logs
@@ -119,6 +124,9 @@ services:
       CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/2}
       SECRET_KEY: ${SECRET_KEY:-dev-secret-key-change-in-production}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:-8O_9cAwoS1hXb3W4_uJ86vr0HwgH0OXunrywgTbcv_U=}
+      FIRST_SUPERUSER_EMAIL: ${FIRST_SUPERUSER_EMAIL:-admin@fbs.example}
+      FIRST_SUPERUSER_PASSWORD: ${FIRST_SUPERUSER_PASSWORD:-admin123}
+      FIRST_SUPERUSER_FULLNAME: ${FIRST_SUPERUSER_FULLNAME:-System Administrator}
     volumes:
       - ./backend/app:/app/app
     depends_on:

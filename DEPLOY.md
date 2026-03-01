@@ -125,6 +125,18 @@ FIRST_SUPERUSER_FULLNAME=Administrator
 # VITE_API_URL=https://yourdomain.com/api/v1
 
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+# или docker-compose (v1):
+docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+```
+
+**При таймаутах pypi.org** (ReadTimeoutError) добавьте в `.env`:
+```env
+PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+```
+Или выполните сборку с зеркалом:
+```bash
+PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple docker-compose -f docker-compose.yml -f docker-compose.prod.yml build --no-cache
+docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
 
 ### 4.2 Запуск в dev-режиме

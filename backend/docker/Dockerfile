@@ -1,7 +1,11 @@
 # Multi-stage build для оптимизации размера образа
 
 # Stage 1: Builder
+# При таймаутах pypi.org: docker build --build-arg PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple .
 FROM python:3.11-slim AS builder
+
+ARG PIP_INDEX_URL
+RUN if [ -n "${PIP_INDEX_URL}" ]; then pip config set global.index-url "${PIP_INDEX_URL}"; fi
 
 # Установка системных зависимостей для сборки
 RUN apt-get update && apt-get install -y \
@@ -10,8 +14,12 @@ RUN apt-get update && apt-get install -y \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# Увеличенный таймаут для медленных сетей (pypi.org)
+ENV PIP_DEFAULT_TIMEOUT=120
+ENV PIP_RETRIES=5
+
 # Установка Poetry
-RUN pip install poetry==1.7.1
+RUN pip install --default-timeout=120 poetry==1.7.1
 
 # Копирование файлов зависимостей
 WORKDIR /app
