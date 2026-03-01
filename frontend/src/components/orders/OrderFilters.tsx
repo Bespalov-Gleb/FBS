@@ -107,7 +107,7 @@ export default function OrderFilters({
           label="Склад"
           onChange={(e) => {
             const v = e.target.value;
-            onChange({ ...filters, warehouse_id: v === '' ? '' : Number(v) });
+            onChange({ ...filters, warehouse_id: String(v) === '' ? '' : Number(v) });
           }}
         >
           <MenuItem value="">Все</MenuItem>
