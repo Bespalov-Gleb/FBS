@@ -129,6 +129,7 @@ services:
       FIRST_SUPERUSER_FULLNAME: ${FIRST_SUPERUSER_FULLNAME:-System Administrator}
     volumes:
       - ./backend/app:/app/app
+      - celery_beat_schedule:/app/logs
     depends_on:
       redis:
         condition: service_healthy
@@ -153,3 +154,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  celery_beat_schedule:

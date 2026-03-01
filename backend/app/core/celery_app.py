@@ -18,6 +18,7 @@ celery_app.conf.update(
     timezone="UTC",
     enable_utc=True,
     task_track_started=True,
+    beat_schedule_filename="/app/logs/celerybeat-schedule",  # записываемая директория (избегаем Permission denied)
     beat_schedule={
         "sync-orders-every-10-min": {
             "task": "app.tasks.sync_tasks.sync_all_marketplaces",
