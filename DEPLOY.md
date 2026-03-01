@@ -301,3 +301,23 @@ docker compose up -d
 
 ### CORS-ошибки в браузере
 - Добавьте домен frontend в `BACKEND_CORS_ORIGINS` в `.env`
+
+### Сборка падает с `Killed` (exit code 137)
+**Причина:** OOM Killer — нехватка RAM при сборке Docker-образа.
+
+**Решение 1 — добавить swap (рекомендуется):**
+```bash
+# Создать swap-файл 2 GB
+sudo fallocate -l 2G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+
+# Сделать постоянным (добавить в /etc/fstab)
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+
+# Проверка
+free -h
+```
+
+**Решение 2:** Dockerfile уже упрощён (без gcc/g++/libpq-dev) — все пакеты используют wheels. Если всё равно падает, добавьте swap.
