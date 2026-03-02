@@ -125,11 +125,6 @@ export default function Sidebar() {
           </ListItemButton>
         ))}
       </List>
-      <Box sx={{ p: 2 }}>
-        <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.7)' }}>
-          © 2024 FBS
-        </Typography>
-      </Box>
     </Drawer>
   );
 }
