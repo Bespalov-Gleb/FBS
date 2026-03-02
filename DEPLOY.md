@@ -214,21 +214,41 @@ location / {
 
 ## 6. SSL-сертификаты (HTTPS)
 
-### Вариант 1: Let's Encrypt (Certbot)
+### Let's Encrypt (Certbot) для fbs-upakovka.ru
 
+**Шаг 1.** Создать директорию для ACME challenge:
 ```bash
-sudo apt install certbot -y
-sudo certbot certonly --standalone -d yourdomain.com
-# Сертификаты: /etc/letsencrypt/live/yourdomain.com/
+sudo mkdir -p /var/www/certbot
 ```
 
-Скопируйте в `backend/docker/ssl/`:
+**Шаг 2.** Временно использовать конфиг с поддержкой webroot:
 ```bash
-sudo cp /etc/letsencrypt/live/yourdomain.com/fullchain.pem backend/docker/ssl/cert.pem
-sudo cp /etc/letsencrypt/live/yourdomain.com/privkey.pem backend/docker/ssl/key.pem
+cd ~/FBS
+sudo cp deploy/nginx-fbs-http-for-certbot.conf /etc/nginx/sites-available/fbs
+sudo rm -f /etc/nginx/sites-enabled/default
+sudo ln -sf /etc/nginx/sites-available/fbs /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
 ```
 
-### Вариант 2: Самоподписанный (для тестов)
+**Шаг 3.** Получить сертификат:
+```bash
+sudo apt install certbot python3-certbot-nginx -y
+sudo certbot certonly --webroot -w /var/www/certbot -d fbs-upakovka.ru -d www.fbs-upakovka.ru --email admin@fbs-upakovka.ru --agree-tos --non-interactive
+```
+
+**Шаг 4.** Переключить Nginx на HTTPS:
+```bash
+sudo cp deploy/nginx-fbs-https.conf /etc/nginx/sites-available/fbs
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+**Шаг 5.** Автообновление сертификата (раз в 60 дней):
+```bash
+sudo certbot renew --dry-run
+# Или добавить в cron: 0 0 1 * * certbot renew --quiet
+```
+
+### Самоподписанный (только для тестов)
 
 ```bash
 mkdir -p backend/docker/ssl
