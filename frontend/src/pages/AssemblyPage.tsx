@@ -43,14 +43,16 @@ export default function AssemblyPage() {
     isPrintAgentAvailable().then(setAgentAvailable);
   }, []);
 
-  const mf = filters.marketplace_filter;
   const pageSize = filters.page_size;
   const params: OrdersParams = {
     skip: (page - 1) * pageSize,
     limit: pageSize,
-    marketplace_id: typeof mf === 'number' ? mf : undefined,
-    marketplace_type: mf === 'ozon' ? 'ozon' : mf === 'wildberries' ? 'wildberries' : undefined,
-    warehouse_id: filters.warehouse_id || undefined,
+    marketplace_ids:
+      filters.marketplace_ids.length > 0 ? filters.marketplace_ids : undefined,
+    marketplace_types:
+      filters.marketplace_types.length > 0 ? filters.marketplace_types : undefined,
+    warehouse_ids:
+      filters.warehouse_ids.length > 0 ? filters.warehouse_ids : undefined,
     status: filters.status || undefined,
     search: filters.search || undefined,
     sort_by: filters.sort_by,
@@ -70,8 +72,9 @@ export default function AssemblyPage() {
   useEffect(() => {
     setPage(1);
   }, [
-    filters.marketplace_filter,
-    filters.warehouse_id,
+    filters.marketplace_ids,
+    filters.marketplace_types,
+    filters.warehouse_ids,
     filters.status,
     filters.search,
     filters.sort_by,
@@ -93,11 +96,8 @@ export default function AssemblyPage() {
   });
 
   const { data: warehouses = [] } = useQuery({
-    queryKey: ['warehouses', mf],
-    queryFn: () =>
-      typeof mf === 'number'
-        ? warehousesApi.listByMarketplace(mf)
-        : warehousesApi.listAll(mf === 'ozon' ? 'ozon' : mf === 'wildberries' ? 'wildberries' : undefined),
+    queryKey: ['warehouses'],
+    queryFn: () => warehousesApi.listAll(),
     enabled: true,
   });
 
@@ -118,7 +118,8 @@ export default function AssemblyPage() {
   const handleKizDownload = async (format: 'xlsx' | 'txt') => {
     setKizMenuAnchor(null);
     try {
-      const marketplaceId = typeof mf === 'number' ? mf : undefined;
+      const marketplaceId =
+        filters.marketplace_ids.length === 1 ? filters.marketplace_ids[0] : undefined;
       const blob = await ordersApi.getKizExportBlob({ marketplace_id: marketplaceId, format });
       const ext = format === 'xlsx' ? 'xlsx' : 'txt';
       const url = URL.createObjectURL(blob);

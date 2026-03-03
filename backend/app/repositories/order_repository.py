@@ -2,7 +2,7 @@
 Репозиторий для работы с заказами
 """
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 
 from sqlalchemy import case, func, or_
 from sqlalchemy.orm import Session, joinedload
@@ -75,9 +75,9 @@ class OrderRepository:
         *,
         skip: int = 0,
         limit: int = 100,
-        marketplace_id: Optional[int] = None,
-        marketplace_type: Optional[str] = None,
-        warehouse_id: Optional[int] = None,
+        marketplace_ids: Optional[List[int]] = None,
+        marketplace_types: Optional[List[str]] = None,
+        warehouse_ids: Optional[List[int]] = None,
         status: Optional[OrderStatus] = None,
         search: Optional[str] = None,
         sort_by: str = "marketplace_created_at",
@@ -92,16 +92,24 @@ class OrderRepository:
             .filter(Marketplace.user_id == user_id)
             .filter(Order.status != OrderStatus.CANCELLED)
         )
-        if marketplace_id:
-            query = query.filter(Order.marketplace_id == marketplace_id)
-        elif marketplace_type:
-            try:
-                mp_type = MarketplaceType(marketplace_type)
-                query = query.filter(Marketplace.type == mp_type)
-            except ValueError:
-                pass
-        if warehouse_id:
-            query = query.filter(Order.warehouse_id == warehouse_id)
+        mp_conds = []
+        if marketplace_ids:
+            mp_conds.append(Order.marketplace_id.in_(marketplace_ids))
+        if marketplace_types:
+            valid_types = []
+            for t in marketplace_types:
+                if not t:
+                    continue
+                try:
+                    valid_types.append(MarketplaceType(str(t).lower()))
+                except ValueError:
+                    pass
+            if valid_types:
+                mp_conds.append(Marketplace.type.in_(valid_types))
+        if mp_conds:
+            query = query.filter(or_(*mp_conds))
+        if warehouse_ids:
+            query = query.filter(Order.warehouse_id.in_(warehouse_ids))
         if status:
             query = query.filter(Order.status == status)
         search_pattern = None
@@ -145,9 +153,9 @@ class OrderRepository:
         self,
         user_id: int,
         *,
-        marketplace_id: Optional[int] = None,
-        marketplace_type: Optional[str] = None,
-        warehouse_id: Optional[int] = None,
+        marketplace_ids: Optional[List[int]] = None,
+        marketplace_types: Optional[List[str]] = None,
+        warehouse_ids: Optional[List[int]] = None,
         status: Optional[OrderStatus] = None,
         search: Optional[str] = None,
     ) -> int:
@@ -160,16 +168,24 @@ class OrderRepository:
             .filter(Marketplace.user_id == user_id)
             .filter(Order.status != OrderStatus.CANCELLED)
         )
-        if marketplace_id:
-            query = query.filter(Order.marketplace_id == marketplace_id)
-        elif marketplace_type:
-            try:
-                mp_type = MarketplaceType(marketplace_type)
-                query = query.filter(Marketplace.type == mp_type)
-            except ValueError:
-                pass
-        if warehouse_id:
-            query = query.filter(Order.warehouse_id == warehouse_id)
+        mp_conds = []
+        if marketplace_ids:
+            mp_conds.append(Order.marketplace_id.in_(marketplace_ids))
+        if marketplace_types:
+            valid_types = []
+            for t in marketplace_types:
+                if not t:
+                    continue
+                try:
+                    valid_types.append(MarketplaceType(str(t).lower()))
+                except ValueError:
+                    pass
+            if valid_types:
+                mp_conds.append(Marketplace.type.in_(valid_types))
+        if mp_conds:
+            query = query.filter(or_(*mp_conds))
+        if warehouse_ids:
+            query = query.filter(Order.warehouse_id.in_(warehouse_ids))
         if status:
             query = query.filter(Order.status == status)
         if search and search.strip():

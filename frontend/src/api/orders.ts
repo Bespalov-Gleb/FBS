@@ -4,9 +4,9 @@ import type { Order } from '../types/api';
 export interface OrdersParams {
   skip?: number;
   limit?: number;
-  marketplace_id?: number;
-  marketplace_type?: 'ozon' | 'wildberries';
-  warehouse_id?: number;
+  marketplace_ids?: number[];
+  marketplace_types?: ('ozon' | 'wildberries')[];
+  warehouse_ids?: number[];
   status?: string;
   search?: string;
   sort_by?: string;

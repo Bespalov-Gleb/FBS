@@ -1,7 +1,7 @@
 """
 API endpoints для заказов и синхронизации
 """
-from typing import Optional
+from typing import List, Optional
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -61,9 +61,9 @@ class OrderCompleteRequest(BaseModel):
 def list_orders(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=500),
-    marketplace_id: Optional[int] = None,
-    marketplace_type: Optional[str] = Query(None, description="ozon | wildberries — все магазины типа"),
-    warehouse_id: Optional[int] = None,
+    marketplace_ids: Optional[List[int]] = Query(None, description="ID маркетплейсов (множественный выбор)"),
+    marketplace_types: Optional[List[str]] = Query(None, description="Типы: ozon, wildberries (множественный выбор)"),
+    warehouse_ids: Optional[List[int]] = Query(None, description="ID складов (множественный выбор)"),
     status: Optional[str] = None,
     search: Optional[str] = Query(None, description="Поиск по артикулу, названию, номеру заказа"),
     sort_by: str = Query("marketplace_created_at", description="marketplace_created_at, article, product_name"),
@@ -74,7 +74,7 @@ def list_orders(
     """
     Список заказов для вкладки «Сборка».
     
-    Фильтры: marketplace_id, marketplace_type (ozon/wildberries), warehouse_id, status, search (артикул/название/номер).
+    Фильтры: marketplace_ids, marketplace_types (ozon/wildberries), warehouse_ids, status, search.
     """
     status_enum = None
     if status:
@@ -85,9 +85,9 @@ def list_orders(
     order_repo = OrderRepository(db)
     total = order_repo.get_list_count(
         user_id=current_user.id,
-        marketplace_id=marketplace_id,
-        marketplace_type=marketplace_type,
-        warehouse_id=warehouse_id,
+        marketplace_ids=marketplace_ids,
+        marketplace_types=marketplace_types,
+        warehouse_ids=warehouse_ids,
         status=status_enum,
         search=search,
     )
@@ -95,9 +95,9 @@ def list_orders(
         user_id=current_user.id,
         skip=skip,
         limit=limit,
-        marketplace_id=marketplace_id,
-        marketplace_type=marketplace_type,
-        warehouse_id=warehouse_id,
+        marketplace_ids=marketplace_ids,
+        marketplace_types=marketplace_types,
+        warehouse_ids=warehouse_ids,
         status=status_enum,
         search=search,
         sort_by=sort_by,

@@ -7,28 +7,38 @@ import {
   Select,
   MenuItem,
   InputAdornment,
+  FormGroup,
+  FormControlLabel,
+  Checkbox,
+  Collapse,
+  Typography,
 } from '@mui/material';
 import Search from '@mui/icons-material/Search';
+import ExpandMore from '@mui/icons-material/ExpandMore';
+import ExpandLess from '@mui/icons-material/ExpandLess';
 import type { Marketplace } from '../../types/api';
 import type { Warehouse } from '../../types/api';
 
 const PAGE_SIZE_OPTIONS = [25, 50, 100, 200, 500] as const;
 
 export interface OrderFiltersState {
-  /** '' | 'ozon' | 'wildberries' | marketplace id (number) */
-  marketplace_filter: '' | 'ozon' | 'wildberries' | number;
-  warehouse_id: number | '';
+  /** Выбранные типы маркетплейсов: ozon, wildberries */
+  marketplace_types: ('ozon' | 'wildberries')[];
+  /** Выбранные ID конкретных маркетплейсов */
+  marketplace_ids: number[];
+  /** Выбранные ID складов */
+  warehouse_ids: number[];
   status: string;
   search: string;
   sort_by: string;
   sort_desc: boolean;
-  /** Заказов на странице */
   page_size: number;
 }
 
 const defaultFilters: OrderFiltersState = {
-  marketplace_filter: '',
-  warehouse_id: '',
+  marketplace_types: [],
+  marketplace_ids: [],
+  warehouse_ids: [],
   status: '',
   search: '',
   sort_by: 'marketplace_created_at',
@@ -41,7 +51,6 @@ interface OrderFiltersProps {
   onChange: (filters: OrderFiltersState) => void;
   marketplaces: Marketplace[];
   warehouses: Warehouse[];
-  /** Склады доступны при любом выборе маркетплейса (Все / Ozon все / WB все / конкретный) */
 }
 
 export { defaultFilters };
@@ -53,6 +62,8 @@ export default function OrderFilters({
   warehouses,
 }: OrderFiltersProps) {
   const [searchInput, setSearchInput] = useState(filters.search);
+  const [mpOpen, setMpOpen] = useState(false);
+  const [whOpen, setWhOpen] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     setSearchInput(filters.search);
@@ -67,60 +78,109 @@ export default function OrderFilters({
     }, 300);
   };
 
-  const handleMarketplaceChange = (value: '' | 'ozon' | 'wildberries' | number) => {
-    onChange({
-      ...filters,
-      marketplace_filter: value,
-      warehouse_id: '',
-    });
+  const toggleMarketplaceType = (t: 'ozon' | 'wildberries') => {
+    const next = filters.marketplace_types.includes(t)
+      ? filters.marketplace_types.filter((x) => x !== t)
+      : [...filters.marketplace_types, t];
+    onChange({ ...filters, marketplace_types: next });
   };
 
-  const selectValue = filters.marketplace_filter === '' ? '' : String(filters.marketplace_filter);
+  const toggleMarketplaceId = (id: number) => {
+    const next = filters.marketplace_ids.includes(id)
+      ? filters.marketplace_ids.filter((x) => x !== id)
+      : [...filters.marketplace_ids, id];
+    onChange({ ...filters, marketplace_ids: next });
+  };
+
+  const toggleWarehouseId = (id: number) => {
+    const next = filters.warehouse_ids.includes(id)
+      ? filters.warehouse_ids.filter((x) => x !== id)
+      : [...filters.warehouse_ids, id];
+    onChange({ ...filters, warehouse_ids: next });
+  };
+
+  const hasMpFilter =
+    filters.marketplace_types.length > 0 || filters.marketplace_ids.length > 0;
+  const hasWhFilter = filters.warehouse_ids.length > 0;
 
   return (
-    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, alignItems: 'center', mb: 2 }}>
-      <FormControl size="small" sx={{ minWidth: 200 }}>
-        <InputLabel>Маркетплейс</InputLabel>
-        <Select
-          value={selectValue}
-          label="Маркетплейс"
-          onChange={(e) => {
-            const v = e.target.value;
-            if (v === '' || v === 'ozon' || v === 'wildberries') {
-              handleMarketplaceChange(v);
-            } else {
-              handleMarketplaceChange(Number(v));
-            }
-          }}
+    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, alignItems: 'flex-start', mb: 2 }}>
+      <Box sx={{ border: 1, borderColor: 'divider', borderRadius: 1, px: 1.5, py: 0.5 }}>
+        <Box
+          sx={{ display: 'flex', alignItems: 'center', cursor: 'pointer', gap: 0.5 }}
+          onClick={() => setMpOpen(!mpOpen)}
         >
-          <MenuItem value="">Все</MenuItem>
-          <MenuItem value="ozon">Ozon (все)</MenuItem>
-          <MenuItem value="wildberries">WB (все)</MenuItem>
-          {marketplaces.map((mp) => (
-            <MenuItem key={mp.id} value={String(mp.id)}>
-              {mp.name} ({mp.type})
-            </MenuItem>
-          ))}
-        </Select>
-      </FormControl>
-      <FormControl size="small" sx={{ minWidth: 180 }} disabled={warehouses.length === 0}>
-        <InputLabel>Склад</InputLabel>
-        <Select
-          value={filters.warehouse_id}
-          label="Склад"
-          onChange={(e) => {
-            const v = e.target.value;
-            onChange({ ...filters, warehouse_id: String(v) === '' ? '' : Number(v) });
-          }}
+          <Typography variant="body2" fontWeight={500}>
+            Маркетплейсы {hasMpFilter && `(${filters.marketplace_types.length + filters.marketplace_ids.length})`}
+          </Typography>
+          {mpOpen ? <ExpandLess fontSize="small" /> : <ExpandMore fontSize="small" />}
+        </Box>
+        <Collapse in={mpOpen}>
+          <FormGroup sx={{ flexDirection: 'row', flexWrap: 'wrap', gap: 0, mt: 0.5, mb: 0.5 }}>
+            <FormControlLabel
+              control={
+                <Checkbox
+                  size="small"
+                  checked={filters.marketplace_types.includes('ozon')}
+                  onChange={() => toggleMarketplaceType('ozon')}
+                />
+              }
+              label={<Typography variant="body2">Ozon (все)</Typography>}
+            />
+            <FormControlLabel
+              control={
+                <Checkbox
+                  size="small"
+                  checked={filters.marketplace_types.includes('wildberries')}
+                  onChange={() => toggleMarketplaceType('wildberries')}
+                />
+              }
+              label={<Typography variant="body2">WB (все)</Typography>}
+            />
+            {marketplaces.map((mp) => (
+              <FormControlLabel
+                key={mp.id}
+                control={
+                  <Checkbox
+                    size="small"
+                    checked={filters.marketplace_ids.includes(mp.id)}
+                    onChange={() => toggleMarketplaceId(mp.id)}
+                  />
+                }
+                label={<Typography variant="body2">{mp.name}</Typography>}
+              />
+            ))}
+          </FormGroup>
+        </Collapse>
+      </Box>
+      <Box sx={{ border: 1, borderColor: 'divider', borderRadius: 1, px: 1.5, py: 0.5 }}>
+        <Box
+          sx={{ display: 'flex', alignItems: 'center', cursor: 'pointer', gap: 0.5 }}
+          onClick={() => setWhOpen(!whOpen)}
         >
-          <MenuItem value="">Все</MenuItem>
-          {warehouses.map((w) => (
-            <MenuItem key={w.id} value={w.id}>
-              {w.name}
-            </MenuItem>
-          ))}
-        </Select>
-      </FormControl>
+          <Typography variant="body2" fontWeight={500}>
+            Склады {hasWhFilter && `(${filters.warehouse_ids.length})`}
+          </Typography>
+          {whOpen ? <ExpandLess fontSize="small" /> : <ExpandMore fontSize="small" />}
+        </Box>
+        <Collapse in={whOpen}>
+          <FormGroup sx={{ flexDirection: 'row', flexWrap: 'wrap', gap: 0, mt: 0.5, mb: 0.5 }}>
+            {warehouses.map((w) => (
+              <FormControlLabel
+                key={w.id}
+                control={
+                  <Checkbox
+                    size="small"
+                    checked={filters.warehouse_ids.includes(w.id)}
+                    onChange={() => toggleWarehouseId(w.id)}
+                  />
+                }
+                label={<Typography variant="body2">{w.name}</Typography>}
+              />
+            ))}
+          </FormGroup>
+        </Collapse>
+      </Box>
       <FormControl size="small" sx={{ minWidth: 140 }}>
         <InputLabel>Статус</InputLabel>
         <Select
