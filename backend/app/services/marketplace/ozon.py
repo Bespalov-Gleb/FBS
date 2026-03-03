@@ -561,8 +561,40 @@ class OzonClient(BaseMarketplaceClient):
                 )
         return result
 
-    # Атрибут размера в Ozon (attribute_id 8229 — «Размер» по документации)
-    OZON_SIZE_ATTRIBUTE_ID = 8229
+    # Fallback: attribute_id 8229 — «Размер» (из неофициальных источников, может отличаться по категориям)
+    OZON_SIZE_ATTRIBUTE_ID_FALLBACK = 8229
+
+    async def _get_category_size_attribute_id(
+        self,
+        description_category_id: int,
+        type_id: int,
+    ) -> Optional[int]:
+        """
+        Получить attribute_id размера для категории через POST /v1/description-category/attribute.
+        Ищет атрибут с именем «Размер» (без учёта регистра).
+        """
+        try:
+            response = await self._request(
+                method="POST",
+                endpoint="/v1/description-category/attribute",
+                json_data={
+                    "type_id": type_id,
+                    "description_category_id": description_category_id,
+                },
+            )
+            attrs = response.get("result") or response.get("attributes") or []
+            if not isinstance(attrs, list):
+                attrs = []
+            for a in attrs:
+                name = (a.get("name") or a.get("title") or "").strip().lower()
+                if "размер" in name:
+                    aid = a.get("id") or a.get("attribute_id")
+                    if aid is not None:
+                        return int(aid)
+            return None
+        except Exception as e:
+            logger.debug(f"Ozon _get_category_size_attribute_id failed: {e}")
+            return None
 
     async def get_product_sizes(
         self,
@@ -570,20 +602,23 @@ class OzonClient(BaseMarketplaceClient):
     ) -> dict[str, str]:
         """
         Получение размера товаров через Ozon Attributes API.
-        Endpoint: POST /v4/products/info/attributes (docs.ozon.ru)
-        Posting products не содержат size — нужен отдельный запрос.
+        Endpoint: POST /v4/product/info/attributes (ozon-api-client)
+        Динамически определяет attribute_id размера через /v1/description-category/attribute.
         Returns: { offer_id: size }
         """
         if not offer_ids:
             return {}
         result: dict[str, str] = {}
         batch_size = 100
+        # Кэш: (description_category_id, type_id) -> size_attribute_id
+        size_attr_cache: dict[tuple[int, int], Optional[int]] = {}
+
         for i in range(0, len(offer_ids), batch_size):
             batch = offer_ids[i : i + batch_size]
             try:
                 response = await self._request(
                     method="POST",
-                    endpoint="/v4/products/info/attributes",
+                    endpoint="/v4/product/info/attributes",
                     json_data={
                         "filter": {
                             "offer_id": batch,
@@ -591,7 +626,6 @@ class OzonClient(BaseMarketplaceClient):
                         },
                     },
                 )
-                # result — массив товаров (docs.ozon.ru)
                 items = response.get("result") or response.get("items") or []
                 if isinstance(items, dict):
                     items = items.get("items", [])
@@ -601,11 +635,23 @@ class OzonClient(BaseMarketplaceClient):
                     oid = item.get("offer_id")
                     if not oid:
                         continue
+                    desc_cat = item.get("description_category_id")
+                    type_id = item.get("type_id")
                     attrs = item.get("attributes") or []
+                    size_attr_id = None
+                    if desc_cat is not None and type_id is not None:
+                        key = (int(desc_cat), int(type_id))
+                        if key not in size_attr_cache:
+                            size_attr_cache[key] = await self._get_category_size_attribute_id(
+                                int(desc_cat), int(type_id)
+                            )
+                        size_attr_id = size_attr_cache[key]
+                    if size_attr_id is None:
+                        size_attr_id = self.OZON_SIZE_ATTRIBUTE_ID_FALLBACK
                     size_val = ""
                     for a in attrs:
-                        aid = a.get("attribute_id")
-                        if aid == self.OZON_SIZE_ATTRIBUTE_ID:
+                        aid = a.get("attribute_id") or a.get("id")
+                        if aid is not None and int(aid) == size_attr_id:
                             vals = a.get("values") or []
                             if vals and isinstance(vals[0], dict):
                                 size_val = str(vals[0].get("value", "")).strip()

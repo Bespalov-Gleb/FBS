@@ -2,6 +2,7 @@
 Сервис синхронизации заказов с маркетплейсами
 """
 import asyncio
+import os
 from datetime import datetime
 
 from sqlalchemy.orm import Session
@@ -85,8 +86,9 @@ class OrderSyncService:
                             sku_to_article=sku_to_article or None,
                         )
                         # Размер: Ozon posting не содержит size — получаем через /v4/products/info/attributes
+                        # Отключить: FBS_OZON_FETCH_SIZES=0 (при 404 от Ozon API)
                         sizes = {}
-                        if offer_ids:
+                        if offer_ids and os.environ.get("FBS_OZON_FETCH_SIZES", "1") != "0":
                             try:
                                 sizes = await client.get_product_sizes(offer_ids=offer_ids)
                             except Exception as e:

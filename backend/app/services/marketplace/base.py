@@ -301,7 +301,8 @@ class BaseMarketplaceClient(ABC):
                 pass
             
             err_msg = str(error_detail)[:500] if error_detail else ""
-            logger.error(
+            log_fn = logger.warning if response.status_code == 404 else logger.error
+            log_fn(
                 f"API error from {self.marketplace_name}: HTTP {response.status_code} — {err_msg}",
                 extra={
                     "marketplace": self.marketplace_name,

@@ -96,6 +96,7 @@ services:
       FIRST_SUPERUSER_EMAIL: ${FIRST_SUPERUSER_EMAIL:-admin@fbs.example}
       FIRST_SUPERUSER_PASSWORD: ${FIRST_SUPERUSER_PASSWORD:-admin123}
       FIRST_SUPERUSER_FULLNAME: ${FIRST_SUPERUSER_FULLNAME:-System Administrator}
+      FBS_OZON_FETCH_SIZES: ${FBS_OZON_FETCH_SIZES:-1}
     volumes:
       - ./backend/app:/app/app
       - celery_worker_logs:/app/logs
