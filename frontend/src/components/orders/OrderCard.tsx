@@ -26,6 +26,7 @@ function ProductRow({ product }: { product: OrderProduct }) {
       <Box sx={{ flex: 1, minWidth: 0 }}>
         <Typography variant="body2" color="text.primary" sx={{ lineHeight: 1.3 }}>
           {product.name || product.offer_id}
+          {product.size && ` • ${product.size}`}
         </Typography>
         <Typography
           variant="caption"
@@ -137,6 +138,7 @@ export default function OrderCard({ order, onClick }: OrderCardProps) {
               </Typography>
               <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
                 {order.product_name}
+                {order.size && ` • ${order.size}`}
               </Typography>
               <Box sx={{ display: 'flex', gap: 1, mt: 1, flexWrap: 'wrap', alignItems: 'center' }}>
               <Typography

@@ -13,6 +13,7 @@ class OrderProductItem(BaseModel):
     name: str = ""
     quantity: int = 1
     image_url: str = ""
+    size: Optional[str] = None  # Размер (если есть в API)
 
 
 class OrdersListResponse(BaseModel):
@@ -36,6 +37,7 @@ class OrderResponse(BaseModel):
     warehouse_name: Optional[str] = None
     warehouse_color: Optional[str] = None
     product_image_url: Optional[str] = None  # Фото товара (Ozon: primary_image)
+    size: Optional[str] = None  # Размер (WB/Ozon — из extra_data или API)
     marketplace_created_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     # Блокировка (захват упаковщиком)

@@ -36,6 +36,14 @@ def _product_image_url_for_order(o: Order) -> Optional[str]:
     return None
 
 
+def _ozon_product_size(p: dict) -> Optional[str]:
+    """Размер товара Ozon из product dict."""
+    dims = p.get("dimensions")
+    if isinstance(dims, dict):
+        return dims.get("size_name") or dims.get("size")
+    return p.get("size_name") or p.get("size")
+
+
 def _order_products(o: Order) -> list[OrderProductItem]:
     """Список товаров в заказе (Ozon: несколько в одном posting)."""
     if not o.marketplace or o.marketplace.type.value != "ozon":
@@ -47,6 +55,7 @@ def _order_products(o: Order) -> list[OrderProductItem]:
             name=str(p.get("name", "")),
             quantity=int(p.get("quantity", 1)),
             image_url=str(p.get("image_url", "")),
+            size=_ozon_product_size(p),
         )
         for p in prods
     ]
@@ -118,6 +127,7 @@ def list_orders(
             warehouse_name=o.warehouse_name,
             warehouse_color=o.warehouse.color if o.warehouse else None,
             product_image_url=_product_image_url_for_order(o),
+            size=(o.extra_data or {}).get("size"),
             marketplace_created_at=o.marketplace_created_at,
             completed_at=o.completed_at,
             assigned_to_id=o.assigned_to_id,
@@ -295,6 +305,7 @@ def get_order(
         warehouse_name=order.warehouse_name,
         warehouse_color=order.warehouse.color if order.warehouse else None,
         product_image_url=_product_image_url_for_order(order),
+        size=(order.extra_data or {}).get("size"),
         marketplace_created_at=order.marketplace_created_at,
         completed_at=order.completed_at,
         assigned_to_id=order.assigned_to_id,

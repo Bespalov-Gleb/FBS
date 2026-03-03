@@ -131,18 +131,17 @@ class WildberriesClient(BaseMarketplaceClient):
             f"{base_wb}/1.jpg",
         ]
 
-    async def get_product_image_url_content_api(self, nm_id: int | str) -> str:
+    async def get_product_card_content_api(self, nm_id: int | str) -> Optional[dict]:
         """
-        Получить URL изображения товара через Content API WB.
+        Получить карточку товара через Content API WB (для фото и размера).
         Требует токен с категорией «Контент».
-        Документация: https://dev.wildberries.ru/docs/openapi/work-with-products
         """
         try:
             nm = int(nm_id)
         except (ValueError, TypeError):
-            return ""
+            return None
         if nm <= 0:
-            return ""
+            return None
         url = f"{CONTENT_API_BASE}/content/v2/get/cards/list"
         body = {
             "settings": {
@@ -157,26 +156,29 @@ class WildberriesClient(BaseMarketplaceClient):
         auth = self.api_key
         if auth and not auth.lower().startswith("bearer "):
             auth = f"Bearer {auth}"
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            r = await client.post(
-                url,
-                json=body,
-                headers={
-                    "Authorization": auth,
-                    "Content-Type": "application/json",
-                },
-            )
-            if r.status_code != 200:
-                logger.debug(
-                    f"WB Content API cards/list: {r.status_code} for nm_id={nm}",
-                    extra={"response": r.text[:200]},
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                r = await client.post(
+                    url,
+                    json=body,
+                    headers={
+                        "Authorization": auth,
+                        "Content-Type": "application/json",
+                    },
                 )
-                return ""
-            data = r.json()
+                if r.status_code != 200:
+                    return None
+                data = r.json()
+        except Exception:
+            return None
         cards = data.get("cards") or []
-        if not cards:
+        return cards[0] if cards else None
+
+    async def get_product_image_url_content_api(self, nm_id: int | str) -> str:
+        """URL изображения товара через Content API."""
+        card = await self.get_product_card_content_api(nm_id)
+        if not card:
             return ""
-        card = cards[0]
         photos = card.get("photos") or card.get("mediaFiles") or []
         if not photos:
             return ""
@@ -192,6 +194,21 @@ class WildberriesClient(BaseMarketplaceClient):
             )
             if isinstance(url, str) and url.startswith("http"):
                 return url
+        return ""
+
+    def _extract_size_from_card(self, card: dict, chrt_id: Optional[int] = None) -> str:
+        """
+        Извлечь размер из карточки товара по chrt_id.
+        Документация WB Content API: sizes[] с полями chrtId, techSize, origName.
+        Поддержка вариантов: chrtID, chrtId, chrt_id (snake_case).
+        """
+        sizes = card.get("sizes") or []
+        for s in sizes:
+            sid = s.get("chrtID") or s.get("chrtId") or s.get("chrt_id")
+            if chrt_id is not None and sid == chrt_id:
+                return str(s.get("techSize") or s.get("origName") or "")
+        if sizes and chrt_id is None:
+            return str(sizes[0].get("techSize") or sizes[0].get("origName") or "")
         return ""
 
     def _map_wb_status_to_common(self, supplier_status: str) -> str:
@@ -392,7 +409,8 @@ class WildberriesClient(BaseMarketplaceClient):
                     mo.metadata["supplierStatus"] = "confirm"
                     mo.status = self._map_wb_status_to_common("confirm")
                     result.append(mo)
-                elif supplier_status in ("complete", "cancel"):
+                elif supplier_status in ("complete", "cancel", "new"):
+                    # new = ещё не в поставке, не показываем в «Сборка»; complete/cancel — обновляем статус
                     status_updates[mo.external_id] = supplier_status
             
             if next_cursor == 0:

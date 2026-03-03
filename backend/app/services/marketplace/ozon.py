@@ -560,6 +560,66 @@ class OzonClient(BaseMarketplaceClient):
                     extra={"offer_ids": batch[:5]},
                 )
         return result
+
+    # Атрибут размера в Ozon (attribute_id 8229 — «Размер» по документации)
+    OZON_SIZE_ATTRIBUTE_ID = 8229
+
+    async def get_product_sizes(
+        self,
+        offer_ids: Optional[list[str]] = None,
+    ) -> dict[str, str]:
+        """
+        Получение размера товаров через Ozon Attributes API.
+        Endpoint: POST /v4/products/info/attributes (docs.ozon.ru)
+        Posting products не содержат size — нужен отдельный запрос.
+        Returns: { offer_id: size }
+        """
+        if not offer_ids:
+            return {}
+        result: dict[str, str] = {}
+        batch_size = 100
+        for i in range(0, len(offer_ids), batch_size):
+            batch = offer_ids[i : i + batch_size]
+            try:
+                response = await self._request(
+                    method="POST",
+                    endpoint="/v4/products/info/attributes",
+                    json_data={
+                        "filter": {
+                            "offer_id": batch,
+                            "visibility": "ALL",
+                        },
+                    },
+                )
+                # result — массив товаров (docs.ozon.ru)
+                items = response.get("result") or response.get("items") or []
+                if isinstance(items, dict):
+                    items = items.get("items", [])
+                if not isinstance(items, list):
+                    items = []
+                for item in items:
+                    oid = item.get("offer_id")
+                    if not oid:
+                        continue
+                    attrs = item.get("attributes") or []
+                    size_val = ""
+                    for a in attrs:
+                        aid = a.get("attribute_id")
+                        if aid == self.OZON_SIZE_ATTRIBUTE_ID:
+                            vals = a.get("values") or []
+                            if vals and isinstance(vals[0], dict):
+                                size_val = str(vals[0].get("value", "")).strip()
+                            elif vals:
+                                size_val = str(vals[0]).strip()
+                            break
+                    if size_val:
+                        result[oid] = size_val
+            except Exception as e:
+                logger.warning(
+                    f"Ozon get_product_sizes failed: {e}",
+                    extra={"batch_size": len(batch)},
+                )
+        return result
     
     async def get_warehouses(self) -> list[dict[str, Any]]:
         """

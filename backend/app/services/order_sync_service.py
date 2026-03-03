@@ -84,6 +84,13 @@ class OrderSyncService:
                             product_ids=product_ids or None,
                             sku_to_article=sku_to_article or None,
                         )
+                        # Размер: Ozon posting не содержит size — получаем через /v4/products/info/attributes
+                        sizes = {}
+                        if offer_ids:
+                            try:
+                                sizes = await client.get_product_sizes(offer_ids=offer_ids)
+                            except Exception as e:
+                                logger.warning(f"Could not fetch product sizes: {e}")
                         for mo in orders:
                             prods = (mo.metadata or {}).get("products", [])
                             if mo.metadata is None:
@@ -99,6 +106,15 @@ class OrderSyncService:
                                 elif url and i == 0:
                                     mo.metadata["product_image_url"] = url
                                 p["image_url"] = url or ""
+                                if oid and sizes.get(oid):
+                                    p["size"] = sizes[oid]
+                            # Размер первого товара — в extra_data для карточки заказа
+                            first_size = next(
+                                (p.get("size") for p in (mo.metadata or {}).get("products", []) if p.get("size")),
+                                None,
+                            )
+                            if first_size and mo.metadata:
+                                mo.metadata["size"] = first_size
                         with_images = sum(1 for mo in orders if (mo.metadata or {}).get("product_image_url"))
                         logger.info(f"Product images: {with_images}/{len(orders)} orders got photo")
                     except Exception as e:
@@ -120,38 +136,52 @@ class OrderSyncService:
                 orders_new, status_updates, all_external_ids = await client.get_orders_in_assembly(
                     days_back=14, limit_per_request=500
                 )
-                # Обновить статусы: complete → completed, cancel → cancelled
+                # Обновить статусы: complete → completed, cancel/new → cancelled (скрыть из «Сборка»)
                 for ext_id, wb_status in status_updates.items():
                     if wb_status == "complete":
                         if order_repo.mark_completed_by_marketplace(marketplace.id, ext_id):
                             count += 1
-                    elif wb_status == "cancel":
+                    elif wb_status in ("cancel", "new"):
                         if order_repo.mark_cancelled_by_marketplace(marketplace.id, ext_id):
                             count += 1
-                # URL фото: Content API (официально), fallback — CDN
+                # URL фото и размер: Content API (официально), fallback — CDN
                 unique_nm_ids = list({
                     (mo.metadata or {}).get("nm_id")
                     for mo in orders_new
                     if (mo.metadata or {}).get("nm_id") is not None
                 })
-                nm_to_url: dict[int | str, str] = {}
+                nm_to_card: dict[int | str, dict | None] = {}
                 for nm_id in unique_nm_ids:
                     try:
-                        url = await client.get_product_image_url_content_api(nm_id)
-                        if url:
-                            nm_to_url[nm_id] = url
-                        else:
-                            nm_to_url[nm_id] = WildberriesClient.build_product_image_url(nm_id) or ""
+                        card = await client.get_product_card_content_api(nm_id)
+                        nm_to_card[nm_id] = card
                     except Exception as e:
-                        logger.debug(f"WB Content API image for nm_id={nm_id}: {e}")
-                        nm_to_url[nm_id] = WildberriesClient.build_product_image_url(nm_id) or ""
+                        logger.debug(f"WB Content API card for nm_id={nm_id}: {e}")
+                        nm_to_card[nm_id] = None
                     await asyncio.sleep(0.7)  # ~100 req/min лимит Content API
                 for mo in orders_new:
                     nm_id = (mo.metadata or {}).get("nm_id")
+                    chrt_id = (mo.metadata or {}).get("chrt_id")
+                    if mo.metadata is None:
+                        mo.metadata = {}
                     if nm_id is not None:
-                        if mo.metadata is None:
-                            mo.metadata = {}
-                        mo.metadata["product_image_url"] = nm_to_url.get(nm_id, "") or ""
+                        card = nm_to_card.get(nm_id)
+                        if card:
+                            photos = card.get("photos") or card.get("mediaFiles") or []
+                            if photos:
+                                first = photos[0]
+                                url = ""
+                                if isinstance(first, str) and first.startswith("http"):
+                                    url = first
+                                elif isinstance(first, dict):
+                                    url = first.get("big") or first.get("square") or first.get("c516x688") or first.get("url") or ""
+                                if url:
+                                    mo.metadata["product_image_url"] = url
+                            size = client._extract_size_from_card(card, chrt_id)
+                            if size:
+                                mo.metadata["size"] = size
+                        if not mo.metadata.get("product_image_url"):
+                            mo.metadata["product_image_url"] = WildberriesClient.build_product_image_url(nm_id) or ""
                 with_images = sum(1 for mo in orders_new if (mo.metadata or {}).get("product_image_url"))
                 if orders_new:
                     logger.info(f"WB product images: {with_images}/{len(orders_new)} orders got photo")
