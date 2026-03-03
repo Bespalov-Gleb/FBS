@@ -590,10 +590,15 @@ class OzonClient(BaseMarketplaceClient):
                 if "размер" in name:
                     aid = a.get("id") or a.get("attribute_id")
                     if aid is not None:
+                        logger.info(f"Ozon category attr 'Размер' found: id={aid} (cat={description_category_id} type={type_id})")
                         return int(aid)
+            logger.info(
+                f"Ozon category attr 'Размер' not found: cat={description_category_id} type={type_id} "
+                f"attrs_sample={[(a.get('name'), a.get('id')) for a in attrs[:5]]}",
+            )
             return None
         except Exception as e:
-            logger.debug(f"Ozon _get_category_size_attribute_id failed: {e}")
+            logger.warning(f"Ozon _get_category_size_attribute_id failed: {e}")
             return None
 
     async def get_product_sizes(
@@ -633,6 +638,9 @@ class OzonClient(BaseMarketplaceClient):
                     items = items.get("items", [])
                 if not isinstance(items, list):
                     items = []
+                logger.info(
+                    f"Ozon get_product_sizes: got {len(items)} items, response keys: {list(response.keys())}",
+                )
                 for item in items:
                     oid = item.get("offer_id")
                     if not oid:
@@ -662,6 +670,13 @@ class OzonClient(BaseMarketplaceClient):
                             break
                     if size_val:
                         result[oid] = size_val
+                        logger.info(f"Ozon size for {oid}: {size_val} (attr_id={size_attr_id})")
+                    else:
+                        attr_ids = [a.get("attribute_id") or a.get("id") for a in attrs]
+                        logger.info(
+                            f"Ozon no size for {oid}: desc_cat={desc_cat} type_id={type_id} "
+                            f"size_attr_id={size_attr_id} product_attr_ids={attr_ids[:10]}",
+                        )
             except Exception as e:
                 logger.warning(
                     f"Ozon get_product_sizes failed: {e}",

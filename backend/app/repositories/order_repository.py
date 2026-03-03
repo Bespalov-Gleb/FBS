@@ -211,6 +211,7 @@ class OrderRepository:
             self.db.query(Order)
             .join(Marketplace, Order.marketplace_id == Marketplace.id)
             .filter(Marketplace.user_id == user_id)
+            .filter(Order.status != OrderStatus.CANCELLED)
         )
         today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
 
@@ -228,6 +229,7 @@ class OrderRepository:
             self.db.query(Order.marketplace_id, func.count(Order.id).label("cnt"))
             .join(Marketplace, Order.marketplace_id == Marketplace.id)
             .filter(Marketplace.user_id == user_id)
+            .filter(Order.status != OrderStatus.CANCELLED)
             .filter(Order.status == OrderStatus.COMPLETED)
             .group_by(Order.marketplace_id)
             .all()
@@ -243,6 +245,7 @@ class OrderRepository:
             )
             .join(Order, Order.marketplace_id == Marketplace.id)
             .filter(Marketplace.user_id == user_id)
+            .filter(Order.status != OrderStatus.CANCELLED)
             .group_by(Marketplace.id, Marketplace.name, Marketplace.type)
             .all()
         )
