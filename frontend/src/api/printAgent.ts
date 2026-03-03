@@ -39,15 +39,21 @@ export async function getPrintAgentPrinters(): Promise<string[]> {
   }
 }
 
+const PRINT_TIMEOUT_MS = 60000; // 60 сек — печать может занять время
+
 export async function printViaAgent(blob: Blob, printer?: string): Promise<boolean> {
   try {
     const base64 = await blobToBase64(blob);
     const mime = blob.type || 'application/pdf';
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), PRINT_TIMEOUT_MS);
     const r = await fetch(`${AGENT_URL}/print`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ data: base64, printer: printer || undefined, mime }),
+      signal: controller.signal,
     });
+    clearTimeout(timeoutId);
     return r.ok;
   } catch {
     return false;

@@ -28,6 +28,8 @@ export default function PrintSettingsPage() {
   const [autoPrintKiz, setAutoPrintKiz] = useState(true);
   const [agentAvailable, setAgentAvailable] = useState(false);
   const [agentPrinters, setAgentPrinters] = useState<string[]>([]);
+  const [testPrinting, setTestPrinting] = useState(false);
+  const [testPrintError, setTestPrintError] = useState<string | null>(null);
 
   const { data: settings, isLoading } = useQuery({
     queryKey: ['print-settings'],
@@ -64,10 +66,15 @@ export default function PrintSettingsPage() {
   const handleSave = () => updateMutation.mutate();
 
   const handleTestPrint = async () => {
+    setTestPrintError(null);
+    setTestPrinting(true);
     try {
       const blob = await printSettingsApi.getTestLabelBlob();
       if (agentAvailable) {
-        await printViaAgent(blob, defaultPrinter || undefined);
+        const ok = await printViaAgent(blob, defaultPrinter || undefined);
+        if (!ok) {
+          setTestPrintError('Агент не ответил или печать не удалась. Проверьте, что агент запущен и SumatraPDF установлен.');
+        }
       } else {
         const url = URL.createObjectURL(blob);
         const win = window.open(url, '_blank');
@@ -77,8 +84,10 @@ export default function PrintSettingsPage() {
           window.location.href = url;
         }
       }
-    } catch {
-      window.print();
+    } catch (e) {
+      setTestPrintError(e instanceof Error ? e.message : 'Ошибка при печати');
+    } finally {
+      setTestPrinting(false);
     }
   };
 
@@ -163,9 +172,15 @@ export default function PrintSettingsPage() {
                   variant="outlined"
                   startIcon={<LocalPrintshop />}
                   onClick={handleTestPrint}
+                  disabled={testPrinting}
                 >
-                  Тестовая печать
+                  {testPrinting ? 'Печать…' : 'Тестовая печать'}
                 </Button>
+                {testPrintError && (
+                  <Alert severity="error" sx={{ mt: 1 }} onClose={() => setTestPrintError(null)}>
+                    {testPrintError}
+                  </Alert>
+                )}
               </Box>
             </Box>
           </CardContent>

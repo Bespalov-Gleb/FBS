@@ -67,7 +67,8 @@ exe будет в `dist/fbs-print-agent.exe`. Скопируйте `SumatraPDF.e
 
 - `FBS_PRINT_AGENT_PORT` — порт (по умолчанию 9199)
 - `FBS_PRINT_AGENT_PRINTER` — принтер по умолчанию
-- `FBS_PRINT_AGENT_ORIGINS` — CORS origins через запятую (для продакшена, например `https://fbs.example.com`)
+- `FBS_PRINT_AGENT_ORIGINS` — **обязательно для продакшена!** CORS origins через запятую. Без этого сайт с другого домена не сможет отправить задание на печать.
+  - Пример: `FBS_PRINT_AGENT_ORIGINS=https://fbs-upakovka.ru,https://www.fbs-upakovka.ru`
 
 ## API
 
