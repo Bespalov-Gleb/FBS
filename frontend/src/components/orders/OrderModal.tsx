@@ -203,9 +203,9 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
                     )}
                     <Box sx={{ flex: 1, minWidth: 0 }}>
                       <Typography variant="body2"><strong>{p.offer_id}</strong></Typography>
-                      <Typography variant="body2" color="text.secondary">
-                        {p.name}
-                        {p.size && ` • ${p.size}`}
+                      <Typography variant="body2" color="text.secondary">{p.name}</Typography>
+                      <Typography variant="caption" color={p.size ? 'text.primary' : 'text.disabled'}>
+                        Размер: {p.size || '—'}
                       </Typography>
                       <Typography
                         variant="caption"
@@ -241,7 +241,12 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
                   {order.product_name}
-                  {order.size && ` • Размер: ${order.size}`}
+                </Typography>
+                <Typography variant="body2">
+                  <strong>Размер:</strong>{' '}
+                  <Box component="span" color={order.size ? 'text.primary' : 'text.disabled'}>
+                    {order.size || '—'}
+                  </Box>
                 </Typography>
               <Typography variant="body2">
                 <strong>Количество:</strong>{' '}

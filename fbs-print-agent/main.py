@@ -2,6 +2,7 @@
 FBS Print Agent — локальный агент для тихой печати этикеток.
 HTTP API на localhost, иконка в трее.
 """
+import json
 import sys
 import threading
 from fastapi import FastAPI, HTTPException
@@ -11,6 +12,7 @@ from uvicorn import Config, Server
 
 import config
 import printer
+import print_journal
 from config import HOST, PORT, __version__
 
 # Список принтеров через win32print
@@ -64,12 +66,21 @@ def print_job(req: PrintRequest):
     try:
         data = base64.b64decode(req.data)
     except Exception as e:
+        print_journal.log_print(None, req.mime or "?", 0, False, str(e))
         raise HTTPException(400, detail=f"Invalid base64: {e}")
     printer_name = req.printer or config.DEFAULT_PRINTER or None
-    ok = printer.print_document(data, req.mime or "application/pdf", printer_name)
+    mime = req.mime or "application/pdf"
+    ok = printer.print_document(data, mime, printer_name)
+    print_journal.log_print(printer_name, mime, len(data), ok, None if ok else "Print failed")
     if not ok:
         raise HTTPException(500, detail="Print failed")
     return {"ok": True}
+
+
+@app.get("/print-journal")
+def get_print_journal(limit: int = 50):
+    """Журнал печати — последние задания (для проверки перехвата)."""
+    return {"entries": print_journal.get_entries(limit)}
 
 
 def run_server():
@@ -89,17 +100,62 @@ def run_tray():
         return img
 
     def on_open(icon, item):
-        # Мини-окно статуса
+        # Окно статуса с журналом печати
         import tkinter as tk
+        from tkinter import ttk
+
         root = tk.Tk()
         root.title("FBS Print Agent")
-        root.geometry("300x200")
-        root.resizable(False, False)
-        tk.Label(root, text="Агент печати работает", font=("", 12)).pack(pady=20)
-        tk.Label(root, text=f"Порт: {PORT}", font=("", 10)).pack()
+        root.geometry("420x380")
+        root.resizable(True, True)
+
+        # Статус
+        f_top = tk.Frame(root)
+        f_top.pack(fill=tk.X, padx=10, pady=10)
+        tk.Label(f_top, text="Агент печати работает", font=("", 12)).pack()
+        tk.Label(f_top, text=f"Порт: {PORT}", font=("", 10)).pack()
         printers_list = _get_printers()
-        tk.Label(root, text=f"Принтеров: {len(printers_list)}", font=("", 10)).pack()
-        tk.Button(root, text="Закрыть", command=root.destroy).pack(pady=20)
+        tk.Label(f_top, text=f"Принтеров: {len(printers_list)}", font=("", 10)).pack()
+
+        # Журнал печати
+        tk.Label(root, text="Журнал печати (последние задания):", font=("", 10)).pack(anchor=tk.W, padx=10, pady=(10, 0))
+        journal_frame = tk.Frame(root)
+        journal_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        scrollbar = ttk.Scrollbar(journal_frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        journal_text = tk.Text(journal_frame, height=12, wrap=tk.WORD, yscrollcommand=scrollbar.set, font=("Consolas", 9))
+        journal_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.config(command=journal_text.yview)
+
+        def refresh_journal():
+            try:
+                import urllib.request
+                r = urllib.request.urlopen(f"http://127.0.0.1:{PORT}/print-journal?limit=30", timeout=2)
+                data = json.loads(r.read().decode())
+                entries = data.get("entries", [])
+                journal_text.delete("1.0", tk.END)
+                if not entries:
+                    journal_text.insert(tk.END, "Записей пока нет. Печать через агент появится здесь.")
+                else:
+                    for e in entries:
+                        status = "OK" if e.get("success") else "ОШИБКА"
+                        ts = e.get("ts", "")[:19].replace("T", " ")
+                        pr = (e.get("printer") or "?")[:25]
+                        mime = (e.get("mime") or "?")[:12]
+                        sz = e.get("size_bytes", 0)
+                        err = e.get("error") or ""
+                        line = f"{ts} | {status:6} | {pr:25} | {mime:12} | {sz} байт"
+                        if err:
+                            line += f" | {err}"
+                        journal_text.insert(tk.END, line + "\n")
+            except Exception as ex:
+                journal_text.delete("1.0", tk.END)
+                journal_text.insert(tk.END, f"Не удалось загрузить журнал: {ex}")
+
+        refresh_journal()
+        tk.Button(root, text="Обновить журнал", command=refresh_journal).pack(pady=5)
+
+        tk.Button(root, text="Закрыть", command=root.destroy).pack(pady=10)
         root.mainloop()
 
     def on_quit(icon, item):
