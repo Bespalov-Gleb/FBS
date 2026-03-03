@@ -407,7 +407,8 @@ class WildberriesClient(BaseMarketplaceClient):
                     mo.metadata["supplierStatus"] = "confirm"
                     mo.status = self._map_wb_status_to_common("confirm")
                     result.append(mo)
-                elif supplier_status in ("complete", "cancel"):
+                elif supplier_status in ("complete", "cancel", "new"):
+                    # new/cancel → отменить в БД (скрыть из «Сборка»); complete → отметить собранным
                     status_updates[mo.external_id] = supplier_status
             
             if next_cursor == 0:
