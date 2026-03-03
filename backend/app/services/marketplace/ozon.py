@@ -616,6 +616,7 @@ class OzonClient(BaseMarketplaceClient):
         for i in range(0, len(offer_ids), batch_size):
             batch = offer_ids[i : i + batch_size]
             try:
+                # docs.ozon.ru: GetProductAttributesV4 — filter, limit (1–1000), last_id
                 response = await self._request(
                     method="POST",
                     endpoint="/v4/product/info/attributes",
@@ -624,6 +625,7 @@ class OzonClient(BaseMarketplaceClient):
                             "offer_id": batch,
                             "visibility": "ALL",
                         },
+                        "limit": max(1, min(len(batch), 1000)),
                     },
                 )
                 items = response.get("result") or response.get("items") or []
