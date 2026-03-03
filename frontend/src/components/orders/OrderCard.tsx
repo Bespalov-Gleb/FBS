@@ -1,12 +1,44 @@
 import { useState } from 'react';
-import { Card, CardContent, Typography, Chip, Box } from '@mui/material';
-import type { Order } from '../../types/api';
+import { Card, CardContent, Typography, Chip, Box, Divider } from '@mui/material';
+import type { Order, OrderProduct } from '../../types/api';
 import { palette } from '../../theme/theme';
 import { getProductImageUrl } from '../../api/client';
 
 interface OrderCardProps {
   order: Order;
   onClick: () => void;
+}
+
+function ProductRow({ product }: { product: OrderProduct }) {
+  const [imgErr, setImgErr] = useState(false);
+  const imgUrl = getProductImageUrl(product.image_url);
+  return (
+    <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'flex-start', py: 1 }}>
+      {imgUrl && !imgErr && (
+        <Box
+          component="img"
+          src={imgUrl}
+          alt={product.name}
+          onError={() => setImgErr(true)}
+          sx={{ width: 48, height: 48, objectFit: 'cover', borderRadius: 1, flexShrink: 0 }}
+        />
+      )}
+      <Box sx={{ flex: 1, minWidth: 0 }}>
+        <Typography variant="body2" color="text.primary" sx={{ lineHeight: 1.3 }}>
+          {product.name || product.offer_id}
+        </Typography>
+        <Typography
+          variant="caption"
+          sx={{
+            fontWeight: 500,
+            color: product.quantity >= 2 ? palette.accent.red : palette.text.secondary,
+          }}
+        >
+          ×{product.quantity}
+        </Typography>
+      </Box>
+    </Box>
+  );
 }
 
 export default function OrderCard({ order, onClick }: OrderCardProps) {
@@ -17,6 +49,7 @@ export default function OrderCard({ order, onClick }: OrderCardProps) {
   const isLockedByMe = order.is_locked_by_me;
   const isCompleted = order.status === 'completed';
   const borderColor = order.warehouse_color || palette.sidebar.lighter;
+  const isOzonMulti = order.marketplace_type === 'ozon' && order.products && order.products.length > 1;
 
   return (
     <Card
@@ -30,24 +63,9 @@ export default function OrderCard({ order, onClick }: OrderCardProps) {
       }}
     >
       <CardContent sx={{ '&:last-child': { pb: 2 } }}>
-        <Box sx={{ display: 'flex', gap: 1.5, mb: 1 }}>
-          {imageUrl && !imageError && (
-            <Box
-              component="img"
-              src={imageUrl}
-              alt={order.product_name}
-              onError={() => setImageError(true)}
-              sx={{
-                width: 56,
-                height: 56,
-                objectFit: 'cover',
-                borderRadius: 1,
-                flexShrink: 0,
-              }}
-            />
-          )}
-          <Box sx={{ flex: 1, minWidth: 0 }}>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        {isOzonMulti ? (
+          <>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 1 }}>
               <Typography variant="subtitle1" fontWeight={600} noWrap>
                 {displayId}
               </Typography>
@@ -58,37 +76,99 @@ export default function OrderCard({ order, onClick }: OrderCardProps) {
                 variant={isCompleted ? 'filled' : 'outlined'}
               />
             </Box>
-        <Typography variant="body1" color="text.primary">
-          {order.article}
-        </Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-          {order.product_name}
-        </Typography>
-        <Box sx={{ display: 'flex', gap: 1, mt: 1, flexWrap: 'wrap', alignItems: 'center' }}>
-          <Typography
-            variant="body2"
-            component="span"
-            sx={{ color: order.quantity >= 2 ? palette.accent.red : 'inherit', fontWeight: 500 }}
-          >
-            ×{order.quantity}
-          </Typography>
-          {order.warehouse_name && (
-            <Chip
-              label={order.warehouse_name}
-              size="small"
-              sx={{
-                bgcolor: order.warehouse_color || palette.sidebar.lighter,
-                color: '#fff',
-                fontSize: '0.75rem',
-              }}
-            />
-          )}
-          {order.marketplace_type && (
-            <Typography variant="caption" color="text.secondary">
-              {order.marketplace_type === 'ozon' ? 'Ozon' : order.marketplace_type === 'wildberries' ? 'WB' : order.marketplace_type}
-            </Typography>
-          )}
-        </Box>
+            {order.products!.map((p, i) => (
+              <Box key={p.offer_id + i}>
+                {i > 0 && <Divider sx={{ my: 0.5 }} />}
+                <ProductRow product={p} />
+              </Box>
+            ))}
+            <Box sx={{ display: 'flex', gap: 1, mt: 1, flexWrap: 'wrap', alignItems: 'center' }}>
+              <Typography
+                variant="body2"
+                component="span"
+                sx={{
+                  color: order.quantity >= 2 ? palette.accent.red : 'inherit',
+                  fontWeight: order.quantity >= 2 ? 600 : 500,
+                }}
+              >
+                ×{order.quantity}
+              </Typography>
+              {order.warehouse_name && (
+                <Chip
+                  label={order.warehouse_name}
+                  size="small"
+                  sx={{ bgcolor: order.warehouse_color || palette.sidebar.lighter, color: '#fff', fontSize: '0.75rem' }}
+                />
+              )}
+              <Typography variant="caption" color="text.secondary">Ozon</Typography>
+            </Box>
+          </>
+        ) : (
+          <Box sx={{ display: 'flex', gap: 1.5, mb: 1 }}>
+            {imageUrl && !imageError && (
+              <Box
+                component="img"
+                src={imageUrl}
+                alt={order.product_name}
+                onError={() => setImageError(true)}
+                sx={{
+                  width: 56,
+                  height: 56,
+                  objectFit: 'cover',
+                  borderRadius: 1,
+                  flexShrink: 0,
+                }}
+              />
+            )}
+            <Box sx={{ flex: 1, minWidth: 0 }}>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <Typography variant="subtitle1" fontWeight={600} noWrap>
+                  {displayId}
+                </Typography>
+                <Chip
+                  label={isCompleted ? 'Собран' : 'New'}
+                  size="small"
+                  color={isCompleted ? 'success' : 'default'}
+                  variant={isCompleted ? 'filled' : 'outlined'}
+                />
+              </Box>
+              <Typography variant="body1" color="text.primary">
+                {order.article}
+              </Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                {order.product_name}
+              </Typography>
+              <Box sx={{ display: 'flex', gap: 1, mt: 1, flexWrap: 'wrap', alignItems: 'center' }}>
+              <Typography
+                variant="body2"
+                component="span"
+                sx={{
+                  color: order.quantity >= 2 ? palette.accent.red : 'inherit',
+                  fontWeight: order.quantity >= 2 ? 600 : 500,
+                }}
+              >
+                ×{order.quantity}
+              </Typography>
+                {order.warehouse_name && (
+                  <Chip
+                    label={order.warehouse_name}
+                    size="small"
+                    sx={{
+                      bgcolor: order.warehouse_color || palette.sidebar.lighter,
+                      color: '#fff',
+                      fontSize: '0.75rem',
+                    }}
+                  />
+                )}
+                {order.marketplace_type && (
+                  <Typography variant="caption" color="text.secondary">
+                    {order.marketplace_type === 'ozon' ? 'Ozon' : order.marketplace_type === 'wildberries' ? 'WB' : order.marketplace_type}
+                  </Typography>
+                )}
+              </Box>
+            </Box>
+          </Box>
+        )}
         {isLockedByOther && (
           <Typography variant="caption" color="error" sx={{ display: 'block', mt: 1 }}>
             Занят: {order.assigned_to_name}
@@ -99,8 +179,6 @@ export default function OrderCard({ order, onClick }: OrderCardProps) {
             Вы работаете
           </Typography>
         )}
-          </Box>
-        </Box>
       </CardContent>
     </Card>
   );

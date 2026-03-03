@@ -6,18 +6,24 @@ from typing import Generator
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from app.config import settings
 
-# Создание engine с connection pooling
-engine = create_engine(
-    settings.database_url_sync,
-    pool_pre_ping=True,  # Проверка соединения перед использованием
-    pool_size=20,  # Размер пула соединений
-    max_overflow=10,  # Дополнительные соединения сверх pool_size
-    pool_recycle=3600,  # Переиспользование соединений (1 час)
-    echo=settings.DEBUG,  # Логирование SQL запросов в dev режиме
-)
+# Параметры для SQLite (тесты) vs PostgreSQL
+_engine_kwargs: dict = {
+    "pool_pre_ping": not settings.database_url_sync.startswith("sqlite"),
+    "echo": settings.DEBUG,
+}
+if settings.database_url_sync.startswith("sqlite"):
+    _engine_kwargs["connect_args"] = {"check_same_thread": False}
+    _engine_kwargs["poolclass"] = StaticPool  # один connection — одна БД для всех сессий
+else:
+    _engine_kwargs["pool_size"] = 20
+    _engine_kwargs["max_overflow"] = 10
+    _engine_kwargs["pool_recycle"] = 3600
+
+engine = create_engine(settings.database_url_sync, **_engine_kwargs)
 
 # Session factory
 SessionLocal = sessionmaker(

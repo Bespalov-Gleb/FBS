@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import {
   Box,
   TextField,
@@ -19,7 +19,7 @@ export interface OrderFiltersState {
   marketplace_filter: '' | 'ozon' | 'wildberries' | number;
   warehouse_id: number | '';
   status: string;
-  article: string;
+  search: string;
   sort_by: string;
   sort_desc: boolean;
   /** Заказов на странице */
@@ -30,7 +30,7 @@ const defaultFilters: OrderFiltersState = {
   marketplace_filter: '',
   warehouse_id: '',
   status: '',
-  article: '',
+  search: '',
   sort_by: 'marketplace_created_at',
   sort_desc: true,
   page_size: 50,
@@ -52,15 +52,18 @@ export default function OrderFilters({
   marketplaces,
   warehouses,
 }: OrderFiltersProps) {
-  const [articleInput, setArticleInput] = useState(filters.article);
+  const [searchInput, setSearchInput] = useState(filters.search);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    setSearchInput(filters.search);
+  }, [filters.search]);
 
-  const handleArticleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const v = e.target.value;
-    setArticleInput(v);
+    setSearchInput(v);
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => {
-      onChange({ ...filters, article: v });
+      onChange({ ...filters, search: v });
     }, 300);
   };
 
@@ -132,9 +135,9 @@ export default function OrderFilters({
       </FormControl>
       <TextField
         size="small"
-        placeholder="Поиск по артикулу"
-        value={articleInput}
-        onChange={handleArticleChange}
+        placeholder="Поиск: артикул, название, номер"
+        value={searchInput}
+        onChange={handleSearchChange}
         sx={{ width: 200 }}
         InputProps={{
           startAdornment: (
@@ -153,6 +156,7 @@ export default function OrderFilters({
         >
           <MenuItem value="marketplace_created_at">По дате</MenuItem>
           <MenuItem value="article">По артикулу</MenuItem>
+          <MenuItem value="product_name">По названию</MenuItem>
         </Select>
       </FormControl>
       <FormControl size="small" sx={{ minWidth: 100 }}>

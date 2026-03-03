@@ -2,6 +2,7 @@
 Конфигурация приложения
 """
 import json
+import os
 from typing import List, Optional
 
 from pydantic import PostgresDsn, RedisDsn, field_validator
@@ -41,19 +42,20 @@ class Settings(BaseSettings):
         return []
 
     # Security
-    SECRET_KEY: str
+    SECRET_KEY: str = "test-secret-key-change-in-production"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
-    ENCRYPTION_KEY: str  # Fernet key для шифрования API ключей
+    ENCRYPTION_KEY: str = "8O_9cAwoS1hXb3W4_uJ86vr0HwgH0OXunrywgTbcv_U="  # Fernet key
 
     # Database
-    POSTGRES_SERVER: str
+    POSTGRES_SERVER: str = "localhost"
     POSTGRES_PORT: int = 5432
-    POSTGRES_USER: str
-    POSTGRES_PASSWORD: str
-    POSTGRES_DB: str
-    DATABASE_URL: Optional[PostgresDsn] = None
+    POSTGRES_USER: str = "fbs_user"
+    POSTGRES_PASSWORD: str = "fbs_password"
+    POSTGRES_DB: str = "fbs_db"
+    DATABASE_URL: Optional[str] = None
+    TESTING: bool = False
 
     @field_validator("DATABASE_URL", mode="before")
     @classmethod
@@ -61,15 +63,18 @@ class Settings(BaseSettings):
         """Сборка DATABASE_URL из компонентов"""
         if isinstance(v, str) and v:
             return v
-        
         values = info.data
-        return PostgresDsn.build(
-            scheme="postgresql",
-            username=values.get("POSTGRES_USER"),
-            password=values.get("POSTGRES_PASSWORD"),
-            host=values.get("POSTGRES_SERVER"),
-            port=values.get("POSTGRES_PORT"),
-            path=f"{values.get('POSTGRES_DB') or ''}",
+        if os.environ.get("TESTING") == "1":
+            return "sqlite:///:memory:"
+        return str(
+            PostgresDsn.build(
+                scheme="postgresql",
+                username=values.get("POSTGRES_USER"),
+                password=values.get("POSTGRES_PASSWORD"),
+                host=values.get("POSTGRES_SERVER"),
+                port=values.get("POSTGRES_PORT"),
+                path=f"/{values.get('POSTGRES_DB') or 'fbs_db'}",
+            )
         )
 
     # Redis
@@ -93,8 +98,8 @@ class Settings(BaseSettings):
         return f"redis://{auth}{values.get('REDIS_HOST')}:{values.get('REDIS_PORT')}/{values.get('REDIS_DB')}"
 
     # Celery
-    CELERY_BROKER_URL: str
-    CELERY_RESULT_BACKEND: str
+    CELERY_BROKER_URL: str = "redis://localhost:6379/1"
+    CELERY_RESULT_BACKEND: str = "redis://localhost:6379/2"
     CELERY_TASK_ALWAYS_EAGER: bool = False
 
     # Logging
@@ -114,7 +119,7 @@ class Settings(BaseSettings):
 
     # First superuser
     FIRST_SUPERUSER_EMAIL: str = "admin@fbs.example"
-    FIRST_SUPERUSER_PASSWORD: str
+    FIRST_SUPERUSER_PASSWORD: str = "admin123"
     FIRST_SUPERUSER_FULLNAME: str = "System Administrator"
 
     # Monitoring

@@ -8,7 +8,7 @@ export interface OrdersParams {
   marketplace_type?: 'ozon' | 'wildberries';
   warehouse_id?: number;
   status?: string;
-  article?: string;
+  search?: string;
   sort_by?: string;
   sort_desc?: boolean;
 }

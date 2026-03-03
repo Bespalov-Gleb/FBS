@@ -23,6 +23,7 @@ import { ordersApi, type OrdersParams } from '../api/orders';
 import { marketplacesApi } from '../api/marketplaces';
 import { warehousesApi } from '../api/warehouses';
 import { printSettingsApi } from '../api/printSettings';
+import { isPrintAgentAvailable, printViaAgent } from '../api/printAgent';
 import type { Order } from '../types/api';
 import type { RootState } from '../store';
 
@@ -36,6 +37,11 @@ export default function AssemblyPage() {
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [snackbar, setSnackbar] = useState<{ message: string } | null>(null);
   const [kizMenuAnchor, setKizMenuAnchor] = useState<HTMLElement | null>(null);
+  const [agentAvailable, setAgentAvailable] = useState(false);
+
+  useEffect(() => {
+    isPrintAgentAvailable().then(setAgentAvailable);
+  }, []);
 
   const mf = filters.marketplace_filter;
   const pageSize = filters.page_size;
@@ -46,7 +52,7 @@ export default function AssemblyPage() {
     marketplace_type: mf === 'ozon' ? 'ozon' : mf === 'wildberries' ? 'wildberries' : undefined,
     warehouse_id: filters.warehouse_id || undefined,
     status: filters.status || undefined,
-    article: filters.article || undefined,
+    search: filters.search || undefined,
     sort_by: filters.sort_by,
     sort_desc: filters.sort_desc,
   };
@@ -67,7 +73,7 @@ export default function AssemblyPage() {
     filters.marketplace_filter,
     filters.warehouse_id,
     filters.status,
-    filters.article,
+    filters.search,
     filters.sort_by,
     filters.sort_desc,
     filters.page_size,
@@ -126,11 +132,15 @@ export default function AssemblyPage() {
     }
   };
 
-  const printBlob = (blob: Blob) => {
+  const printBlob = async (blob: Blob, options?: { noFallback?: boolean }) => {
+    if (agentAvailable) {
+      const ok = await printViaAgent(blob, printSettings?.default_printer || undefined);
+      if (ok) return;
+    }
     const url = URL.createObjectURL(blob);
-    const win = window.open(url, '_blank');
+    const win = window.open(url, '_blank', 'noopener,noreferrer');
     if (win) win.focus();
-    else window.location.href = url;
+    else if (!options?.noFallback) window.location.href = url;
   };
 
   const handleOrderClick = async (order: Order) => {
@@ -145,17 +155,24 @@ export default function AssemblyPage() {
       // ТЗ: при клике печатать 2 этикетки (если включено в диспетчере)
       const shouldAutoPrint = printSettings?.auto_print_on_click !== false;
       if (shouldAutoPrint) {
-        const labelFormat = order.marketplace_type === 'ozon' ? 'pdf' : 'svg';
+        const labelFormat = order.marketplace_type === 'ozon' ? 'pdf' : agentAvailable ? 'png' : 'svg';
         const labelWidth = printSettings?.label_format === '80mm' ? 80 : 58;
         try {
           const productBarcode = await ordersApi.getProductBarcodeBlob(order.id);
-          if (productBarcode) printBlob(productBarcode);
           const labelBlob = await ordersApi.getLabelBlob(
             order.id,
             labelFormat,
             order.marketplace_type === 'wildberries' ? labelWidth : undefined,
           );
-          printBlob(labelBlob);
+          if (productBarcode) await printBlob(productBarcode);
+          if (agentAvailable) {
+            await printBlob(labelBlob, { noFallback: !!productBarcode });
+          } else {
+            setTimeout(
+              () => printBlob(labelBlob, { noFallback: !!productBarcode }),
+              150,
+            );
+          }
         } catch {
           // игнорируем ошибки печати
         }
@@ -272,6 +289,8 @@ export default function AssemblyPage() {
         marketplaces={marketplaces}
         autoPrintKizDuplicate={printSettings?.auto_print_kiz_duplicate !== false}
         labelFormat={printSettings?.label_format}
+        agentAvailable={agentAvailable}
+        defaultPrinter={printSettings?.default_printer}
         onClose={handleModalClose}
         onComplete={() => {
           refetch();

@@ -11,6 +11,13 @@ export interface UserMe {
   role: 'admin' | 'packer';
 }
 
+export interface OrderProduct {
+  offer_id: string;
+  name: string;
+  quantity: number;
+  image_url: string;
+}
+
 export interface Order {
   id: number;
   posting_number: string;
@@ -32,6 +39,8 @@ export interface Order {
   marketplace_created_at?: string;
   marketplace?: { is_kiz_enabled?: boolean };
   is_kiz_enabled?: boolean;
+  /** Ozon: несколько товаров в одном заказе */
+  products?: OrderProduct[];
 }
 
 export interface Marketplace {

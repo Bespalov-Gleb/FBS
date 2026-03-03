@@ -4,7 +4,7 @@
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import func
+from sqlalchemy import case, func, or_
 from sqlalchemy.orm import Session
 
 from app.models.order import Order, OrderStatus
@@ -79,11 +79,11 @@ class OrderRepository:
         marketplace_type: Optional[str] = None,
         warehouse_id: Optional[int] = None,
         status: Optional[OrderStatus] = None,
-        article_search: Optional[str] = None,
+        search: Optional[str] = None,
         sort_by: str = "marketplace_created_at",
         sort_desc: bool = True,
     ) -> list[Order]:
-        """Список заказов пользователя с фильтрами"""
+        """Список заказов пользователя с фильтрами. Поиск: артикул, название, номер заказа."""
         from app.models.marketplace import Marketplace, MarketplaceType
 
         query = (
@@ -104,11 +104,32 @@ class OrderRepository:
             query = query.filter(Order.warehouse_id == warehouse_id)
         if status:
             query = query.filter(Order.status == status)
-        if article_search:
-            search = f"%{article_search}%"
-            query = query.filter(Order.article.ilike(search))
+        search_pattern = None
+        if search and search.strip():
+            search_pattern = f"%{search.strip()}%"
+            query = query.filter(
+                or_(
+                    Order.article.ilike(search_pattern),
+                    Order.product_name.ilike(search_pattern),
+                    Order.posting_number.ilike(search_pattern),
+                    Order.external_id.ilike(search_pattern),
+                )
+            )
         order_col = getattr(Order, sort_by, Order.marketplace_created_at)
-        if sort_desc:
+        if search_pattern:
+            # Приоритет совпадений: 1 артикул, 2 название, 3 номер
+            search_priority = case(
+                (Order.article.ilike(search_pattern), 1),
+                (Order.product_name.ilike(search_pattern), 2),
+                (Order.posting_number.ilike(search_pattern), 3),
+                (Order.external_id.ilike(search_pattern), 3),
+                else_=4,
+            ).label("search_priority")
+            if sort_desc:
+                query = query.order_by(search_priority.asc(), order_col.desc())
+            else:
+                query = query.order_by(search_priority.asc(), order_col.asc())
+        elif sort_desc:
             query = query.order_by(order_col.desc())
         else:
             query = query.order_by(order_col.asc())
@@ -122,7 +143,7 @@ class OrderRepository:
         marketplace_type: Optional[str] = None,
         warehouse_id: Optional[int] = None,
         status: Optional[OrderStatus] = None,
-        article_search: Optional[str] = None,
+        search: Optional[str] = None,
     ) -> int:
         """Количество заказов по тем же фильтрам, что и get_list"""
         from app.models.marketplace import Marketplace, MarketplaceType
@@ -145,9 +166,16 @@ class OrderRepository:
             query = query.filter(Order.warehouse_id == warehouse_id)
         if status:
             query = query.filter(Order.status == status)
-        if article_search:
-            search = f"%{article_search}%"
-            query = query.filter(Order.article.ilike(search))
+        if search and search.strip():
+            search_pattern = f"%{search.strip()}%"
+            query = query.filter(
+                or_(
+                    Order.article.ilike(search_pattern),
+                    Order.product_name.ilike(search_pattern),
+                    Order.posting_number.ilike(search_pattern),
+                    Order.external_id.ilike(search_pattern),
+                )
+            )
         return query.scalar() or 0
 
     def get_stats(self, user_id: int) -> dict:

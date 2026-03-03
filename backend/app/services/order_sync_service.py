@@ -26,8 +26,8 @@ class OrderSyncService:
         """
         Синхронизация заказов для одного маркетплейса.
         
-        Ozon: заказы awaiting_deliver
-        WB: заказы new + confirm (на сборке)
+        Ozon: заказы awaiting_deliver (с пагинацией, период 90 дней)
+        WB: заказы confirm (На сборке) — через status API
         
         Returns:
             int: Количество созданных/обновлённых заказов
@@ -47,20 +47,35 @@ class OrderSyncService:
                 api_key=api_key,
                 client_id=marketplace.client_id,
             ) as client:
-                orders, _ = await client.get_orders_awaiting_deliver(limit=1000)
-                # Получаем фото товаров (POST /v3/product/info/list)
-                offer_ids = list({mo.article for mo in orders if mo.article})
+                orders = []
+                offset = 0
+                while True:
+                    batch, has_next = await client.get_orders_awaiting_deliver(
+                        limit=1000, offset=offset
+                    )
+                    orders.extend(batch)
+                    if not has_next or len(batch) < 1000:
+                        break
+                    offset += 1000
+                # Получаем фото товаров (POST /v3/product/info/list) — для всех товаров в posting
+                offer_ids = []
                 product_ids = []
                 sku_to_article = {}
                 for mo in orders:
                     prods = (mo.metadata or {}).get("products", [])
-                    if prods and (sku := prods[0].get("sku")):
-                        try:
-                            pid = int(sku)
-                            product_ids.append(pid)
-                            sku_to_article[pid] = mo.article
-                        except (ValueError, TypeError):
-                            pass
+                    for p in prods:
+                        oid = p.get("offer_id")
+                        if oid:
+                            offer_ids.append(oid)
+                        sku = p.get("sku")
+                        if sku is not None and oid:
+                            try:
+                                pid = int(sku)
+                                product_ids.append(pid)
+                                sku_to_article[pid] = oid
+                            except (ValueError, TypeError):
+                                pass
+                offer_ids = list(dict.fromkeys(offer_ids))
                 product_ids = list(dict.fromkeys(product_ids))
                 if offer_ids or product_ids:
                     try:
@@ -70,14 +85,21 @@ class OrderSyncService:
                             sku_to_article=sku_to_article or None,
                         )
                         for mo in orders:
-                            url = images.get(mo.article)
-                            if not url and mo.metadata:
-                                prods = mo.metadata.get("products", [])
-                                sku = prods[0].get("sku") if prods else None
-                                if sku is not None:
-                                    url = images.get(str(sku)) or images.get(int(sku))
-                            mo.metadata["product_image_url"] = url or ""
-                        with_images = sum(1 for mo in orders if mo.metadata.get("product_image_url"))
+                            prods = (mo.metadata or {}).get("products", [])
+                            if mo.metadata is None:
+                                mo.metadata = {}
+                            mo.metadata["product_image_url"] = ""  # fallback для первого
+                            for i, p in enumerate(prods):
+                                oid = p.get("offer_id")
+                                url = images.get(oid) if oid else ""
+                                if not url and p.get("sku") is not None:
+                                    url = images.get(str(p["sku"])) or images.get(int(p["sku"])) or ""
+                                if mo.metadata.get("product_image_url") and not url:
+                                    pass
+                                elif url and i == 0:
+                                    mo.metadata["product_image_url"] = url
+                                p["image_url"] = url or ""
+                        with_images = sum(1 for mo in orders if (mo.metadata or {}).get("product_image_url"))
                         logger.info(f"Product images: {with_images}/{len(orders)} orders got photo")
                     except Exception as e:
                         logger.warning(f"Could not fetch product images: {e}")
@@ -94,14 +116,8 @@ class OrderSyncService:
 
         elif marketplace.type == MarketplaceType.WILDBERRIES:
             async with WildberriesClient(api_key=api_key) as client:
-                # new + confirm = на сборке (ТЗ)
-                orders_new = await client.get_new_orders()
-                orders_paged, _ = await client.get_orders_by_status(limit=500)
-                seen = {mo.external_id for mo in orders_new}
-                for mo in orders_paged:
-                    if mo.external_id not in seen and mo.metadata.get("supplierStatus") == "confirm":
-                        seen.add(mo.external_id)
-                        orders_new.append(mo)
+                # ТЗ: только заказы «На сборке» (confirm)
+                orders_new = await client.get_orders_in_assembly(days_back=14, limit_per_request=500)
                 # URL фото: Content API (официально), fallback — CDN
                 unique_nm_ids = list({
                     (mo.metadata or {}).get("nm_id")
@@ -179,7 +195,7 @@ class OrderSyncService:
                 existing,
                 warehouse_id=warehouse_id,
                 warehouse_name=mo.warehouse_name,
-                metadata=mo.metadata,
+                metadata=mo.metadata,  # обновляем products с image_url
             )
             return 1
         

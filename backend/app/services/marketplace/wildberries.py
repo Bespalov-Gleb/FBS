@@ -7,7 +7,7 @@ Content API: https://dev.wildberries.ru/docs/openapi/work-with-products
 """
 import asyncio
 import base64
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Optional
 
 import httpx
@@ -330,6 +330,74 @@ class WildberriesClient(BaseMarketplaceClient):
                 detail=str(e),
             )
     
+    async def get_orders_in_assembly(
+        self,
+        days_back: int = 14,
+        limit_per_request: int = 500,
+    ) -> list[MarketplaceOrder]:
+        """
+        Получение заказов в статусе «На сборке» (confirm).
+        
+        ТЗ: для вкладки «Сборка» показываем только эти заказы.
+        GET /api/v3/orders не возвращает статус — вызываем POST /api/v3/orders/status.
+        
+        Args:
+            days_back: Период в днях (макс. 30 по API)
+            limit_per_request: Лимит за запрос (1-1000)
+            
+        Returns:
+            list[MarketplaceOrder]: Заказы с supplierStatus == "confirm"
+        """
+        now = datetime.utcnow()
+        date_from = int((now - timedelta(days=min(days_back, 30))).timestamp())
+        date_to = int(now.timestamp())
+        
+        result: list[MarketplaceOrder] = []
+        next_cursor = 0
+        
+        while True:
+            orders_batch, next_cursor = await self.get_orders_by_status(
+                limit=limit_per_request,
+                next_cursor=next_cursor,
+                date_from=date_from,
+                date_to=date_to,
+            )
+            if not orders_batch:
+                break
+            
+            order_ids = []
+            for mo in orders_batch:
+                try:
+                    order_ids.append(int(mo.external_id))
+                except (ValueError, TypeError):
+                    pass
+            
+            if not order_ids:
+                break
+            
+            statuses = await self.get_orders_statuses(order_ids)
+            
+            for mo in orders_batch:
+                try:
+                    oid = int(mo.external_id)
+                except (ValueError, TypeError):
+                    continue
+                st = statuses.get(oid)
+                supplier_status = (st or {}).get("supplier_status") if st else None
+                if supplier_status != "confirm":
+                    continue
+                if mo.metadata is None:
+                    mo.metadata = {}
+                mo.metadata["supplierStatus"] = "confirm"
+                mo.status = self._map_wb_status_to_common("confirm")
+                result.append(mo)
+            
+            if next_cursor == 0:
+                break
+        
+        logger.info(f"WB: got {len(result)} orders in assembly (confirm)")
+        return result
+    
     async def get_orders_statuses(
         self,
         order_ids: list[int],
@@ -422,7 +490,7 @@ class WildberriesClient(BaseMarketplaceClient):
                 external_id=str(order_data.get("id", "")),  # id сборочного задания
                 posting_number=order_data.get("rid", ""),  # rid - уникальный идентификатор
                 article=order_data.get("article", ""),  # Артикул продавца
-                product_name=f"NM {order_data.get('nmId', '')}",  # nmId - артикул WB
+                product_name=order_data.get("article", "") or f"NM {order_data.get('nmId', '')}",  # WB API не возвращает название — используем артикул; fallback на nmId
                 quantity=1,  # В WB каждое сборочное задание = 1 товар
                 warehouse_name=", ".join(order_data.get("offices", [])),  # Склады
                 status=self._map_wb_status_to_common(

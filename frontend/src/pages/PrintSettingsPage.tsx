@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { isPrintAgentAvailable, printViaAgent, getPrintAgentPrinters } from '../api/printAgent';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Box,
@@ -25,6 +26,8 @@ export default function PrintSettingsPage() {
   const [labelFormat, setLabelFormat] = useState<'58mm' | '80mm'>('58mm');
   const [autoPrint, setAutoPrint] = useState(true);
   const [autoPrintKiz, setAutoPrintKiz] = useState(true);
+  const [agentAvailable, setAgentAvailable] = useState(false);
+  const [agentPrinters, setAgentPrinters] = useState<string[]>([]);
 
   const { data: settings, isLoading } = useQuery({
     queryKey: ['print-settings'],
@@ -39,6 +42,13 @@ export default function PrintSettingsPage() {
       setAutoPrintKiz(settings.auto_print_kiz_duplicate !== false);
     }
   }, [settings]);
+
+  useEffect(() => {
+    isPrintAgentAvailable().then((ok) => {
+      setAgentAvailable(ok);
+      if (ok) getPrintAgentPrinters().then(setAgentPrinters);
+    });
+  }, []);
 
   const updateMutation = useMutation({
     mutationFn: () =>
@@ -56,12 +66,16 @@ export default function PrintSettingsPage() {
   const handleTestPrint = async () => {
     try {
       const blob = await printSettingsApi.getTestLabelBlob();
-      const url = URL.createObjectURL(blob);
-      const win = window.open(url, '_blank');
-      if (win) {
-        win.onload = () => win.print();
+      if (agentAvailable) {
+        await printViaAgent(blob, defaultPrinter || undefined);
       } else {
-        window.location.href = url;
+        const url = URL.createObjectURL(blob);
+        const win = window.open(url, '_blank');
+        if (win) {
+          win.onload = () => win.print();
+        } else {
+          window.location.href = url;
+        }
       }
     } catch {
       window.print();
@@ -77,9 +91,10 @@ export default function PrintSettingsPage() {
         Настройки печати этикеток через браузер
       </Typography>
 
-      <Alert severity="info" sx={{ mb: 2 }}>
-        Печать выполняется через браузер. При первой печати выберите принтер в диалоге.
-        Термопринтер должен быть установлен как обычный принтер в системе.
+      <Alert severity={agentAvailable ? 'success' : 'info'} sx={{ mb: 2 }}>
+        {agentAvailable
+          ? 'Агент печати подключен. Тихая печать без диалога.'
+          : 'Печать выполняется через браузер. При первой печати выберите принтер в диалоге. Установите fbs-print-agent для тихой печати.'}
       </Alert>
 
       {isLoading ? (
@@ -111,14 +126,35 @@ export default function PrintSettingsPage() {
                 }
                 label="Автопечать дубля КИЗ после скана"
               />
-              <TextField
-                label="Принтер"
-                value={defaultPrinter || 'Выберите в диалоге печати'}
-                fullWidth
-                InputProps={{ readOnly: true }}
-                size="small"
-                helperText="Браузер не может задать принтер. Выберите его при первой печати."
-              />
+              {agentAvailable && agentPrinters.length > 0 ? (
+                <FormControl fullWidth size="small">
+                  <InputLabel>Принтер</InputLabel>
+                  <Select
+                    value={defaultPrinter}
+                    label="Принтер"
+                    onChange={(e) => setDefaultPrinter(e.target.value)}
+                  >
+                    <MenuItem value="">По умолчанию</MenuItem>
+                    {agentPrinters.map((p) => (
+                      <MenuItem key={p} value={p}>
+                        {p}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
+                    Агент печати использует выбранный принтер
+                  </Typography>
+                </FormControl>
+              ) : (
+                <TextField
+                  label="Принтер"
+                  value={defaultPrinter || (agentAvailable ? 'По умолчанию' : 'Выберите в диалоге печати')}
+                  fullWidth
+                  InputProps={{ readOnly: true }}
+                  size="small"
+                  helperText={agentAvailable ? 'Агент использует системный принтер по умолчанию' : 'Браузер не может задать принтер. Выберите его при первой печати.'}
+                />
+              )}
               <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
                 <Button variant="contained" onClick={handleSave} disabled={updateMutation.isPending}>
                   Сохранить

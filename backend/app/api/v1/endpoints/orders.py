@@ -15,7 +15,7 @@ from app.models.marketplace import Marketplace
 from app.models.order import Order, OrderStatus
 from app.models.user import User
 from app.repositories.order_repository import OrderRepository
-from app.schemas.order import OrderResponse, OrdersListResponse
+from app.schemas.order import OrderProductItem, OrderResponse, OrdersListResponse
 from app.services.marketplace.wildberries import WildberriesClient
 from app.services.order_complete_service import OrderCompleteService
 from app.services.order_sync_service import OrderSyncService
@@ -36,6 +36,22 @@ def _product_image_url_for_order(o: Order) -> Optional[str]:
     return None
 
 
+def _order_products(o: Order) -> list[OrderProductItem]:
+    """Список товаров в заказе (Ozon: несколько в одном posting)."""
+    if not o.marketplace or o.marketplace.type.value != "ozon":
+        return []
+    prods = (o.extra_data or {}).get("products", [])
+    return [
+        OrderProductItem(
+            offer_id=str(p.get("offer_id", "")),
+            name=str(p.get("name", "")),
+            quantity=int(p.get("quantity", 1)),
+            image_url=str(p.get("image_url", "")),
+        )
+        for p in prods
+    ]
+
+
 class OrderCompleteRequest(BaseModel):
     """Запрос на отметку «Собрано»"""
     kiz_code: Optional[str] = None
@@ -49,8 +65,8 @@ def list_orders(
     marketplace_type: Optional[str] = Query(None, description="ozon | wildberries — все магазины типа"),
     warehouse_id: Optional[int] = None,
     status: Optional[str] = None,
-    article: Optional[str] = None,
-    sort_by: str = Query("marketplace_created_at", description="marketplace_created_at, article"),
+    search: Optional[str] = Query(None, description="Поиск по артикулу, названию, номеру заказа"),
+    sort_by: str = Query("marketplace_created_at", description="marketplace_created_at, article, product_name"),
     sort_desc: bool = Query(True),
     db: Session = Depends(get_db),
     current_user: User = CurrentUser,
@@ -58,7 +74,7 @@ def list_orders(
     """
     Список заказов для вкладки «Сборка».
     
-    Фильтры: marketplace_id, marketplace_type (ozon/wildberries), warehouse_id, status, article.
+    Фильтры: marketplace_id, marketplace_type (ozon/wildberries), warehouse_id, status, search (артикул/название/номер).
     """
     status_enum = None
     if status:
@@ -73,7 +89,7 @@ def list_orders(
         marketplace_type=marketplace_type,
         warehouse_id=warehouse_id,
         status=status_enum,
-        article_search=article,
+        search=search,
     )
     orders = order_repo.get_list(
         user_id=current_user.id,
@@ -83,7 +99,7 @@ def list_orders(
         marketplace_type=marketplace_type,
         warehouse_id=warehouse_id,
         status=status_enum,
-        article_search=article,
+        search=search,
         sort_by=sort_by,
         sort_desc=sort_desc,
     )
@@ -110,6 +126,7 @@ def list_orders(
             is_locked_by_me=o.is_locked_by(current_user.id),
             is_locked_by_other=o.is_locked_by_other(current_user.id),
             is_kiz_enabled=o.marketplace.is_kiz_enabled if o.marketplace else False,
+            products=_order_products(o),
         )
         for o in orders
     ]
@@ -286,6 +303,7 @@ def get_order(
         is_locked_by_me=order.is_locked_by(current_user.id),
         is_locked_by_other=order.is_locked_by_other(current_user.id),
         is_kiz_enabled=order.marketplace.is_kiz_enabled if order.marketplace else False,
+        products=_order_products(order),
     )
 
 
@@ -454,16 +472,22 @@ async def get_order_product_barcode(
     api_key = decrypt_api_key(mp.api_key)
     async with OzonClient(api_key=api_key, client_id=mp.client_id) as client:
         details = await client.get_posting_details(order.posting_number, with_barcodes=True)
-    barcodes = details.get("barcodes") or {}
-    upper = barcodes.get("upper_barcode") if isinstance(barcodes, dict) else None
-    if not upper or not str(upper).strip():
-        raise HTTPException(404, detail="Product barcode not found")
+    # Ozon: штрихкод товара = OZN + SKU (док. Ozon). upper_barcode — EAN из карточки.
+    products = details.get("products") or []
+    sku = products[0].get("sku") if products else None
+    if sku is not None:
+        code = f"OZN{sku}"
+    else:
+        barcodes = details.get("barcodes") or {}
+        upper = barcodes.get("upper_barcode") if isinstance(barcodes, dict) else None
+        if not upper or not str(upper).strip():
+            raise HTTPException(404, detail="Product barcode not found")
+        code = str(upper).strip()
 
     try:
         from barcode import EAN13, Code128
         from barcode.writer import ImageWriter
 
-        code = str(upper).strip()
         if len(code) == 13 and code.isdigit():
             bc = EAN13(code[:12], writer=ImageWriter())  # EAN13 expects 12 digits
         else:

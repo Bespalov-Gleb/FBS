@@ -97,6 +97,10 @@ node_modules/
 /build
 /dist
 
+# FBS Print Agent
+fbs-print-agent/dist/
+fbs-print-agent/output/
+
 # Frontend (React)
 .eslintcache
 .npm

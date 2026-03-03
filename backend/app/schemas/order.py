@@ -7,6 +7,14 @@ from typing import Any, Optional
 from pydantic import BaseModel
 
 
+class OrderProductItem(BaseModel):
+    """Товар в заказе (Ozon: несколько товаров в одном posting)"""
+    offer_id: str = ""
+    name: str = ""
+    quantity: int = 1
+    image_url: str = ""
+
+
 class OrdersListResponse(BaseModel):
     """Пагинированный список заказов"""
     items: list["OrderResponse"]
@@ -37,6 +45,7 @@ class OrderResponse(BaseModel):
     is_locked_by_me: bool = False
     is_locked_by_other: bool = False
     is_kiz_enabled: bool = False  # Маркетплейс требует КИЗ (WB + Ozon)
+    products: list[OrderProductItem] = []  # Ozon: несколько товаров в одном заказе
 
 
 # Разрешение forward reference для OrdersListResponse

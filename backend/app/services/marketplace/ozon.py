@@ -95,13 +95,14 @@ class OzonClient(BaseMarketplaceClient):
             
             first_product = products[0]
             delivery_method = posting.get("delivery_method") or {}
+            total_qty = sum(p.get("quantity", 1) for p in products)
             
             order = MarketplaceOrder(
                 external_id=str(posting.get("order_id", "")),
                 posting_number=posting.get("posting_number", ""),
                 article=first_product.get("offer_id", ""),
                 product_name=first_product.get("name", ""),
-                quantity=first_product.get("quantity", 1),
+                quantity=total_qty,
                 warehouse_name=delivery_method.get("warehouse"),
                 status=self._map_ozon_status_to_common(posting.get("status", "")),
                 created_at=self._parse_datetime(posting.get("in_process_at")),
@@ -199,7 +200,7 @@ class OzonClient(BaseMarketplaceClient):
         
         Args:
             warehouse_id: ID склада
-            since, to: Период (по умолчанию 30 дней)
+            since, to: Период (по умолчанию 90 дней)
             status: Статус — фильтрация на нашей стороне (API не поддерживает)
             limit: Лимит (max 1000)
             offset: Смещение
@@ -209,7 +210,7 @@ class OzonClient(BaseMarketplaceClient):
             tuple: (список заказов, has_next)
         """
         now = datetime.utcnow()
-        period_from = since or (now - timedelta(days=30))
+        period_from = since or (now - timedelta(days=90))
         period_to = to or now
         iso_format = "%Y-%m-%dT%H:%M:%S.000Z"
 

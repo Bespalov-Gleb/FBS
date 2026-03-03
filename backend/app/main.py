@@ -139,9 +139,10 @@ async def health_check():
 async def health_check_db():
     """Health check базы данных"""
     try:
+        from sqlalchemy import text
         from app.core.database import engine
         with engine.connect() as conn:
-            conn.execute("SELECT 1")
+            conn.execute(text("SELECT 1"))
         return JSONResponse(content={"status": "healthy"})
     except Exception as e:
         logger.error(f"Database health check failed: {e}")
