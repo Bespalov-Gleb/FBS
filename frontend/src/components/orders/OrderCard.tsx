@@ -9,9 +9,10 @@ interface OrderCardProps {
   onClick: () => void;
 }
 
-function ProductRow({ product }: { product: OrderProduct }) {
+function ProductRow({ product, highlightQuantity }: { product: OrderProduct; highlightQuantity?: boolean }) {
   const [imgErr, setImgErr] = useState(false);
   const imgUrl = getProductImageUrl(product.image_url);
+  const glow = highlightQuantity ?? (product.quantity >= 2);
   return (
     <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'flex-start', py: 1 }}>
       {imgUrl && !imgErr && (
@@ -32,7 +33,7 @@ function ProductRow({ product }: { product: OrderProduct }) {
           variant="caption"
           sx={{
             fontWeight: 500,
-            color: product.quantity >= 2 ? palette.accent.red : palette.text.secondary,
+            color: glow ? palette.accent.red : palette.text.secondary,
           }}
         >
           ×{product.quantity}
@@ -80,7 +81,7 @@ export default function OrderCard({ order, onClick }: OrderCardProps) {
             {order.products!.map((p, i) => (
               <Box key={p.offer_id + i}>
                 {i > 0 && <Divider sx={{ my: 0.5 }} />}
-                <ProductRow product={p} />
+                <ProductRow product={p} highlightQuantity={order.quantity >= 2} />
               </Box>
             ))}
             <Box sx={{ display: 'flex', gap: 1, mt: 1, flexWrap: 'wrap', alignItems: 'center' }}>

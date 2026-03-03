@@ -15,7 +15,8 @@
 3. При установке можно выбрать:
    - значок на рабочем столе
    - автозапуск при входе в Windows
-4. Если SumatraPDF не встроен — [скачайте](https://www.sumatrapdfreader.org/download-free-pdf-viewer) и установите в `C:\Program Files\SumatraPDF\`
+4. **Запуск:** используйте ярлык «FBS Print Agent» (меню Пуск или рабочий стол). Не запускайте `fbs-print-agent.exe` напрямую — ярлык задаёт привязку к сайту fbs-upakovka.ru.
+5. Если SumatraPDF не встроен — [скачайте](https://www.sumatrapdfreader.org/download-free-pdf-viewer) и установите в `C:\Program Files\SumatraPDF\`
 
 ## Сборка установщика (для разработчиков)
 
@@ -60,15 +61,15 @@ exe будет в `dist/fbs-print-agent.exe`. Скопируйте `SumatraPDF.e
 
 ## Автозапуск (ручная настройка)
 
-Создайте ярлык `fbs-print-agent.exe` и поместите в:
+При установке через установщик можно включить «Запускать при входе в Windows».  
+Если настраиваете вручную — создайте ярлык на `run-agent.vbs` (из папки установки) и поместите в:
 `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\`
 
 ## Переменные окружения
 
 - `FBS_PRINT_AGENT_PORT` — порт (по умолчанию 9199)
 - `FBS_PRINT_AGENT_PRINTER` — принтер по умолчанию
-- `FBS_PRINT_AGENT_ORIGINS` — **обязательно для продакшена!** CORS origins через запятую. Без этого сайт с другого домена не сможет отправить задание на печать.
-  - Пример: `FBS_PRINT_AGENT_ORIGINS=https://fbs-upakovka.ru,https://www.fbs-upakovka.ru`
+- `FBS_PRINT_AGENT_ORIGINS` — CORS origins через запятую. Без этого сайт fbs-upakovka.ru не сможет отправить задание на печать. При запуске через ярлык установщика задаётся автоматически.
 
 ## API
 

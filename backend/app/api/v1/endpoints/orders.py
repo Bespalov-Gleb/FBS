@@ -454,15 +454,87 @@ async def complete_order(
     return {"ok": True, "order_id": order_id}
 
 
+def _wrap_text(text: str, max_chars: int = 28) -> list[str]:
+    """Разбить текст на строки по max_chars символов."""
+    if not text or not text.strip():
+        return []
+    words = text.strip().split()
+    lines: list[str] = []
+    current = ""
+    for w in words:
+        if len(current) + len(w) + 1 <= max_chars:
+            current = f"{current} {w}".strip() if current else w
+        else:
+            if current:
+                lines.append(current)
+            current = w if len(w) <= max_chars else w[:max_chars]
+    if current:
+        lines.append(current)
+    return lines
+
+
+def _add_product_name_to_barcode(image_bytes: bytes, product_name: str) -> bytes:
+    """Добавить название товара под штрих-кодом (как в примере Ozon)."""
+    import io
+    import os
+
+    from PIL import Image, ImageDraw, ImageFont
+
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    w, h = img.size
+
+    # Шрифт с поддержкой кириллицы
+    font_paths = [
+        "C:/Windows/Fonts/arial.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+    ]
+    font_size = max(10, min(w // 15, 14))
+    font = None
+    for p in font_paths:
+        if os.path.exists(p):
+            try:
+                font = ImageFont.truetype(p, font_size)
+                break
+            except OSError:
+                pass
+    if font is None:
+        font = ImageFont.load_default()
+
+    lines = _wrap_text(product_name, max_chars=max(20, w // (font_size or 10)))
+    line_height = int(font_size * 1.3)
+    extra_h = len(lines) * line_height + 8 if lines else 0
+    if extra_h == 0:
+        return image_bytes
+
+    new_img = Image.new("RGB", (w, h + extra_h), (255, 255, 255))
+    new_img.paste(img, (0, 0))
+    draw = ImageDraw.Draw(new_img)
+    y = h + 4
+    for line in lines:
+        # Центрирование по ширине (приблизительно)
+        bbox = draw.textbbox((0, 0), line, font=font)
+        tw = bbox[2] - bbox[0]
+        x = max(0, (w - tw) // 2)
+        draw.text((x, y), line, fill=(0, 0, 0), font=font)
+        y += line_height
+
+    out = io.BytesIO()
+    new_img.save(out, format="PNG")
+    return out.getvalue()
+
+
 @router.get("/{order_id}/product-barcode")
 async def get_order_product_barcode(
     order_id: int,
+    with_name: bool = Query(True, description="Добавить название товара под штрих-кодом"),
     db: Session = Depends(get_db),
     current_user: User = CurrentUser,
 ):
     """
     Штрихкод товара (upper_barcode) для печати.
     Только Ozon. WB не поддерживает отдельный штрихкод товара.
+    С названием товара под штрих-кодом (как в примере Ozon).
     """
     from app.models.marketplace import MarketplaceType
     from app.services.marketplace.ozon import OzonClient
@@ -495,6 +567,11 @@ async def get_order_product_barcode(
             raise HTTPException(404, detail="Product barcode not found")
         code = str(upper).strip()
 
+    # Название товара: из БД или из details
+    product_name = (order.product_name or "").strip()
+    if not product_name and products:
+        product_name = (products[0].get("name") or "").strip()
+
     try:
         from barcode import EAN13, Code128
         from barcode.writer import ImageWriter
@@ -506,8 +583,13 @@ async def get_order_product_barcode(
         buf = io.BytesIO()
         bc.write(buf)
         buf.seek(0)
+        image_bytes = buf.getvalue()
+
+        if with_name and product_name:
+            image_bytes = _add_product_name_to_barcode(image_bytes, product_name)
+
         return Response(
-            content=buf.getvalue(),
+            content=image_bytes,
             media_type="image/png",
             headers={"Content-Disposition": f"inline; filename=product-barcode-{order_id}.png"},
         )

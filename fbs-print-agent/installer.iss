@@ -32,17 +32,19 @@ Name: "desktopicon"; Description: "Создать значок на рабоче
 Name: "startupicon"; Description: "Запускать при входе в Windows"; GroupDescription: "Дополнительные задачи:"
 
 [Files]
-; Основной exe и SumatraPDF (рядом с exe — агент найдёт его)
+; Основной exe, launcher (vbs — без окна консоли) и SumatraPDF
 Source: "dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "run-agent.vbs"; DestDir: "{app}"; Flags: ignoreversion
 Source: "dist\SumatraPDF.exe"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 
 [Icons]
-Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
+; Ярлыки запускают run-agent.vbs (задаёт CORS для сайта, без окна)
+Name: "{group}\{#MyAppName}"; Filename: "{app}\run-agent.vbs"; WorkingDir: "{app}"
 Name: "{group}\Удалить {#MyAppName}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\run-agent.vbs"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "Запустить агент печати"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\run-agent.vbs"; Description: "Запустить агент печати"; Flags: nowait postinstall skipifsilent
 
 [Code]
 procedure CurStepChanged(CurStep: TSetupStep);
@@ -51,11 +53,11 @@ begin
   begin
     if WizardIsTaskSelected('startupicon') then
     begin
-      // Добавить в автозагрузку через реестр
+      // Добавить в автозагрузку — run-agent.vbs задаёт CORS для сайта
       RegWriteStringValue(HKEY_CURRENT_USER,
         'Software\Microsoft\Windows\CurrentVersion\Run',
         'FBS Print Agent',
-        ExpandConstant('"{app}\{#MyAppExeName}"'));
+        ExpandConstant('wscript.exe //B "{app}\run-agent.vbs"'));
     end;
   end;
 end;

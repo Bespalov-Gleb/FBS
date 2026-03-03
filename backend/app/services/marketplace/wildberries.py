@@ -353,15 +353,16 @@ class WildberriesClient(BaseMarketplaceClient):
         limit_per_request: int = 500,
     ) -> tuple[list[MarketplaceOrder], dict[str, str], set[str]]:
         """
-        Получение заказов в статусе «На сборке» (confirm) и обновлений статусов.
+        Получение заказов для вкладки «Сборка»: new + confirm.
         
-        ТЗ: для вкладки «Сборка» показываем только заказы в confirm.
+        new = ещё не в поставке (заказ пришёл, но WB создаёт новую поставку каждый раз).
+        confirm = уже в поставке. Показываем оба — чтобы заказы подтягивались сразу.
         GET /api/v3/orders не возвращает статус — вызываем POST /api/v3/orders/status.
         
         Returns:
-            tuple: (confirm_orders, status_updates, all_external_ids)
-            - confirm_orders: заказы с supplierStatus == "confirm"
-            - status_updates: {external_id: "complete"|"cancel"} для заказов не в confirm
+            tuple: (orders, status_updates, all_external_ids)
+            - orders: заказы с supplierStatus in ("new", "confirm")
+            - status_updates: {external_id: "complete"|"cancel"} для complete/cancel
             - all_external_ids: все external_id из API (для _mark_cancelled)
         """
         now = datetime.utcnow()
@@ -403,20 +404,20 @@ class WildberriesClient(BaseMarketplaceClient):
                     continue
                 st = statuses.get(oid)
                 supplier_status = (st or {}).get("supplier_status") if st else None
-                if supplier_status == "confirm":
+                if supplier_status in ("new", "confirm"):
+                    # new и confirm — показываем в «Сборка» (заказ не подтягивался, т.к. раньше new не показывали)
                     if mo.metadata is None:
                         mo.metadata = {}
-                    mo.metadata["supplierStatus"] = "confirm"
-                    mo.status = self._map_wb_status_to_common("confirm")
+                    mo.metadata["supplierStatus"] = supplier_status
+                    mo.status = self._map_wb_status_to_common(supplier_status)
                     result.append(mo)
-                elif supplier_status in ("complete", "cancel", "new"):
-                    # new = ещё не в поставке, не показываем в «Сборка»; complete/cancel — обновляем статус
+                elif supplier_status in ("complete", "cancel"):
                     status_updates[mo.external_id] = supplier_status
             
             if next_cursor == 0:
                 break
         
-        logger.info(f"WB: got {len(result)} orders in assembly (confirm), {len(status_updates)} to update (complete/cancel)")
+        logger.info(f"WB: got {len(result)} orders in assembly (new+confirm), {len(status_updates)} to update (complete/cancel)")
         return result, status_updates, all_external_ids
     
     async def get_orders_statuses(

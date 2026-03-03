@@ -209,7 +209,7 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
                       </Typography>
                       <Typography
                         variant="caption"
-                        sx={{ color: p.quantity >= 2 ? palette.accent.red : 'inherit', fontWeight: p.quantity >= 2 ? 600 : 400 }}
+                        sx={{ color: order.quantity >= 2 ? palette.accent.red : 'inherit', fontWeight: order.quantity >= 2 ? 600 : 400 }}
                       >
                         ×{p.quantity}
                       </Typography>
