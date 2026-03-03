@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import case, func, or_
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.models.order import Order, OrderStatus
 
@@ -133,6 +133,12 @@ class OrderRepository:
             query = query.order_by(order_col.desc())
         else:
             query = query.order_by(order_col.asc())
+        # Eager load — избегаем N+1 при доступе к marketplace, warehouse, assigned_to_user
+        query = query.options(
+            joinedload(Order.marketplace),
+            joinedload(Order.warehouse),
+            joinedload(Order.assigned_to_user),
+        )
         return query.offset(skip).limit(limit).all()
 
     def get_list_count(

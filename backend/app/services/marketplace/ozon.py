@@ -513,8 +513,8 @@ class OzonClient(BaseMarketplaceClient):
                 )
                 # Ozon: items на верхнем уровне ИЛИ result.items[]
                 items = response.get("items")
+                res = response.get("result")
                 if items is None:
-                    res = response.get("result")
                     items = res.get("items", []) if isinstance(res, dict) else (res if isinstance(res, list) else [])
                 items = items or []
                 if not items:
@@ -522,7 +522,7 @@ class OzonClient(BaseMarketplaceClient):
                         "Ozon product/info/list returned 0 items",
                         extra={
                             "response_keys": list(response.keys()),
-                            "result_type": type(res).__name__,
+                            "result_type": type(res).__name__ if res is not None else "None",
                             "result_sample": str(res)[:500] if res else None,
                             "request_key": req_key,
                             "request_sample": batch[:3],
