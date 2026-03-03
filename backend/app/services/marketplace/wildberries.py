@@ -353,17 +353,14 @@ class WildberriesClient(BaseMarketplaceClient):
         limit_per_request: int = 500,
     ) -> tuple[list[MarketplaceOrder], dict[str, str], set[str]]:
         """
-        Получение заказов для вкладки «Сборка»: new + confirm.
+        Получение заказов «На сборке» — только confirm (в поставке).
         
-        new = ещё не в поставке (заказ пришёл, но WB создаёт новую поставку каждый раз).
-        confirm = уже в поставке. Показываем оба — чтобы заказы подтягивались сразу.
-        GET /api/v3/orders не возвращает статус — вызываем POST /api/v3/orders/status.
+        Документация WB: GET /api/v3/orders не имеет фильтра по статусу.
+        POST /api/v3/orders/status возвращает supplierStatus: new | confirm | complete | cancel.
+        confirm = В сборке (добавлен в поставку). Фильтруем только confirm.
         
         Returns:
-            tuple: (orders, status_updates, all_external_ids)
-            - orders: заказы с supplierStatus in ("new", "confirm")
-            - status_updates: {external_id: "complete"|"cancel"} для complete/cancel
-            - all_external_ids: все external_id из API (для _mark_cancelled)
+            tuple: (confirm_orders, status_updates, all_external_ids)
         """
         now = datetime.utcnow()
         date_from = int((now - timedelta(days=min(days_back, 30))).timestamp())
@@ -404,12 +401,11 @@ class WildberriesClient(BaseMarketplaceClient):
                     continue
                 st = statuses.get(oid)
                 supplier_status = (st or {}).get("supplier_status") if st else None
-                if supplier_status in ("new", "confirm"):
-                    # new и confirm — показываем в «Сборка» (заказ не подтягивался, т.к. раньше new не показывали)
+                if supplier_status == "confirm":
                     if mo.metadata is None:
                         mo.metadata = {}
-                    mo.metadata["supplierStatus"] = supplier_status
-                    mo.status = self._map_wb_status_to_common(supplier_status)
+                    mo.metadata["supplierStatus"] = "confirm"
+                    mo.status = self._map_wb_status_to_common("confirm")
                     result.append(mo)
                 elif supplier_status in ("complete", "cancel"):
                     status_updates[mo.external_id] = supplier_status
@@ -417,7 +413,7 @@ class WildberriesClient(BaseMarketplaceClient):
             if next_cursor == 0:
                 break
         
-        logger.info(f"WB: got {len(result)} orders in assembly (new+confirm), {len(status_updates)} to update (complete/cancel)")
+        logger.info(f"WB: got {len(result)} orders in assembly (confirm only), {len(status_updates)} to update")
         return result, status_updates, all_external_ids
     
     async def get_orders_statuses(
