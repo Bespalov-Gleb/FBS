@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { isPrintAgentAvailable, printViaAgent, getPrintAgentPrinters } from '../api/printAgent';
+import { openBlobInNewWindow } from '../utils/printUtils';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Box,
@@ -76,13 +77,7 @@ export default function PrintSettingsPage() {
           setTestPrintError('Агент не ответил или печать не удалась. Проверьте, что агент запущен и SumatraPDF установлен.');
         }
       } else {
-        const url = URL.createObjectURL(blob);
-        const win = window.open(url, '_blank');
-        if (win) {
-          win.onload = () => win.print();
-        } else {
-          window.location.href = url;
-        }
+        openBlobInNewWindow(blob, { triggerPrint: true });
       }
     } catch (e) {
       setTestPrintError(e instanceof Error ? e.message : 'Ошибка при печати');

@@ -24,6 +24,7 @@ import { marketplacesApi } from '../api/marketplaces';
 import { warehousesApi } from '../api/warehouses';
 import { printSettingsApi } from '../api/printSettings';
 import { isPrintAgentAvailable, printViaAgent } from '../api/printAgent';
+import { openBlobInNewWindow } from '../utils/printUtils';
 import type { Order } from '../types/api';
 import type { RootState } from '../store';
 
@@ -133,15 +134,12 @@ export default function AssemblyPage() {
     }
   };
 
-  const printBlob = async (blob: Blob, options?: { noFallback?: boolean }) => {
+  const printBlob = async (blob: Blob, _options?: { noFallback?: boolean }) => {
     if (agentAvailable) {
       const ok = await printViaAgent(blob, printSettings?.default_printer || undefined);
       if (ok) return;
     }
-    const url = URL.createObjectURL(blob);
-    const win = window.open(url, '_blank', 'noopener,noreferrer');
-    if (win) win.focus();
-    else if (!options?.noFallback) window.location.href = url;
+    openBlobInNewWindow(blob);
   };
 
   const handleOrderClick = async (order: Order) => {

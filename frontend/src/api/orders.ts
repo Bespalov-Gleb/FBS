@@ -36,9 +36,26 @@ export interface OrdersListResponse {
   total: number;
 }
 
+/** Сериализация params с массивами: marketplace_ids=1&marketplace_ids=2 для FastAPI */
+function stringifyOrdersParams(params: OrdersParams): string {
+  const pairs: string[] = [];
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === null) continue;
+    if (Array.isArray(value)) {
+      if (value.length === 0) continue;
+      value.forEach((v) => pairs.push(`${encodeURIComponent(key)}=${encodeURIComponent(String(v))}`));
+    } else {
+      pairs.push(`${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`);
+    }
+  }
+  return pairs.join('&');
+}
+
 export const ordersApi = {
   list: async (params?: OrdersParams): Promise<OrdersListResponse> => {
-    const { data } = await apiClient.get<OrdersListResponse>('/orders', { params });
+    const query = params ? stringifyOrdersParams(params) : '';
+    const url = query ? `/orders?${query}` : '/orders';
+    const { data } = await apiClient.get<OrdersListResponse>(url);
     return data;
   },
 

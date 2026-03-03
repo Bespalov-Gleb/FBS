@@ -300,8 +300,9 @@ class BaseMarketplaceClient(ABC):
             except Exception:
                 pass
             
+            err_msg = str(error_detail)[:500] if error_detail else ""
             logger.error(
-                f"API error from {self.marketplace_name}",
+                f"API error from {self.marketplace_name}: HTTP {response.status_code} — {err_msg}",
                 extra={
                     "marketplace": self.marketplace_name,
                     "status_code": response.status_code,

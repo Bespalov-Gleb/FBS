@@ -15,6 +15,7 @@ import LocalPrintshop from '@mui/icons-material/LocalPrintshop';
 import type { Order, Marketplace } from '../../types/api';
 import { ordersApi } from '../../api/orders';
 import { printViaAgent } from '../../api/printAgent';
+import { openBlobInNewWindow } from '../../utils/printUtils';
 import { getProductImageUrl } from '../../api/client';
 import { palette } from '../../theme/theme';
 
@@ -106,10 +107,7 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
       if (agentAvailable) {
         await printViaAgent(blob);
       } else {
-        const url = URL.createObjectURL(blob);
-        const win = window.open(url, '_blank');
-        if (win) win.focus();
-        else window.location.href = url;
+        openBlobInNewWindow(blob);
       }
     }).catch(() => {});
   }, [order, kizCode, isKizRequired, isCompleted, autoPrintKizDuplicate, agentAvailable]);
@@ -136,10 +134,7 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
       if (agentAvailable) {
         await printViaAgent(blob, defaultPrinter);
       } else {
-        const url = URL.createObjectURL(blob);
-        const win = window.open(url, '_blank');
-        if (win) win.focus();
-        else window.location.href = url;
+        openBlobInNewWindow(blob);
       }
     } catch (err: unknown) {
       const msg = await extractErrorMessage(err);
@@ -154,10 +149,7 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
       if (agentAvailable) {
         await printViaAgent(blob, defaultPrinter);
       } else {
-        const url = URL.createObjectURL(blob);
-        const win = window.open(url, '_blank');
-        if (win) win.focus();
-        else window.location.href = url;
+        openBlobInNewWindow(blob);
       }
     } catch {
       setError('Ошибка печати дубля КИЗ');
