@@ -79,7 +79,7 @@ services:
       context: ./backend
       dockerfile: docker/Dockerfile
     container_name: fbs_celery_worker
-    command: celery -A app.core.celery_app worker --loglevel=info --concurrency=2
+    command: celery -A app.core.celery_app worker --loglevel=warning --concurrency=2
     environment:
       DEBUG: ${DEBUG:-true}
       ENVIRONMENT: ${ENVIRONMENT:-development}
@@ -110,7 +110,7 @@ services:
       context: ./backend
       dockerfile: docker/Dockerfile
     container_name: fbs_celery_beat
-    command: celery -A app.core.celery_app beat --loglevel=info
+    command: celery -A app.core.celery_app beat --loglevel=warning
     environment:
       DEBUG: ${DEBUG:-true}
       ENVIRONMENT: ${ENVIRONMENT:-development}

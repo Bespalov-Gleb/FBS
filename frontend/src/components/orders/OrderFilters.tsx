@@ -10,12 +10,12 @@ import {
   FormGroup,
   FormControlLabel,
   Checkbox,
-  Collapse,
+  Menu,
   Typography,
+  Button,
 } from '@mui/material';
 import Search from '@mui/icons-material/Search';
-import ExpandMore from '@mui/icons-material/ExpandMore';
-import ExpandLess from '@mui/icons-material/ExpandLess';
+import ArrowDropDown from '@mui/icons-material/ArrowDropDown';
 import type { Marketplace } from '../../types/api';
 import type { Warehouse } from '../../types/api';
 
@@ -62,8 +62,8 @@ export default function OrderFilters({
   warehouses,
 }: OrderFiltersProps) {
   const [searchInput, setSearchInput] = useState(filters.search);
-  const [mpOpen, setMpOpen] = useState(false);
-  const [whOpen, setWhOpen] = useState(false);
+  const [mpAnchor, setMpAnchor] = useState<null | HTMLElement>(null);
+  const [whAnchor, setWhAnchor] = useState<null | HTMLElement>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     setSearchInput(filters.search);
@@ -104,19 +104,26 @@ export default function OrderFilters({
   const hasWhFilter = filters.warehouse_ids.length > 0;
 
   return (
-    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, alignItems: 'flex-start', mb: 2 }}>
-      <Box sx={{ border: 1, borderColor: 'divider', borderRadius: 1, px: 1.5, py: 0.5 }}>
-        <Box
-          sx={{ display: 'flex', alignItems: 'center', cursor: 'pointer', gap: 0.5 }}
-          onClick={() => setMpOpen(!mpOpen)}
-        >
-          <Typography variant="body2" fontWeight={500}>
-            Маркетплейсы {hasMpFilter && `(${filters.marketplace_types.length + filters.marketplace_ids.length})`}
-          </Typography>
-          {mpOpen ? <ExpandLess fontSize="small" /> : <ExpandMore fontSize="small" />}
-        </Box>
-        <Collapse in={mpOpen}>
-          <FormGroup sx={{ flexDirection: 'row', flexWrap: 'wrap', gap: 0, mt: 0.5, mb: 0.5 }}>
+    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, alignItems: 'center', mb: 2 }}>
+      <Button
+        variant="outlined"
+        size="small"
+        endIcon={<ArrowDropDown />}
+        onClick={(e) => setMpAnchor(e.currentTarget)}
+        sx={{ textTransform: 'none', minWidth: 160 }}
+      >
+        Маркетплейсы {hasMpFilter && `(${filters.marketplace_types.length + filters.marketplace_ids.length})`}
+      </Button>
+      <Menu
+        anchorEl={mpAnchor}
+        open={!!mpAnchor}
+        onClose={() => setMpAnchor(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+        transformOrigin={{ vertical: 'top', horizontal: 'left' }}
+        slotProps={{ paper: { sx: { maxHeight: 320 } } }}
+      >
+        <Box sx={{ px: 1, py: 0.5 }}>
+          <FormGroup>
             <FormControlLabel
               control={
                 <Checkbox
@@ -151,20 +158,27 @@ export default function OrderFilters({
               />
             ))}
           </FormGroup>
-        </Collapse>
-      </Box>
-      <Box sx={{ border: 1, borderColor: 'divider', borderRadius: 1, px: 1.5, py: 0.5 }}>
-        <Box
-          sx={{ display: 'flex', alignItems: 'center', cursor: 'pointer', gap: 0.5 }}
-          onClick={() => setWhOpen(!whOpen)}
-        >
-          <Typography variant="body2" fontWeight={500}>
-            Склады {hasWhFilter && `(${filters.warehouse_ids.length})`}
-          </Typography>
-          {whOpen ? <ExpandLess fontSize="small" /> : <ExpandMore fontSize="small" />}
         </Box>
-        <Collapse in={whOpen}>
-          <FormGroup sx={{ flexDirection: 'row', flexWrap: 'wrap', gap: 0, mt: 0.5, mb: 0.5 }}>
+      </Menu>
+      <Button
+        variant="outlined"
+        size="small"
+        endIcon={<ArrowDropDown />}
+        onClick={(e) => setWhAnchor(e.currentTarget)}
+        sx={{ textTransform: 'none', minWidth: 140 }}
+      >
+        Склады {hasWhFilter && `(${filters.warehouse_ids.length})`}
+      </Button>
+      <Menu
+        anchorEl={whAnchor}
+        open={!!whAnchor}
+        onClose={() => setWhAnchor(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+        transformOrigin={{ vertical: 'top', horizontal: 'left' }}
+        slotProps={{ paper: { sx: { maxHeight: 320 } } }}
+      >
+        <Box sx={{ px: 1, py: 0.5 }}>
+          <FormGroup>
             {warehouses.map((w) => (
               <FormControlLabel
                 key={w.id}
@@ -179,8 +193,8 @@ export default function OrderFilters({
               />
             ))}
           </FormGroup>
-        </Collapse>
-      </Box>
+        </Box>
+      </Menu>
       <FormControl size="small" sx={{ minWidth: 140 }}>
         <InputLabel>Статус</InputLabel>
         <Select

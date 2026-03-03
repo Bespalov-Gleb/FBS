@@ -116,8 +116,18 @@ class OrderSyncService:
 
         elif marketplace.type == MarketplaceType.WILDBERRIES:
             async with WildberriesClient(api_key=api_key) as client:
-                # ТЗ: только заказы «На сборке» (confirm)
-                orders_new = await client.get_orders_in_assembly(days_back=14, limit_per_request=500)
+                # ТЗ: только заказы «На сборке» (confirm), но обновляем complete/cancel
+                orders_new, status_updates, all_external_ids = await client.get_orders_in_assembly(
+                    days_back=14, limit_per_request=500
+                )
+                # Обновить статусы: complete → completed, cancel → cancelled
+                for ext_id, wb_status in status_updates.items():
+                    if wb_status == "complete":
+                        if order_repo.mark_completed_by_marketplace(marketplace.id, ext_id):
+                            count += 1
+                    elif wb_status == "cancel":
+                        if order_repo.mark_cancelled_by_marketplace(marketplace.id, ext_id):
+                            count += 1
                 # URL фото: Content API (официально), fallback — CDN
                 unique_nm_ids = list({
                     (mo.metadata or {}).get("nm_id")
@@ -145,13 +155,12 @@ class OrderSyncService:
                 with_images = sum(1 for mo in orders_new if (mo.metadata or {}).get("product_image_url"))
                 if orders_new:
                     logger.info(f"WB product images: {with_images}/{len(orders_new)} orders got photo")
-                api_external_ids = {mo.external_id for mo in orders_new}
                 for mo in orders_new:
                     count += OrderSyncService._upsert_order(
                         db, order_repo, marketplace, mo,
                     )
                 cancelled = OrderSyncService._mark_cancelled_orders(
-                    db, order_repo, marketplace.id, api_external_ids,
+                    db, order_repo, marketplace.id, all_external_ids,
                 )
                 if cancelled:
                     logger.info(f"Marked {cancelled} cancelled orders for WB marketplace {marketplace.id}")

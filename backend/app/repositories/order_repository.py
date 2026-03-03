@@ -271,6 +271,32 @@ class OrderRepository:
         self.db.commit()
         self.db.refresh(order)
 
+    def mark_completed_by_marketplace(
+        self, marketplace_id: int, external_id: str
+    ) -> bool:
+        """Отметить заказ как собранный по данным маркетплейса (WB complete)."""
+        order = self.get_by_external_id(marketplace_id, external_id)
+        if not order or order.status == OrderStatus.COMPLETED:
+            return False
+        order.completed_by_id = None
+        order.completed_at = datetime.utcnow()
+        order.status = OrderStatus.COMPLETED
+        self.db.commit()
+        self.db.refresh(order)
+        return True
+
+    def mark_cancelled_by_marketplace(
+        self, marketplace_id: int, external_id: str
+    ) -> bool:
+        """Отметить заказ как отменённый по данным маркетплейса (WB cancel)."""
+        order = self.get_by_external_id(marketplace_id, external_id)
+        if not order or order.status == OrderStatus.CANCELLED:
+            return False
+        order.cancel()
+        self.db.commit()
+        self.db.refresh(order)
+        return True
+
     def update_from_marketplace(
         self,
         order: Order,

@@ -334,25 +334,26 @@ class WildberriesClient(BaseMarketplaceClient):
         self,
         days_back: int = 14,
         limit_per_request: int = 500,
-    ) -> list[MarketplaceOrder]:
+    ) -> tuple[list[MarketplaceOrder], dict[str, str], set[str]]:
         """
-        Получение заказов в статусе «На сборке» (confirm).
+        Получение заказов в статусе «На сборке» (confirm) и обновлений статусов.
         
-        ТЗ: для вкладки «Сборка» показываем только эти заказы.
+        ТЗ: для вкладки «Сборка» показываем только заказы в confirm.
         GET /api/v3/orders не возвращает статус — вызываем POST /api/v3/orders/status.
         
-        Args:
-            days_back: Период в днях (макс. 30 по API)
-            limit_per_request: Лимит за запрос (1-1000)
-            
         Returns:
-            list[MarketplaceOrder]: Заказы с supplierStatus == "confirm"
+            tuple: (confirm_orders, status_updates, all_external_ids)
+            - confirm_orders: заказы с supplierStatus == "confirm"
+            - status_updates: {external_id: "complete"|"cancel"} для заказов не в confirm
+            - all_external_ids: все external_id из API (для _mark_cancelled)
         """
         now = datetime.utcnow()
         date_from = int((now - timedelta(days=min(days_back, 30))).timestamp())
         date_to = int(now.timestamp())
         
         result: list[MarketplaceOrder] = []
+        status_updates: dict[str, str] = {}
+        all_external_ids: set[str] = set()
         next_cursor = 0
         
         while True:
@@ -367,6 +368,7 @@ class WildberriesClient(BaseMarketplaceClient):
             
             order_ids = []
             for mo in orders_batch:
+                all_external_ids.add(mo.external_id)
                 try:
                     order_ids.append(int(mo.external_id))
                 except (ValueError, TypeError):
@@ -384,19 +386,20 @@ class WildberriesClient(BaseMarketplaceClient):
                     continue
                 st = statuses.get(oid)
                 supplier_status = (st or {}).get("supplier_status") if st else None
-                if supplier_status != "confirm":
-                    continue
-                if mo.metadata is None:
-                    mo.metadata = {}
-                mo.metadata["supplierStatus"] = "confirm"
-                mo.status = self._map_wb_status_to_common("confirm")
-                result.append(mo)
+                if supplier_status == "confirm":
+                    if mo.metadata is None:
+                        mo.metadata = {}
+                    mo.metadata["supplierStatus"] = "confirm"
+                    mo.status = self._map_wb_status_to_common("confirm")
+                    result.append(mo)
+                elif supplier_status in ("complete", "cancel"):
+                    status_updates[mo.external_id] = supplier_status
             
             if next_cursor == 0:
                 break
         
-        logger.info(f"WB: got {len(result)} orders in assembly (confirm)")
-        return result
+        logger.info(f"WB: got {len(result)} orders in assembly (confirm), {len(status_updates)} to update (complete/cancel)")
+        return result, status_updates, all_external_ids
     
     async def get_orders_statuses(
         self,
