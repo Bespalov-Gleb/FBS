@@ -126,24 +126,34 @@ class OrderSyncService:
                     count += OrderSyncService._upsert_order(
                         db, order_repo, marketplace, mo,
                     )
-                # Доставленные: unfulfilled/list их не возвращает — помечаем completed
+                # delivering (в доставке) → COMPLETED (показывать). delivered (доставлен) → DELIVERED (скрыть)
                 delivered_ids: set[str] = set()
                 try:
                     off = 0
+                    marked_completed = 0
+                    marked_delivered = 0
                     while True:
-                        delivered_batch, has_next = await client.get_orders_delivered_or_delivering(
+                        batch, has_next = await client.get_orders_delivered_or_delivering(
                             limit=1000, offset=off, days_back=90
                         )
-                        for mo in delivered_batch:
+                        for mo in batch:
                             delivered_ids.add(mo.external_id)
-                            if order_repo.mark_completed_by_marketplace(marketplace.id, mo.external_id):
-                                count += 1
-                        if not has_next or len(delivered_batch) < 1000:
+                            raw_status = (mo.metadata or {}).get("status", "")
+                            if raw_status == "delivered":
+                                if order_repo.mark_delivered_by_marketplace(marketplace.id, mo.external_id):
+                                    marked_delivered += 1
+                                    count += 1
+                            else:
+                                if order_repo.mark_completed_by_marketplace(marketplace.id, mo.external_id):
+                                    marked_completed += 1
+                                    count += 1
+                        if not has_next or len(batch) < 1000:
                             break
                         off += 1000
                     if delivered_ids:
                         logger.info(
-                            f"Ozon marketplace {marketplace.id}: marked {len(delivered_ids)} delivered/delivering as completed"
+                            f"Ozon marketplace {marketplace.id}: {marked_completed} delivering→completed, "
+                            f"{marked_delivered} delivered→hidden"
                         )
                 except Exception as e:
                     logger.warning(f"Could not sync delivered Ozon orders: {e}")
@@ -304,7 +314,7 @@ class OrderSyncService:
     ) -> int:
         """
         Пометить как отменённые заказы, которых нет в API.
-        Только заказы не в статусе completed.
+        Не трогаем completed, delivered, cancelled.
         """
         from app.models.order import Order
 
@@ -315,6 +325,7 @@ class OrderSyncService:
             .filter(
                 Order.marketplace_id == marketplace_id,
                 Order.status != OrderStatus.COMPLETED,
+                Order.status != OrderStatus.DELIVERED,
                 Order.status != OrderStatus.CANCELLED,
                 ~Order.external_id.in_(api_external_ids),
             )

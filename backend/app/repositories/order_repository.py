@@ -88,11 +88,13 @@ class OrderRepository:
         """Список заказов пользователя с фильтрами. Поиск: артикул, название, номер заказа."""
         from app.models.marketplace import Marketplace, MarketplaceType
 
+        # Показывать: ожидает упаковки, в работе, собран. Скрыть: отменён, доставлен
         query = (
             self.db.query(Order)
             .join(Marketplace)
             .filter(Marketplace.user_id == user_id)
             .filter(Order.status != OrderStatus.CANCELLED)
+            .filter(Order.status != OrderStatus.DELIVERED)
         )
         mp_conds = []
         if marketplace_ids:
@@ -169,6 +171,7 @@ class OrderRepository:
             .join(Marketplace)
             .filter(Marketplace.user_id == user_id)
             .filter(Order.status != OrderStatus.CANCELLED)
+            .filter(Order.status != OrderStatus.DELIVERED)
         )
         mp_conds = []
         if marketplace_ids:
@@ -214,6 +217,7 @@ class OrderRepository:
             .join(Marketplace, Order.marketplace_id == Marketplace.id)
             .filter(Marketplace.user_id == user_id)
             .filter(Order.status != OrderStatus.CANCELLED)
+            .filter(Order.status != OrderStatus.DELIVERED)
         )
         today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
 
@@ -232,6 +236,7 @@ class OrderRepository:
             .join(Marketplace, Order.marketplace_id == Marketplace.id)
             .filter(Marketplace.user_id == user_id)
             .filter(Order.status != OrderStatus.CANCELLED)
+            .filter(Order.status != OrderStatus.DELIVERED)
             .filter(Order.status == OrderStatus.COMPLETED)
             .group_by(Order.marketplace_id)
             .all()
@@ -247,7 +252,7 @@ class OrderRepository:
             )
             .join(Order, Order.marketplace_id == Marketplace.id)
             .filter(Marketplace.user_id == user_id)
-            .filter(Order.status != OrderStatus.CANCELLED)
+            .filter(Order.status.notin_([OrderStatus.CANCELLED, OrderStatus.DELIVERED]))
             .group_by(Marketplace.id, Marketplace.name, Marketplace.type)
             .all()
         )
@@ -298,6 +303,19 @@ class OrderRepository:
         if not order or order.status == OrderStatus.CANCELLED:
             return False
         order.cancel()
+        self.db.commit()
+        self.db.refresh(order)
+        return True
+
+    def mark_delivered_by_marketplace(
+        self, marketplace_id: int, external_id: str
+    ) -> bool:
+        """Отметить заказ как доставленный (Ozon delivered). Не показывать в списке."""
+        order = self.get_by_external_id(marketplace_id, external_id)
+        if not order or order.status == OrderStatus.DELIVERED:
+            return False
+        order.status = OrderStatus.DELIVERED
+        order.marketplace_status = "delivered"
         self.db.commit()
         self.db.refresh(order)
         return True

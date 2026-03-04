@@ -14,7 +14,8 @@ class OrderStatus(str, enum.Enum):
     """Статусы заказов"""
     AWAITING_PACKAGING = "awaiting_packaging"  # Ожидает упаковки
     PACKAGING = "packaging"  # В процессе упаковки
-    COMPLETED = "completed"  # Собран
+    COMPLETED = "completed"  # Собран (и отправлен — в доставке)
+    DELIVERED = "delivered"  # Доставлен покупателю — не показывать в списке
     CANCELLED = "cancelled"  # Отменен
 
 
@@ -125,7 +126,12 @@ class Order(BaseModel):
     def is_cancelled(self) -> bool:
         """Проверка, отменен ли заказ"""
         return self.status == OrderStatus.CANCELLED
-    
+
+    @property
+    def is_delivered(self) -> bool:
+        """Проверка, доставлен ли заказ (скрыт из списка)"""
+        return self.status == OrderStatus.DELIVERED
+
     @property
     def has_multiple_items(self) -> bool:
         """Проверка, содержит ли заказ 2 или более единиц товара"""

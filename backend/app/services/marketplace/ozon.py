@@ -116,6 +116,7 @@ class OzonClient(BaseMarketplaceClient):
                     "products": products,
                     "delivery_method": delivery_method,
                     "barcodes": posting.get("barcodes"),
+                    "status": posting.get("status"),  # raw Ozon status для различения delivered/delivering
                 },
             )
             orders.append(order)
