@@ -178,7 +178,69 @@ class OzonClient(BaseMarketplaceClient):
             offset=offset,
         )
         return orders, has_next
-    
+
+    async def get_orders_delivered_or_delivering(
+        self,
+        limit: int = 1000,
+        offset: int = 0,
+        days_back: int = 90,
+    ) -> tuple[list[MarketplaceOrder], bool]:
+        """
+        Получение заказов в статусе delivered или delivering.
+        Используется при синхронизации: unfulfilled/list не возвращает доставленные,
+        поэтому их нужно помечать completed, а не cancelled.
+        Endpoint: POST /v3/posting/fbs/list
+        """
+        now = datetime.utcnow()
+        period_from = now - timedelta(days=days_back)
+        iso_format = "%Y-%m-%dT%H:%M:%S.000Z"
+        # Ozon list: delivering_date_from/to или cutoff_from/to (как в unfulfilled)
+        filter_data: dict[str, Any] = {
+            "delivering_date_from": period_from.strftime(iso_format),
+            "delivering_date_to": now.strftime(iso_format),
+        }
+        request_body = {
+            "dir": "asc",
+            "filter": filter_data,
+            "limit": min(max(limit, 1), 1000),
+            "offset": offset,
+            "with": {
+                "analytics_data": False,
+                "barcodes": False,
+                "financial_data": False,
+                "translit": False,
+            },
+        }
+        logger.info(
+            "Fetching delivered/delivering orders from Ozon (fbs/list)",
+            extra={"filter": filter_data, "offset": offset},
+        )
+        try:
+            response = await self._request(
+                method="POST",
+                endpoint="/v3/posting/fbs/list",
+                json_data=request_body,
+            )
+            result = response.get("result", {})
+            postings = result.get("postings", [])
+            postings = [
+                p for p in postings
+                if p.get("status") in ("delivered", "delivering")
+            ]
+            has_next = len(postings) >= limit
+            orders = self._parse_postings_to_orders(postings)
+            logger.info(
+                f"Received {len(orders)} delivered/delivering orders from Ozon",
+                extra={"orders_count": len(orders)},
+            )
+            return orders, has_next
+        except Exception as e:
+            logger.warning(
+                f"Could not fetch delivered orders from Ozon (fbs/list): {e}. "
+                "Delivered orders may not be marked as completed.",
+            )
+            return [], False
+
     async def get_orders_with_pagination(
         self,
         warehouse_id: Optional[str] = None,

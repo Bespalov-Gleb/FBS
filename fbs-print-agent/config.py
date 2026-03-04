@@ -9,6 +9,8 @@ __version__ = "0.1.0"
 PORT = int(os.environ.get("FBS_PRINT_AGENT_PORT", "9199"))
 HOST = "127.0.0.1"
 DEFAULT_PRINTER = os.environ.get("FBS_PRINT_AGENT_PRINTER", "")
+# Таймаут печати SumatraPDF (секунды). Некоторые принтеры/драйверы отвечают медленно.
+PRINT_TIMEOUT = int(os.environ.get("FBS_PRINT_AGENT_TIMEOUT", "90"))
 
 
 def _get_base_dir():

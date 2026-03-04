@@ -126,8 +126,31 @@ class OrderSyncService:
                     count += OrderSyncService._upsert_order(
                         db, order_repo, marketplace, mo,
                     )
+                # Доставленные: unfulfilled/list их не возвращает — помечаем completed
+                delivered_ids: set[str] = set()
+                try:
+                    off = 0
+                    while True:
+                        delivered_batch, has_next = await client.get_orders_delivered_or_delivering(
+                            limit=1000, offset=off, days_back=90
+                        )
+                        for mo in delivered_batch:
+                            delivered_ids.add(mo.external_id)
+                            if order_repo.mark_completed_by_marketplace(marketplace.id, mo.external_id):
+                                count += 1
+                        if not has_next or len(delivered_batch) < 1000:
+                            break
+                        off += 1000
+                    if delivered_ids:
+                        logger.info(
+                            f"Ozon marketplace {marketplace.id}: marked {len(delivered_ids)} delivered/delivering as completed"
+                        )
+                except Exception as e:
+                    logger.warning(f"Could not sync delivered Ozon orders: {e}")
+                # Отменять только те, что не в awaiting_deliver И не в delivered
+                all_known_ids = api_external_ids | delivered_ids
                 cancelled = OrderSyncService._mark_cancelled_orders(
-                    db, order_repo, marketplace.id, api_external_ids,
+                    db, order_repo, marketplace.id, all_known_ids,
                 )
                 if cancelled:
                     logger.info(f"Marked {cancelled} cancelled orders for Ozon marketplace {marketplace.id}")

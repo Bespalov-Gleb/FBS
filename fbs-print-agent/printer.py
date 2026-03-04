@@ -48,11 +48,13 @@ def _print_pdf_with_printer(
     if print_settings in ("noscale", "shrink", "fit"):
         cmd.extend(["-print-settings", print_settings])
     cmd.append(abs_path)
+    from config import PRINT_TIMEOUT
+    timeout = PRINT_TIMEOUT
     try:
         result = subprocess.run(
             cmd,
             capture_output=True,
-            timeout=30,
+            timeout=timeout,
             creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
         )
         if result.returncode != 0:
@@ -62,6 +64,12 @@ def _print_pdf_with_printer(
                 f"PDF-файл: {abs_path}. stderr: {err}"
             )
         return result.returncode == 0
+    except subprocess.TimeoutExpired as e:
+        _log_print_error(
+            f"SumatraPDF таймаут ({timeout} с). Путь: {sumatra}. PDF: {abs_path}. "
+            "Проверьте принтер, драйвер. Увеличьте FBS_PRINT_AGENT_TIMEOUT."
+        )
+        return False
     except Exception as e:
         _log_print_error(f"SumatraPDF исключение: {e}. Путь: {sumatra}")
         return False

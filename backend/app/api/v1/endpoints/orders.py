@@ -696,6 +696,7 @@ async def get_order_barcodes_pdf(
     Векторный формат — чёткая печать без пикселизации.
     Только Ozon.
     """
+    from app.core.exceptions import MarketplaceAPIException
     from app.models.marketplace import MarketplaceType
     from app.services.marketplace.ozon import OzonClient
     from app.core.security import decrypt_api_key
@@ -712,8 +713,27 @@ async def get_order_barcodes_pdf(
         raise HTTPException(400, detail="Ozon client_id missing")
 
     api_key = decrypt_api_key(mp.api_key)
-    async with OzonClient(api_key=api_key, client_id=mp.client_id) as client:
-        details = await client.get_posting_details(order.posting_number, with_barcodes=True)
+    try:
+        async with OzonClient(api_key=api_key, client_id=mp.client_id) as client:
+            details = await client.get_posting_details(order.posting_number, with_barcodes=True)
+    except MarketplaceAPIException as e:
+        err_str = str(e).lower()
+        detail = getattr(e, "detail", None)
+        detail_str = str(detail).lower() if detail else ""
+        is_delivered_error = (
+            "delivered" in err_str or "delivered" in detail_str
+            or "label not allowed" in detail_str
+            or "not allowed for" in detail_str
+        )
+        if is_delivered_error:
+            if order.status != OrderStatus.COMPLETED:
+                order.complete(user_id=current_user.id, kiz_code=order.kiz_code)
+                db.commit()
+            raise HTTPException(
+                400,
+                detail="Заказ уже отгружен в Ozon. Печать недоступна. Обновите список заказов.",
+            )
+        raise
 
     barcodes = details.get("barcodes") or {}
     if not isinstance(barcodes, dict):
@@ -745,7 +765,12 @@ async def get_order_barcodes_pdf(
             headers={"Content-Disposition": f"inline; filename=barcodes-{order_id}.pdf"},
         )
     except Exception as e:
-        raise HTTPException(500, detail=f"Failed to generate barcodes PDF: {e}") from e
+        from app.utils.logger import logger
+        logger.exception(
+            f"barcodes-pdf generation failed for order {order_id}",
+            extra={"order_id": order_id, "product_code": product_code[:20] if product_code else None},
+        )
+        raise HTTPException(500, detail=f"Ошибка генерации PDF: {e}") from e
 
 
 @router.get("/{order_id}/label")
