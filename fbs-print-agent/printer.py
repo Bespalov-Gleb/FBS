@@ -57,7 +57,10 @@ def _print_pdf_with_printer(
         )
         if result.returncode != 0:
             err = (result.stderr or result.stdout or b"").decode("utf-8", errors="ignore").strip()
-            _log_print_error(f"SumatraPDF вернул {result.returncode}. Путь: {sumatra}. stderr: {err[:200]}")
+            _log_print_error(
+                f"SumatraPDF вернул {result.returncode}. SumatraPDF: {sumatra}. "
+                f"PDF-файл: {abs_path}. stderr: {err}"
+            )
         return result.returncode == 0
     except Exception as e:
         _log_print_error(f"SumatraPDF исключение: {e}. Путь: {sumatra}")
@@ -92,6 +95,7 @@ def print_document(
             if mime in ("application/pdf", "application/octet-stream"):
                 f.write(data)
                 f.flush()
+                os.fsync(f.fileno())  # гарантировать запись на диск до вызова SumatraPDF
                 return _print_pdf_with_printer(f.name, printer, print_settings)
             elif mime in ("image/png", "image/jpeg", "image/jpg"):
                 ext = ".png" if "png" in mime else ".jpg"

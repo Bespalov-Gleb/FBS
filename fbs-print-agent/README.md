@@ -29,7 +29,10 @@ build-installer.bat
 
 Скрипт:
 1. Соберёт exe через PyInstaller
-2. Скопирует SumatraPDF.exe в dist\ (если лежит в FBS\ или fbs-print-agent\) — **обязательно портативная версия** (ZIP, не installer), иначе «corrupted installation»
+2. Скопирует SumatraPDF.exe в dist\ — ищет в таком порядке:
+   - `SumatraPDF.exe` в FBS\ или fbs-print-agent\
+   - `SumatraPDF-3.5.2-64.zip` в fbs-print-agent\ или FBS\ (извлечёт exe из архива)
+   **Обязательно портативная версия** (ZIP, не installer), иначе «corrupted installation»
 3. Создаст установщик через Inno Setup
 
 Готовый установщик: `output\FBS-Print-Agent-Setup-0.1.0.exe`
@@ -81,4 +84,8 @@ exe будет в `dist/fbs-print-agent.exe`. Скопируйте `SumatraPDF.e
 
 При каждом задании на печать агент записывает запись в журнал. Откройте окно агента (правый клик по иконке в трее → «Открыть») — там отображаются последние задания с датой, принтером, типом и результатом. Журнал хранится в `%APPDATA%\fbs-print-agent\print_journal.json`.
 
-**Ошибки печати:** при сбое печати смотрите `%APPDATA%\fbs-print-agent\print_error.log` — там путь к SumatraPDF и текст ошибки.
+**Ошибки печати:** при сбое печати смотрите `%APPDATA%\fbs-print-agent\print_error.log` — там путь к SumatraPDF, путь к PDF и текст ошибки.
+
+**SumatraPDF вернул 1:** обычно означает «принтер не найден» или «файл не найден». Проверьте:
+- задан ли принтер по умолчанию в Windows (Параметры → Устройства → Принтеры);
+- или укажите принтер через переменную `FBS_PRINT_AGENT_PRINTER`.
