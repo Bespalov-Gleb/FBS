@@ -126,7 +126,8 @@ class OrderSyncService:
                     count += OrderSyncService._upsert_order(
                         db, order_repo, marketplace, mo,
                     )
-                # delivering (в доставке) → COMPLETED (показывать). delivered (доставлен) → DELIVERED (скрыть)
+                # delivering → COMPLETED (показывать). delivered → DELIVERED (скрыть)
+                # filter: since, to — по irenicaa/ozon-seller (GetPostingFBSListFilter)
                 delivered_ids: set[str] = set()
                 try:
                     off = 0
@@ -157,7 +158,6 @@ class OrderSyncService:
                         )
                 except Exception as e:
                     logger.warning(f"Could not sync delivered Ozon orders: {e}")
-                # Отменять только те, что не в awaiting_deliver И не в delivered
                 all_known_ids = api_external_ids | delivered_ids
                 cancelled = OrderSyncService._mark_cancelled_orders(
                     db, order_repo, marketplace.id, all_known_ids,

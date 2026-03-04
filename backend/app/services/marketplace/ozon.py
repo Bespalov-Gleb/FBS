@@ -195,10 +195,10 @@ class OzonClient(BaseMarketplaceClient):
         now = datetime.utcnow()
         period_from = now - timedelta(days=days_back)
         iso_format = "%Y-%m-%dT%H:%M:%S.000Z"
-        # Ozon fbs/list требует processed_at_from и processed_at_to (не cutoff)
+        # По док. irenicaa/ozon-seller: filter.since, filter.to (GetPostingFBSListFilter)
         filter_data: dict[str, Any] = {
-            "processed_at_from": period_from.strftime(iso_format),
-            "processed_at_to": now.strftime(iso_format),
+            "since": period_from.strftime(iso_format),
+            "to": now.strftime(iso_format),
         }
         request_body = {
             "dir": "asc",
