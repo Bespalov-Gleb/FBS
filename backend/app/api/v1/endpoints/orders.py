@@ -726,8 +726,9 @@ async def get_order_barcodes_pdf(
             or "not allowed for" in detail_str
         )
         if is_delivered_error:
-            if order.status != OrderStatus.COMPLETED:
-                order.complete(user_id=current_user.id, kiz_code=order.kiz_code)
+            if order.status != OrderStatus.DELIVERED:
+                order.status = OrderStatus.DELIVERED
+                order.marketplace_status = "delivered"
                 db.commit()
             raise HTTPException(
                 400,
@@ -819,14 +820,15 @@ async def get_order_label(
                 or "доставлен" in detail_str
                 or "отгружен" in detail_str
             )
-            if is_delivered_error:
-                if order.status != OrderStatus.COMPLETED:
-                    order.complete(user_id=current_user.id, kiz_code=order.kiz_code)
-                    db.commit()
-                raise HTTPException(
-                    400,
-                    detail="Заказ уже отгружен в Ozon. Этикетка недоступна. Обновите список заказов.",
-                )
+        if is_delivered_error:
+            if order.status != OrderStatus.DELIVERED:
+                order.status = OrderStatus.DELIVERED
+                order.marketplace_status = "delivered"
+                db.commit()
+            raise HTTPException(
+                400,
+                detail="Заказ уже отгружен в Ozon. Этикетка недоступна. Обновите список заказов.",
+            )
             raise
         return Response(
             content=content,

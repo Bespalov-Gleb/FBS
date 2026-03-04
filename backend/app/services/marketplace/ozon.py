@@ -195,10 +195,10 @@ class OzonClient(BaseMarketplaceClient):
         now = datetime.utcnow()
         period_from = now - timedelta(days=days_back)
         iso_format = "%Y-%m-%dT%H:%M:%S.000Z"
-        # Ozon list: delivering_date_from/to или cutoff_from/to (как в unfulfilled)
+        # Ozon list: пробуем cutoff (как unfulfilled) — delivering_date может не поддерживаться
         filter_data: dict[str, Any] = {
-            "delivering_date_from": period_from.strftime(iso_format),
-            "delivering_date_to": now.strftime(iso_format),
+            "cutoff_from": period_from.strftime(iso_format),
+            "cutoff_to": now.strftime(iso_format),
         }
         request_body = {
             "dir": "asc",
