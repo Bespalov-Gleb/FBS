@@ -20,10 +20,10 @@ def _get_base_dir():
 BASE_DIR = _get_base_dir()
 # Корень проекта FBS (родитель fbs-print-agent)
 PROJECT_ROOT = os.path.dirname(BASE_DIR)
+# Только портативная версия! Program Files исключён — установленная даёт "corrupted installation"
+# (требует libmupdf.dll, при несовпадении версий — ошибка).
 SUMATRA_PDF_PATHS = [
-    os.path.join(BASE_DIR, "SumatraPDF.exe"),
-    os.path.join(PROJECT_ROOT, "SumatraPDF.exe"),  # FBS/SumatraPDF.exe
-    os.path.join(os.environ.get("APPDATA", ""), "fbs-print-agent", "SumatraPDF.exe"),
-    r"C:\Program Files\SumatraPDF\SumatraPDF.exe",
-    r"C:\Program Files (x86)\SumatraPDF\SumatraPDF.exe",
+    os.path.join(BASE_DIR, "SumatraPDF.exe"),  # рядом с агентом (из установщика)
+    os.path.join(os.environ.get("APPDATA", ""), "fbs-print-agent", "SumatraPDF.exe"),  # пользователь может положить сюда
+    os.path.join(PROJECT_ROOT, "SumatraPDF.exe"),  # FBS/SumatraPDF.exe (разработка)
 ]

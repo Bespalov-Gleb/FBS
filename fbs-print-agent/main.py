@@ -67,7 +67,13 @@ app.add_middleware(
 @app.get("/health")
 def health():
     printers_list = _get_printers()
-    return {"ok": True, "version": __version__, "printers": printers_list}
+    sumatra_path = printer.get_sumatra_path()
+    return {
+        "ok": True,
+        "version": __version__,
+        "printers": printers_list,
+        "sumatra_path": sumatra_path,
+    }
 
 
 @app.post("/print")
@@ -146,6 +152,8 @@ def run_tray():
         tk.Label(f_top, text=f"Порт: {PORT}", font=("", 10)).pack()
         printers_list = _get_printers()
         tk.Label(f_top, text=f"Принтеров: {len(printers_list)}", font=("", 10)).pack()
+        sp = printer.get_sumatra_path()
+        tk.Label(f_top, text=f"SumatraPDF: {sp or 'не найден'}", font=("", 9), fg="gray").pack()
 
         # Журнал печати
         tk.Label(root, text="Журнал печати (последние задания):", font=("", 10)).pack(anchor=tk.W, padx=10, pady=(10, 0))

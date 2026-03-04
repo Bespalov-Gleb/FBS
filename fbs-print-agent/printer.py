@@ -18,6 +18,11 @@ def _find_sumatra() -> Optional[str]:
     return None
 
 
+def get_sumatra_path() -> Optional[str]:
+    """Путь к SumatraPDF (для диагностики)."""
+    return _find_sumatra()
+
+
 def _image_to_pdf(img_path: str, pdf_path: str) -> None:
     """Конвертировать изображение в PDF"""
     with open(pdf_path, "wb") as f:
@@ -32,6 +37,7 @@ def _print_pdf_with_printer(
     """print_settings: noscale (100%), shrink, fit — для этикеток 58/80 мм используйте noscale."""
     sumatra = _find_sumatra()
     if not sumatra:
+        _log_print_error("SumatraPDF не найден. Положите портативную версию в папку агента или %APPDATA%\\fbs-print-agent\\")
         return False
     abs_path = os.path.abspath(pdf_path)
     cmd = [sumatra, "-silent"]
@@ -49,9 +55,26 @@ def _print_pdf_with_printer(
             timeout=30,
             creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
         )
+        if result.returncode != 0:
+            err = (result.stderr or result.stdout or b"").decode("utf-8", errors="ignore").strip()
+            _log_print_error(f"SumatraPDF вернул {result.returncode}. Путь: {sumatra}. stderr: {err[:200]}")
         return result.returncode == 0
-    except Exception:
+    except Exception as e:
+        _log_print_error(f"SumatraPDF исключение: {e}. Путь: {sumatra}")
         return False
+
+
+def _log_print_error(msg: str) -> None:
+    """Записать ошибку печати в лог для диагностики."""
+    try:
+        log_dir = os.path.join(os.environ.get("APPDATA", ""), "fbs-print-agent")
+        os.makedirs(log_dir, exist_ok=True)
+        log_path = os.path.join(log_dir, "print_error.log")
+        with open(log_path, "a", encoding="utf-8") as f:
+            from datetime import datetime
+            f.write(f"{datetime.now().isoformat()} {msg}\n")
+    except Exception:
+        pass
 
 
 def print_document(

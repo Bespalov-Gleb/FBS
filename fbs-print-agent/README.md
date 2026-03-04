@@ -16,7 +16,7 @@
    - значок на рабочем столе
    - автозапуск при входе в Windows
 4. **Запуск:** используйте ярлык «FBS Print Agent» (меню Пуск или рабочий стол). Не запускайте `fbs-print-agent.exe` напрямую — ярлык задаёт привязку к сайту fbs-upakovka.ru.
-5. Если SumatraPDF не встроен — [скачайте](https://www.sumatrapdfreader.org/download-free-pdf-viewer) и установите в `C:\Program Files\SumatraPDF\`
+5. **Если печать не работает** — нужна **портативная** версия SumatraPDF (не установщик). Скачайте [64-bit portable](https://www.sumatrapdfreader.org/download-free-pdf-viewer) (ZIP), извлеките `SumatraPDF.exe` и скопируйте в `%APPDATA%\fbs-print-agent\`. Либо пересоберите установщик, положив `SumatraPDF.exe` в папку `fbs-print-agent` перед сборкой.
 
 ## Сборка установщика (для разработчиков)
 
@@ -29,7 +29,7 @@ build-installer.bat
 
 Скрипт:
 1. Соберёт exe через PyInstaller
-2. Скопирует SumatraPDF.exe в dist\ (если лежит в FBS\ или fbs-print-agent\)
+2. Скопирует SumatraPDF.exe в dist\ (если лежит в FBS\ или fbs-print-agent\) — **обязательно портативная версия** (ZIP, не installer), иначе «corrupted installation»
 3. Создаст установщик через Inno Setup
 
 Готовый установщик: `output\FBS-Print-Agent-Setup-0.1.0.exe`
@@ -80,3 +80,5 @@ exe будет в `dist/fbs-print-agent.exe`. Скопируйте `SumatraPDF.e
 ## Журнал печати
 
 При каждом задании на печать агент записывает запись в журнал. Откройте окно агента (правый клик по иконке в трее → «Открыть») — там отображаются последние задания с датой, принтером, типом и результатом. Журнал хранится в `%APPDATA%\fbs-print-agent\print_journal.json`.
+
+**Ошибки печати:** при сбое печати смотрите `%APPDATA%\fbs-print-agent\print_error.log` — там путь к SumatraPDF и текст ошибки.

@@ -35,7 +35,7 @@ Name: "startupicon"; Description: "Запускать при входе в Windo
 ; Основной exe, launcher (vbs — без окна консоли) и SumatraPDF
 Source: "dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "run-agent.vbs"; DestDir: "{app}"; Flags: ignoreversion
-Source: "dist\SumatraPDF.exe"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "dist\SumatraPDF.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 ; Ярлыки запускают run-agent.vbs через wscript (обход ошибки 193 на некоторых системах)

@@ -29,18 +29,48 @@ if errorlevel 1 (
     exit /b 1
 )
 
-REM 3. Копирование SumatraPDF (если есть)
+REM 3. Копирование SumatraPDF — только ПОРТАТИВНАЯ версия (ZIP), не installer!
 echo [3/4] Поиск SumatraPDF...
-set SUMATRA=
-if exist "..\SumatraPDF.exe" set SUMATRA=..\SumatraPDF.exe
-if exist "SumatraPDF.exe" set SUMATRA=SumatraPDF.exe
-if defined SUMATRA (
-    copy /Y "%SUMATRA%" dist\SumatraPDF.exe >nul
-    echo   SumatraPDF скопирован в dist\
-) else (
-    echo   SumatraPDF не найден. Положите SumatraPDF.exe в dist\ или в корень FBS.
-    echo   Установщик соберётся без него — пользователь может установить отдельно.
+if exist "..\SumatraPDF.exe" (
+    copy /Y "..\SumatraPDF.exe" dist\SumatraPDF.exe >nul
+    goto sumatra_done
 )
+if exist "SumatraPDF.exe" (
+    copy /Y "SumatraPDF.exe" dist\SumatraPDF.exe >nul
+    goto sumatra_done
+)
+if exist "SumatraPDF-3.5.2-64.zip" (
+    powershell -Command "Expand-Archive -Path 'SumatraPDF-3.5.2-64.zip' -DestinationPath 'dist\sumatra_extract' -Force"
+    if exist "dist\sumatra_extract\SumatraPDF.exe" (
+        copy /Y "dist\sumatra_extract\SumatraPDF.exe" dist\SumatraPDF.exe >nul
+    ) else if exist "dist\sumatra_extract\SumatraPDF-3.5.2-64.exe" (
+        copy /Y "dist\sumatra_extract\SumatraPDF-3.5.2-64.exe" dist\SumatraPDF.exe >nul
+    )
+    if exist "dist\SumatraPDF.exe" (
+        rmdir /s /q "dist\sumatra_extract" 2>nul
+        goto sumatra_done
+    )
+)
+if exist "..\SumatraPDF-3.5.2-64.zip" (
+    powershell -Command "Expand-Archive -Path '..\SumatraPDF-3.5.2-64.zip' -DestinationPath 'dist\sumatra_extract' -Force"
+    if exist "dist\sumatra_extract\SumatraPDF.exe" (
+        copy /Y "dist\sumatra_extract\SumatraPDF.exe" dist\SumatraPDF.exe >nul
+    ) else if exist "dist\sumatra_extract\SumatraPDF-3.5.2-64.exe" (
+        copy /Y "dist\sumatra_extract\SumatraPDF-3.5.2-64.exe" dist\SumatraPDF.exe >nul
+    )
+    if exist "dist\SumatraPDF.exe" (
+        rmdir /s /q "dist\sumatra_extract" 2>nul
+        goto sumatra_done
+    )
+)
+echo   ОШИБКА: SumatraPDF не найден.
+echo   Скачайте ПОРТАТИВНУЮ версию: SumatraPDF-3.5.2-64.zip
+echo   https://www.sumatrapdfreader.org/download-free-pdf-viewer
+echo   Положите ZIP в папку fbs-print-agent и перезапустите сборку.
+pause
+exit /b 1
+:sumatra_done
+echo   SumatraPDF скопирован в dist\
 
 REM 4. Сборка установщика (Inno Setup)
 echo [4/4] Сборка установщика...
