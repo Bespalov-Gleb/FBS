@@ -19,8 +19,11 @@ function blobToBase64(blob: Blob): Promise<string> {
 export async function isPrintAgentAvailable(): Promise<boolean> {
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 500);
-    const r = await fetch(`${AGENT_URL}/health`, { signal: controller.signal });
+    const timeout = setTimeout(() => controller.abort(), 3000);
+    const r = await fetch(`${AGENT_URL}/health`, {
+      signal: controller.signal,
+      mode: 'cors',
+    });
     clearTimeout(timeout);
     return r.ok;
   } catch {

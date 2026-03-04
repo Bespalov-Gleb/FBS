@@ -46,11 +46,15 @@ export default function PrintSettingsPage() {
     }
   }, [settings]);
 
-  useEffect(() => {
+  const checkAgent = () => {
     isPrintAgentAvailable().then((ok) => {
       setAgentAvailable(ok);
       if (ok) getPrintAgentPrinters().then(setAgentPrinters);
     });
+  };
+
+  useEffect(() => {
+    checkAgent();
   }, []);
 
   const updateMutation = useMutation({
@@ -95,7 +99,17 @@ export default function PrintSettingsPage() {
         Настройки печати этикеток через браузер
       </Typography>
 
-      <Alert severity={agentAvailable ? 'success' : 'info'} sx={{ mb: 2 }}>
+      <Alert
+        severity={agentAvailable ? 'success' : 'info'}
+        sx={{ mb: 2 }}
+        action={
+          !agentAvailable && (
+            <Button color="inherit" size="small" onClick={checkAgent}>
+              Проверить снова
+            </Button>
+          )
+        }
+      >
         {agentAvailable
           ? 'Агент печати подключен. Тихая печать без диалога.'
           : 'Печать выполняется через браузер. При первой печати выберите принтер в диалоге. Установите fbs-print-agent для тихой печати.'}

@@ -38,13 +38,13 @@ Source: "run-agent.vbs"; DestDir: "{app}"; Flags: ignoreversion
 Source: "dist\SumatraPDF.exe"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 
 [Icons]
-; Ярлыки запускают run-agent.vbs (задаёт CORS для сайта, без окна)
-Name: "{group}\{#MyAppName}"; Filename: "{app}\run-agent.vbs"; WorkingDir: "{app}"
+; Ярлыки запускают run-agent.vbs через wscript (обход ошибки 193 на некоторых системах)
+Name: "{group}\{#MyAppName}"; Filename: "wscript.exe"; Parameters: "//B ""{app}\run-agent.vbs"""; WorkingDir: "{app}"
 Name: "{group}\Удалить {#MyAppName}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\run-agent.vbs"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{autodesktop}\{#MyAppName}"; Filename: "wscript.exe"; Parameters: "//B ""{app}\run-agent.vbs"""; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\run-agent.vbs"; Description: "Запустить агент печати"; Flags: nowait postinstall skipifsilent
+Filename: "wscript.exe"; Parameters: "//B ""{app}\run-agent.vbs"""; WorkingDir: "{app}"; Description: "Запустить агент печати"; Flags: nowait postinstall skipifsilent
 
 [Code]
 procedure CurStepChanged(CurStep: TSetupStep);

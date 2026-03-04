@@ -32,26 +32,36 @@ class PrintRequest(BaseModel):
 
 app = FastAPI(title="FBS Print Agent", version=__version__)
 
-# CORS: localhost с любым портом; для продакшена задать FBS_PRINT_AGENT_ORIGINS
+# CORS: localhost + fbs-upakovka.ru (включая поддомены); доп. origins через FBS_PRINT_AGENT_ORIGINS
 import os
 _origins = os.environ.get("FBS_PRINT_AGENT_ORIGINS", "")
+_default_origins = [
+    "https://fbs-upakovka.ru",
+    "https://www.fbs-upakovka.ru",
+    "http://fbs-upakovka.ru",
+    "http://www.fbs-upakovka.ru",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:8080",
+    "http://127.0.0.1:8080",
+]
 if _origins:
     _allow_origins = [o.strip() for o in _origins.split(",") if o.strip()]
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=_allow_origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    _allow_origins = list(dict.fromkeys(_allow_origins + _default_origins))
 else:
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?",
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    _allow_origins = _default_origins
+# Regex для поддоменов fbs-upakovka.ru (app., dev. и т.д.)
+_origin_regex = r"https?://([a-zA-Z0-9-]+\.)*fbs-upakovka\.ru(:\d+)?"
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_allow_origins,
+    allow_origin_regex=_origin_regex,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/health")
@@ -129,10 +139,7 @@ def run_tray():
 
         def refresh_journal():
             try:
-                import urllib.request
-                r = urllib.request.urlopen(f"http://127.0.0.1:{PORT}/print-journal?limit=30", timeout=2)
-                data = json.loads(r.read().decode())
-                entries = data.get("entries", [])
+                entries = print_journal.get_entries(30)
                 journal_text.delete("1.0", tk.END)
                 if not entries:
                     journal_text.insert(tk.END, "Записей пока нет. Печать через агент появится здесь.")
