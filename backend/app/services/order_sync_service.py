@@ -136,7 +136,11 @@ class OrderSyncService:
             async with WildberriesClient(api_key=api_key) as client:
                 # ТЗ: только заказы «На сборке» (confirm), но обновляем complete/cancel
                 orders_new, status_updates, all_external_ids = await client.get_orders_in_assembly(
-                    days_back=14, limit_per_request=500
+                    days_back=30, limit_per_request=500
+                )
+                logger.info(
+                    f"WB marketplace {marketplace.id}: confirm={len(orders_new)}, "
+                    f"all_external_ids={len(all_external_ids)}, status_updates={len(status_updates)}"
                 )
                 # Обновить статусы: complete → completed, cancel/new → cancelled (скрыть из «Сборка»)
                 for ext_id, wb_status in status_updates.items():
@@ -195,7 +199,10 @@ class OrderSyncService:
                     db, order_repo, marketplace.id, all_external_ids,
                 )
                 if cancelled:
-                    logger.info(f"Marked {cancelled} cancelled orders for WB marketplace {marketplace.id}")
+                    logger.info(
+                        f"WB marketplace {marketplace.id}: marked {cancelled} cancelled "
+                        f"(not in API response for last 30 days)"
+                    )
         else:
             logger.warning(f"Unknown marketplace type: {marketplace.type}")
             return 0
@@ -230,16 +237,25 @@ class OrderSyncService:
             )
             warehouse_id = wh.id
         
+        order_status = None
+        if mo.status:
+            try:
+                order_status = OrderStatus(mo.status)
+            except ValueError:
+                pass
+
         existing = order_repo.get_by_external_id(marketplace.id, mo.external_id)
         if existing:
             order_repo.update_from_marketplace(
                 existing,
+                status=order_status,
+                marketplace_status=mo.status,
                 warehouse_id=warehouse_id,
                 warehouse_name=mo.warehouse_name,
-                metadata=mo.metadata,  # обновляем products с image_url
+                metadata=mo.metadata,
             )
             return 1
-        
+
         order_repo.create(
             marketplace_id=marketplace.id,
             external_id=mo.external_id,
@@ -252,6 +268,7 @@ class OrderSyncService:
             marketplace_status=mo.status,
             marketplace_created_at=mo.created_at,
             metadata=mo.metadata,
+            status=order_status,
         )
         return 1
 

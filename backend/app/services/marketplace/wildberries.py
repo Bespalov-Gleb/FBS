@@ -349,7 +349,7 @@ class WildberriesClient(BaseMarketplaceClient):
     
     async def get_orders_in_assembly(
         self,
-        days_back: int = 14,
+        days_back: int = 30,
         limit_per_request: int = 500,
     ) -> tuple[list[MarketplaceOrder], dict[str, str], set[str]]:
         """
@@ -370,8 +370,16 @@ class WildberriesClient(BaseMarketplaceClient):
         status_updates: dict[str, str] = {}
         all_external_ids: set[str] = set()
         next_cursor = 0
+        total_from_api = 0
+        batch_num = 0
+        status_counts: dict[str, int] = {"confirm": 0, "new": 0, "complete": 0, "cancel": 0, "unknown": 0}
+        
+        logger.info(
+            f"WB sync: period {days_back} days (dateFrom={date_from}, dateTo={date_to}), limit={limit_per_request}"
+        )
         
         while True:
+            batch_num += 1
             orders_batch, next_cursor = await self.get_orders_by_status(
                 limit=limit_per_request,
                 next_cursor=next_cursor,
@@ -379,8 +387,10 @@ class WildberriesClient(BaseMarketplaceClient):
                 date_to=date_to,
             )
             if not orders_batch:
+                logger.info(f"WB sync: batch {batch_num} empty, stop")
                 break
             
+            total_from_api += len(orders_batch)
             order_ids = []
             for mo in orders_batch:
                 all_external_ids.add(mo.external_id)
@@ -390,9 +400,12 @@ class WildberriesClient(BaseMarketplaceClient):
                     pass
             
             if not order_ids:
+                logger.warning(f"WB sync: batch {batch_num} has no valid order IDs")
                 break
             
             statuses = await self.get_orders_statuses(order_ids)
+            batch_confirm = 0
+            batch_other = 0
             
             for mo in orders_batch:
                 try:
@@ -401,20 +414,32 @@ class WildberriesClient(BaseMarketplaceClient):
                     continue
                 st = statuses.get(oid)
                 supplier_status = (st or {}).get("supplier_status") if st else None
+                status_key = supplier_status if supplier_status in status_counts else "unknown"
+                status_counts[status_key] += 1
                 if supplier_status == "confirm":
                     if mo.metadata is None:
                         mo.metadata = {}
                     mo.metadata["supplierStatus"] = "confirm"
                     mo.status = self._map_wb_status_to_common("confirm")
                     result.append(mo)
+                    batch_confirm += 1
                 elif supplier_status in ("complete", "cancel", "new"):
-                    # new/cancel → отменить в БД (скрыть из «Сборка»); complete → отметить собранным
                     status_updates[mo.external_id] = supplier_status
+                    batch_other += 1
+            
+            logger.info(
+                f"WB sync: batch {batch_num} — {len(orders_batch)} from API, "
+                f"confirm={batch_confirm}, other={batch_other}, next={next_cursor}"
+            )
             
             if next_cursor == 0:
                 break
         
-        logger.info(f"WB: got {len(result)} orders in assembly (confirm only), {len(status_updates)} to update")
+        logger.info(
+            f"WB sync: total from API={total_from_api}, confirm={len(result)}, "
+            f"status_updates={len(status_updates)} (new={status_counts['new']}, complete={status_counts['complete']}, "
+            f"cancel={status_counts['cancel']}, unknown={status_counts['unknown']})"
+        )
         return result, status_updates, all_external_ids
     
     async def get_orders_statuses(

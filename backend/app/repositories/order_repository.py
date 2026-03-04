@@ -48,8 +48,10 @@ class OrderRepository:
         marketplace_status: Optional[str] = None,
         marketplace_created_at: Optional[datetime] = None,
         metadata: Optional[dict] = None,
+        status: Optional[OrderStatus] = None,
     ) -> Order:
         """Создать заказ"""
+        order_status = status if status is not None else OrderStatus.AWAITING_PACKAGING
         order = Order(
             marketplace_id=marketplace_id,
             external_id=str(external_id),
@@ -61,7 +63,7 @@ class OrderRepository:
             warehouse_name=warehouse_name,
             marketplace_status=marketplace_status,
             marketplace_created_at=marketplace_created_at,
-            status=OrderStatus.AWAITING_PACKAGING,
+            status=order_status,
             extra_data=metadata,
         )
         self.db.add(order)
@@ -304,14 +306,17 @@ class OrderRepository:
         self,
         order: Order,
         *,
-        status: Optional[str] = None,
+        status: Optional[OrderStatus] = None,
+        marketplace_status: Optional[str] = None,
         warehouse_id: Optional[int] = None,
         warehouse_name: Optional[str] = None,
         metadata: Optional[dict] = None,
     ) -> Order:
         """Обновить заказ данными из маркетплейса"""
-        if status:
-            order.marketplace_status = status
+        if marketplace_status:
+            order.marketplace_status = marketplace_status
+        if status is not None:
+            order.status = status
         if warehouse_id is not None:
             order.warehouse_id = warehouse_id
         if warehouse_name is not None:
