@@ -473,6 +473,91 @@ def _wrap_text(text: str, max_chars: int = 28) -> list[str]:
     return lines
 
 
+def _create_barcode_drawing(code: str, bar_width: float = 0.25):
+    """Создать Drawing со штрихкодом (reportlab). EAN13 для 13 цифр, иначе Code128."""
+    from reportlab.graphics.barcode import code128, eanbc
+    from reportlab.graphics.shapes import Drawing
+
+    code = str(code).strip()
+    try:
+        if len(code) == 13 and code.isdigit():
+            bc = eanbc.Ean13BarcodeWidget(code[:12], barWidth=bar_width)
+        else:
+            bc = code128.Code128(code, barWidth=bar_width)
+    except TypeError:
+        # barWidth не поддерживается в некоторых версиях
+        if len(code) == 13 and code.isdigit():
+            bc = eanbc.Ean13BarcodeWidget(code[:12])
+        else:
+            bc = code128.Code128(code)
+    d = Drawing(bc.width, bc.height)
+    d.add(bc)
+    return d
+
+
+def _generate_barcodes_pdf(
+    product_code: str,
+    fbs_code: str,
+    product_name: str = "",
+) -> bytes:
+    """
+    Генерация PDF с обоими штрихкодами (товар + ФБС) для качественной печати.
+    Векторный формат — без потери качества при масштабировании.
+    """
+    import io
+
+    from reportlab.graphics import renderPDF
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.pdfgen import canvas
+
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
+    _, h = A4
+
+    # Размеры этикетки: ~58x40 мм, два штрихкода друг под другом
+    label_w = 58 * mm
+    label_h = 40 * mm
+    margin = 10 * mm
+    x0 = margin
+    y0 = h - margin - label_h
+
+    # Штрихкод товара (уменьшенный barWidth для этикетки 58мм)
+    bc_product = _create_barcode_drawing(product_code, bar_width=0.2)
+    bw1, bh1 = bc_product.width, bc_product.height
+    scale1 = min((label_w - 4 * mm) / bw1, 12 * mm / bh1, 1.5)
+    c.saveState()
+    c.translate(x0 + (label_w - bw1 * scale1) / 2, y0 + label_h - bh1 * scale1 - 2 * mm)
+    c.scale(scale1, scale1)
+    renderPDF.draw(bc_product, c, 0, 0)
+    c.restoreState()
+
+    # Текст под штрихкодом товара
+    if product_name:
+        text_lines = _wrap_text(product_name, max_chars=24)
+        c.setFont("Helvetica", 8)
+        ty = y0 + label_h - bh1 * scale1 - 5 * mm
+        for line in reversed(text_lines):
+            c.drawCentredString(x0 + label_w / 2, ty, line[:40])
+            ty -= 3.5 * mm
+
+    # Штрихкод ФБС
+    bc_fbs = _create_barcode_drawing(fbs_code, bar_width=0.2)
+    bw2, bh2 = bc_fbs.width, bc_fbs.height
+    scale2 = min((label_w - 4 * mm) / bw2, 10 * mm / bh2, 1.5)
+    fbs_y = y0 + 2 * mm
+    c.saveState()
+    c.translate(x0 + (label_w - bw2 * scale2) / 2, fbs_y)
+    c.scale(scale2, scale2)
+    renderPDF.draw(bc_fbs, c, 0, 0)
+    c.restoreState()
+    c.drawCentredString(x0 + label_w / 2, fbs_y - 3 * mm, "ШК ФБС")
+
+    c.save()
+    buf.seek(0)
+    return buf.getvalue()
+
+
 def _add_product_name_to_barcode(image_bytes: bytes, product_name: str) -> bytes:
     """Добавить название товара под штрих-кодом (как в примере Ozon)."""
     import io
@@ -595,6 +680,68 @@ async def get_order_product_barcode(
         )
     except Exception as e:
         raise HTTPException(500, detail=f"Failed to generate barcode: {e}") from e
+
+
+@router.get("/{order_id}/barcodes-pdf")
+async def get_order_barcodes_pdf(
+    order_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = CurrentUser,
+):
+    """
+    PDF с обоими штрихкодами (товар + ШК ФБС) для качественной печати.
+    Векторный формат — чёткая печать без пикселизации.
+    Только Ozon.
+    """
+    from app.models.marketplace import MarketplaceType
+    from app.services.marketplace.ozon import OzonClient
+    from app.core.security import decrypt_api_key
+
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(404, detail="Order not found")
+    mp = order.marketplace
+    if not mp or mp.user_id != current_user.id:
+        raise HTTPException(404, detail="Order not found")
+    if mp.type != MarketplaceType.OZON:
+        raise HTTPException(400, detail="Barcodes PDF only for Ozon")
+    if not mp.client_id:
+        raise HTTPException(400, detail="Ozon client_id missing")
+
+    api_key = decrypt_api_key(mp.api_key)
+    async with OzonClient(api_key=api_key, client_id=mp.client_id) as client:
+        details = await client.get_posting_details(order.posting_number, with_barcodes=True)
+
+    barcodes = details.get("barcodes") or {}
+    if not isinstance(barcodes, dict):
+        raise HTTPException(404, detail="Barcodes not found")
+    upper = (barcodes.get("upper_barcode") or "").strip()
+    lower = (barcodes.get("lower_barcode") or "").strip()
+    products = details.get("products") or []
+    sku = products[0].get("sku") if products else None
+
+    if sku is not None:
+        product_code = f"OZN{sku}"
+    elif upper:
+        product_code = upper
+    else:
+        raise HTTPException(404, detail="Product barcode not found")
+    if not lower:
+        raise HTTPException(404, detail="FBS barcode (lower_barcode) not found")
+
+    product_name = (order.product_name or "").strip()
+    if not product_name and products:
+        product_name = (products[0].get("name") or "").strip()
+
+    try:
+        pdf_bytes = _generate_barcodes_pdf(product_code, lower, product_name)
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f"inline; filename=barcodes-{order_id}.pdf"},
+        )
+    except Exception as e:
+        raise HTTPException(500, detail=f"Failed to generate barcodes PDF: {e}") from e
 
 
 @router.get("/{order_id}/label")

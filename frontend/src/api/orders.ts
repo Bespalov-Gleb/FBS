@@ -135,10 +135,22 @@ export const ordersApi = {
     return data;
   },
 
-  /** Штрихкод товара (только Ozon). 404 для WB. */
+  /** Штрихкод товара (только Ozon). 404 для WB. PNG. */
   getProductBarcodeBlob: async (orderId: number): Promise<Blob | null> => {
     try {
       const { data } = await apiClient.get(`/orders/${orderId}/product-barcode`, {
+        responseType: 'blob',
+      });
+      return data;
+    } catch {
+      return null;
+    }
+  },
+
+  /** PDF с обоими штрихкодами (товар + ШК ФБС) для качественной печати. Только Ozon. */
+  getBarcodesPdfBlob: async (orderId: number): Promise<Blob | null> => {
+    try {
+      const { data } = await apiClient.get(`/orders/${orderId}/barcodes-pdf`, {
         responseType: 'blob',
       });
       return data;

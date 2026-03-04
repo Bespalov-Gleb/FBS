@@ -126,6 +126,17 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
   const handlePrint = async () => {
     setError(null);
     try {
+      // Ozon: сначала штрихкоды (товар + ШК ФБС) в PDF, затем этикетка
+      if (order.marketplace_type === 'ozon') {
+        const barcodesBlob = await ordersApi.getBarcodesPdfBlob(order.id);
+        if (barcodesBlob) {
+          if (agentAvailable) {
+            await printViaAgent(barcodesBlob, defaultPrinter);
+          } else {
+            openBlobInNewWindow(barcodesBlob);
+          }
+        }
+      }
       const blob = await ordersApi.getLabelBlob(
         order.id,
         labelFormat,
