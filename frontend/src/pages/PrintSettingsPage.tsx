@@ -76,7 +76,7 @@ export default function PrintSettingsPage() {
     try {
       const blob = await printSettingsApi.getTestLabelBlob();
       if (agentAvailable) {
-        const ok = await printViaAgent(blob, defaultPrinter || undefined);
+        const ok = await printViaAgent(blob, defaultPrinter || undefined, 'noscale');
         if (!ok) {
           setTestPrintError('Агент не ответил или печать не удалась. Проверьте, что агент запущен и SumatraPDF установлен.');
         }

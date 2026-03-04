@@ -105,7 +105,7 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
     kizPrintedRef.current = kizTrimmed;
     ordersApi.getKizLabelBlob(kizTrimmed).then(async (blob) => {
       if (agentAvailable) {
-        await printViaAgent(blob);
+        await printViaAgent(blob, undefined, 'noscale');
       } else {
         openBlobInNewWindow(blob);
       }
@@ -128,10 +128,11 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
     try {
       // Ozon: сначала штрихкоды (товар + ШК ФБС) в PDF, затем этикетка
       if (order.marketplace_type === 'ozon') {
-        const barcodesBlob = await ordersApi.getBarcodesPdfBlob(order.id);
+        const labelWidth = labelFormatProp === '80mm' ? 80 : 58;
+        const barcodesBlob = await ordersApi.getBarcodesPdfBlob(order.id, labelWidth);
         if (barcodesBlob) {
           if (agentAvailable) {
-            await printViaAgent(barcodesBlob, defaultPrinter);
+            await printViaAgent(barcodesBlob, defaultPrinter, 'noscale');
           } else {
             openBlobInNewWindow(barcodesBlob);
           }
@@ -143,7 +144,7 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
         order.marketplace_type === 'wildberries' ? labelWidth : undefined,
       );
       if (agentAvailable) {
-        await printViaAgent(blob, defaultPrinter);
+        await printViaAgent(blob, defaultPrinter, 'noscale');
       } else {
         openBlobInNewWindow(blob);
       }
@@ -158,7 +159,7 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
     try {
       const blob = await ordersApi.getKizLabelBlob(kizCode);
       if (agentAvailable) {
-        await printViaAgent(blob, defaultPrinter);
+        await printViaAgent(blob, defaultPrinter, 'noscale');
       } else {
         openBlobInNewWindow(blob);
       }

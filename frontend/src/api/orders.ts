@@ -148,9 +148,11 @@ export const ordersApi = {
   },
 
   /** PDF с обоими штрихкодами (товар + ШК ФБС) для качественной печати. Только Ozon. */
-  getBarcodesPdfBlob: async (orderId: number): Promise<Blob | null> => {
+  getBarcodesPdfBlob: async (orderId: number, labelWidth?: 58 | 80): Promise<Blob | null> => {
     try {
+      const params = labelWidth ? { label_width: labelWidth } : {};
       const { data } = await apiClient.get(`/orders/${orderId}/barcodes-pdf`, {
+        params,
         responseType: 'blob',
       });
       return data;

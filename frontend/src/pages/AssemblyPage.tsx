@@ -136,7 +136,7 @@ export default function AssemblyPage() {
 
   const printBlob = async (blob: Blob, _options?: { noFallback?: boolean }) => {
     if (agentAvailable) {
-      const ok = await printViaAgent(blob, printSettings?.default_printer || undefined);
+      const ok = await printViaAgent(blob, printSettings?.default_printer || undefined, 'noscale');
       if (ok) return;
     }
     openBlobInNewWindow(blob);
@@ -161,7 +161,7 @@ export default function AssemblyPage() {
           // WB: без отдельного штрихкода товара
           const barcodesBlob =
             order.marketplace_type === 'ozon'
-              ? await ordersApi.getBarcodesPdfBlob(order.id)
+              ? await ordersApi.getBarcodesPdfBlob(order.id, labelWidth)
               : null;
           const labelBlob = await ordersApi.getLabelBlob(
             order.id,

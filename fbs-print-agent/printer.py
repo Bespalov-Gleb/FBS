@@ -24,15 +24,24 @@ def _image_to_pdf(img_path: str, pdf_path: str) -> None:
         f.write(img2pdf.convert(img_path))
 
 
-def _print_pdf_with_printer(pdf_path: str, printer: Optional[str]) -> bool:
+def _print_pdf_with_printer(
+    pdf_path: str,
+    printer: Optional[str],
+    print_settings: Optional[str] = None,
+) -> bool:
+    """print_settings: noscale (100%), shrink, fit — для этикеток 58/80 мм используйте noscale."""
     sumatra = _find_sumatra()
     if not sumatra:
         return False
     abs_path = os.path.abspath(pdf_path)
+    cmd = [sumatra, "-silent"]
     if printer:
-        cmd = [sumatra, "-silent", "-print-to", printer, abs_path]
+        cmd.extend(["-print-to", printer])
     else:
-        cmd = [sumatra, "-silent", "-print-to-default", abs_path]
+        cmd.append("-print-to-default")
+    if print_settings in ("noscale", "shrink", "fit"):
+        cmd.extend(["-print-settings", print_settings])
+    cmd.append(abs_path)
     try:
         result = subprocess.run(
             cmd,
@@ -45,16 +54,22 @@ def _print_pdf_with_printer(pdf_path: str, printer: Optional[str]) -> bool:
         return False
 
 
-def print_document(data: bytes, mime: str, printer: Optional[str] = None) -> bool:
+def print_document(
+    data: bytes,
+    mime: str,
+    printer: Optional[str] = None,
+    print_settings: Optional[str] = None,
+) -> bool:
     """
     Печать документа. Поддерживает application/pdf и image/png.
+    print_settings: noscale (100% для этикеток), shrink, fit.
     """
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as f:
         try:
             if mime in ("application/pdf", "application/octet-stream"):
                 f.write(data)
                 f.flush()
-                return _print_pdf_with_printer(f.name, printer)
+                return _print_pdf_with_printer(f.name, printer, print_settings)
             elif mime in ("image/png", "image/jpeg", "image/jpg"):
                 ext = ".png" if "png" in mime else ".jpg"
                 img_path = f.name.replace(".pdf", ext)
@@ -66,7 +81,7 @@ def print_document(data: bytes, mime: str, printer: Optional[str] = None) -> boo
                     os.unlink(img_path)
                 except OSError:
                     pass
-                return _print_pdf_with_printer(pdf_path, printer)
+                return _print_pdf_with_printer(pdf_path, printer, print_settings)
             else:
                 return False
         finally:

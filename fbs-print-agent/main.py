@@ -8,7 +8,6 @@ import threading
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from uvicorn import Config, Server
 
 import config
 import printer
@@ -28,6 +27,7 @@ class PrintRequest(BaseModel):
     data: str  # base64
     printer: str | None = None
     mime: str = "application/pdf"
+    print_settings: str | None = None  # noscale | shrink | fit — для этикеток 58/80 мм: noscale (100%)
 
 
 app = FastAPI(title="FBS Print Agent", version=__version__)
@@ -80,7 +80,8 @@ def print_job(req: PrintRequest):
         raise HTTPException(400, detail=f"Invalid base64: {e}")
     printer_name = req.printer or config.DEFAULT_PRINTER or None
     mime = req.mime or "application/pdf"
-    ok = printer.print_document(data, mime, printer_name)
+    print_settings = req.print_settings if req.print_settings in ("noscale", "shrink", "fit") else None
+    ok = printer.print_document(data, mime, printer_name, print_settings=print_settings)
     print_journal.log_print(printer_name, mime, len(data), ok, None if ok else "Print failed")
     if not ok:
         raise HTTPException(500, detail="Print failed")
@@ -94,10 +95,29 @@ def get_print_journal(limit: int = 50):
 
 
 def run_server():
-    cfg = Config(app, host=HOST, port=PORT, log_level="warning")
-    server = Server(cfg)
+    """Запуск HTTP-сервера (hypercorn — лучше работает в PyInstaller frozen exe, чем uvicorn)."""
     import asyncio
-    asyncio.run(server.serve())
+    from hypercorn.config import Config
+    from hypercorn.asyncio import serve
+
+    cfg = Config()
+    cfg.bind = [f"{HOST}:{PORT}"]
+    cfg.loglevel = "warning"
+    try:
+        asyncio.run(serve(app, cfg))
+    except Exception as e:
+        _log_server_error(e)
+
+
+def _log_server_error(ex: Exception):
+    """Записать ошибку сервера в файл (для отладки frozen exe)."""
+    import traceback
+    log_dir = os.path.join(os.environ.get("APPDATA", ""), "fbs-print-agent")
+    os.makedirs(log_dir, exist_ok=True)
+    log_path = os.path.join(log_dir, "server_error.log")
+    with open(log_path, "a", encoding="utf-8") as f:
+        f.write(f"\n--- {__import__('datetime').datetime.now()} ---\n")
+        f.write(traceback.format_exc())
 
 
 def run_tray():
@@ -182,6 +202,8 @@ def run_tray():
 
 
 if __name__ == "__main__":
-    server_thread = threading.Thread(target=run_server, daemon=True)
-    server_thread.start()
-    run_tray()
+    # Сервер — в главном потоке (signal.signal работает только там; hypercorn иначе падает)
+    # Трей — в фоновом потоке
+    tray_thread = threading.Thread(target=run_tray, daemon=True)
+    tray_thread.start()
+    run_server()

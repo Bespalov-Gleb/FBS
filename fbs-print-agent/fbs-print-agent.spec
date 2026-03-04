@@ -1,5 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
-
+# Spec для PyInstaller — hypercorn вместо uvicorn (uvicorn не стартует в frozen exe)
+import os
+_icon = 'icon.ico' if os.path.isfile('icon.ico') else None
 
 a = Analysis(
     ['main.py'],
@@ -35,5 +37,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['icon.ico'],
+    icon=_icon,
 )

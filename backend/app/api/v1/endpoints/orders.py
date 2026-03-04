@@ -499,35 +499,37 @@ def _generate_barcodes_pdf(
     product_code: str,
     fbs_code: str,
     product_name: str = "",
+    label_width_mm: int = 58,
 ) -> bytes:
     """
     Генерация PDF с обоими штрихкодами (товар + ФБС) для качественной печати.
-    Векторный формат — без потери качества при масштабировании.
+    Страница = размер этикетки (58×40 или 80×40 мм) — без лишнего белого пространства.
     """
     import io
 
     from reportlab.graphics import renderPDF
-    from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import mm
     from reportlab.pdfgen import canvas
 
-    buf = io.BytesIO()
-    c = canvas.Canvas(buf, pagesize=A4)
-    _, h = A4
-
-    # Размеры этикетки: ~58x40 мм, два штрихкода друг под другом
-    label_w = 58 * mm
+    label_w = label_width_mm * mm
     label_h = 40 * mm
-    margin = 10 * mm
-    x0 = margin
-    y0 = h - margin - label_h
+    pagesize = (label_w, label_h)
 
-    # Штрихкод товара (уменьшенный barWidth для этикетки 58мм)
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=pagesize)
+    h = label_h
+
+    # Контент на всю страницу этикетки
+    margin = 2 * mm
+    x0 = margin
+    y0 = h - margin
+
+    # Штрихкод товара (уменьшенный barWidth для этикетки)
     bc_product = _create_barcode_drawing(product_code, bar_width=0.2)
     bw1, bh1 = bc_product.width, bc_product.height
     scale1 = min((label_w - 4 * mm) / bw1, 12 * mm / bh1, 1.5)
     c.saveState()
-    c.translate(x0 + (label_w - bw1 * scale1) / 2, y0 + label_h - bh1 * scale1 - 2 * mm)
+    c.translate(x0 + (label_w - bw1 * scale1) / 2, y0 - bh1 * scale1 - 2 * mm)
     c.scale(scale1, scale1)
     renderPDF.draw(bc_product, c, 0, 0)
     c.restoreState()
@@ -536,22 +538,22 @@ def _generate_barcodes_pdf(
     if product_name:
         text_lines = _wrap_text(product_name, max_chars=24)
         c.setFont("Helvetica", 8)
-        ty = y0 + label_h - bh1 * scale1 - 5 * mm
+        ty = y0 - bh1 * scale1 - 5 * mm
         for line in reversed(text_lines):
             c.drawCentredString(x0 + label_w / 2, ty, line[:40])
             ty -= 3.5 * mm
 
-    # Штрихкод ФБС
+    # Штрихкод ФБС (внизу этикетки, с отступом для подписи)
     bc_fbs = _create_barcode_drawing(fbs_code, bar_width=0.2)
     bw2, bh2 = bc_fbs.width, bc_fbs.height
     scale2 = min((label_w - 4 * mm) / bw2, 10 * mm / bh2, 1.5)
-    fbs_y = y0 + 2 * mm
+    fbs_y = 4 * mm  # отступ снизу для подписи «ШК ФБС»
     c.saveState()
     c.translate(x0 + (label_w - bw2 * scale2) / 2, fbs_y)
     c.scale(scale2, scale2)
     renderPDF.draw(bc_fbs, c, 0, 0)
     c.restoreState()
-    c.drawCentredString(x0 + label_w / 2, fbs_y - 3 * mm, "ШК ФБС")
+    c.drawCentredString(x0 + label_w / 2, fbs_y - 2 * mm, "ШК ФБС")
 
     c.save()
     buf.seek(0)
@@ -685,6 +687,7 @@ async def get_order_product_barcode(
 @router.get("/{order_id}/barcodes-pdf")
 async def get_order_barcodes_pdf(
     order_id: int,
+    label_width: int = Query(58, description="Ширина этикетки в мм (58 или 80)"),
     db: Session = Depends(get_db),
     current_user: User = CurrentUser,
 ):
@@ -734,7 +737,8 @@ async def get_order_barcodes_pdf(
         product_name = (products[0].get("name") or "").strip()
 
     try:
-        pdf_bytes = _generate_barcodes_pdf(product_code, lower, product_name)
+        w = 80 if label_width >= 80 else 58
+        pdf_bytes = _generate_barcodes_pdf(product_code, lower, product_name, label_width_mm=w)
         return Response(
             content=pdf_bytes,
             media_type="application/pdf",

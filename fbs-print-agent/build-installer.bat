@@ -18,16 +18,11 @@ if errorlevel 1 (
     exit /b 1
 )
 
-REM 2. Сборка exe (удаляем старый spec/build — обход бага PyInstaller + Python 3.10)
+REM 2. Сборка exe (spec с hiddenimports для uvicorn — иначе HTTP-сервер не стартует в frozen exe)
 echo [2/4] Сборка exe...
-if exist fbs-print-agent.spec del fbs-print-agent.spec
 if exist build rmdir /s /q build
 if exist dist rmdir /s /q dist
-if exist icon.ico (
-    pyinstaller --onefile --noconsole --clean --icon=icon.ico --name=fbs-print-agent main.py
-) else (
-    pyinstaller --onefile --noconsole --clean --name=fbs-print-agent main.py
-)
+pyinstaller --clean fbs-print-agent.spec
 if errorlevel 1 (
     echo Ошибка: не удалось собрать exe
     pause
