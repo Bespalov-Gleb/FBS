@@ -135,7 +135,7 @@ class OrderSyncService:
                     marked_delivered = 0
                     while True:
                         batch, has_next = await client.get_orders_delivered_or_delivering(
-                            limit=1000, offset=off, days_back=90
+                            limit=1000, offset=off, days_back=365
                         )
                         for mo in batch:
                             delivered_ids.add(mo.external_id)
@@ -175,10 +175,10 @@ class OrderSyncService:
                     f"WB marketplace {marketplace.id}: confirm={len(orders_new)}, "
                     f"all_external_ids={len(all_external_ids)}, status_updates={len(status_updates)}"
                 )
-                # Обновить статусы: complete → completed, cancel/new → cancelled (скрыть из «Сборка»)
+                # Обновить статусы: complete (в доставке) → DELIVERED (скрыть), cancel/new → cancelled
                 for ext_id, wb_status in status_updates.items():
                     if wb_status == "complete":
-                        if order_repo.mark_completed_by_marketplace(marketplace.id, ext_id):
+                        if order_repo.mark_delivered_by_marketplace(marketplace.id, ext_id):
                             count += 1
                     elif wb_status in ("cancel", "new"):
                         if order_repo.mark_cancelled_by_marketplace(marketplace.id, ext_id):

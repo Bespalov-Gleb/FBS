@@ -258,12 +258,11 @@ class OzonClient(BaseMarketplaceClient):
         Endpoint: POST /v3/posting/fbs/unfulfilled/list (официальная док. docs.ozon.ru)
         Список необработанных отправлений. Период — не больше 1 года.
         
-        Фильтр: cutoff_from/cutoff_to (время сборки) ИЛИ delivering_date_from/to.
-        Нельзя использовать оба фильтра вместе.
+        Фильтр: cutoff_from/cutoff_to (дедлайн сборки). cutoff_to в будущем — новые заказы.
         
         Args:
             warehouse_id: ID склада
-            since, to: Период (по умолчанию 90 дней)
+            since, to: Период (по умолчанию 365 дней назад, to = +30 дней)
             status: Статус — фильтрация на нашей стороне (API не поддерживает)
             limit: Лимит (max 1000)
             offset: Смещение
@@ -273,12 +272,11 @@ class OzonClient(BaseMarketplaceClient):
             tuple: (список заказов, has_next)
         """
         now = datetime.utcnow()
-        period_from = since or (now - timedelta(days=90))
-        period_to = to or now
+        period_from = since or (now - timedelta(days=365))  # макс. 1 год по док. Ozon
+        period_to = to or (now + timedelta(days=30))  # +30 дней: новые заказы с дедлайном в будущем
         iso_format = "%Y-%m-%dT%H:%M:%S.000Z"
 
-        # Документация: cutoff_from/cutoff_to — фильтр по времени сборки.
-        # warehouse_id в filter не документирован — фильтруем на нашей стороне.
+        # cutoff_from/cutoff_to — фильтр по времени сборки (дедлайн). cutoff_to в будущем — новые заказы.
         filter_data: dict[str, Any] = {
             "cutoff_from": period_from.strftime(iso_format),
             "cutoff_to": period_to.strftime(iso_format),
