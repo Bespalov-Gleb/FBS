@@ -500,7 +500,7 @@ def _generate_product_barcode_pdf(
 
     display_code = ozn_code or barcode_value
     label_w = label_width_mm * mm
-    label_h = 40 * mm
+    label_h = 45 * mm  # чуть выше для отступа между штрихкодом и кодом
     pagesize = (label_w, label_h)
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=pagesize)
@@ -509,17 +509,18 @@ def _generate_product_barcode_pdf(
     x0 = margin
     y0 = h - margin
 
-    # Большой штрихкод — занимает почти всю ширину
-    bc_product = _create_barcode_drawing(barcode_value, bar_width=0.35)
+    # Большой штрихкод — занимает почти всю ширину, чуть больше
+    bc_product = _create_barcode_drawing(barcode_value, bar_width=0.4)
     bw1, bh1 = bc_product.width, bc_product.height
-    scale1 = min((label_w - 2 * margin) / bw1, 22 * mm / bh1, 2.0)
+    scale1 = min((label_w - 2 * margin) / bw1, 25 * mm / bh1, 2.2)
     c.saveState()
     c.translate(x0 + (label_w - bw1 * scale1) / 2, y0 - bh1 * scale1 - 2 * mm)
     c.scale(scale1, scale1)
     renderPDF.draw(bc_product, c, 0, 0)
     c.restoreState()
 
-    ty = y0 - bh1 * scale1 - 4 * mm
+    # Отступ 6 мм между штрихкодом и OZN-кодом, чтобы не налезал
+    ty = y0 - bh1 * scale1 - 8 * mm
     c.setFont("Helvetica-Bold", 10)
     c.drawCentredString(x0 + label_w / 2, ty, str(display_code)[:20])
 
