@@ -126,12 +126,11 @@ class OrderSyncService:
                     count += OrderSyncService._upsert_order(
                         db, order_repo, marketplace, mo,
                     )
-                # delivering → COMPLETED (показывать). delivered → DELIVERED (скрыть)
+                # delivering (в доставке) и delivered (доставлен) → DELIVERED (скрыть)
                 # filter: since, to — по irenicaa/ozon-seller (GetPostingFBSListFilter)
                 delivered_ids: set[str] = set()
                 try:
                     off = 0
-                    marked_completed = 0
                     marked_delivered = 0
                     while True:
                         batch, has_next = await client.get_orders_delivered_or_delivering(
@@ -140,21 +139,17 @@ class OrderSyncService:
                         for mo in batch:
                             delivered_ids.add(mo.external_id)
                             raw_status = (mo.metadata or {}).get("status", "")
-                            if raw_status == "delivered":
+                            # delivering (в доставке) и delivered (доставлен) — скрыть
+                            if raw_status in ("delivering", "delivered"):
                                 if order_repo.mark_delivered_by_marketplace(marketplace.id, mo.external_id):
                                     marked_delivered += 1
-                                    count += 1
-                            else:
-                                if order_repo.mark_completed_by_marketplace(marketplace.id, mo.external_id):
-                                    marked_completed += 1
                                     count += 1
                         if not has_next or len(batch) < 1000:
                             break
                         off += 1000
                     if delivered_ids:
                         logger.info(
-                            f"Ozon marketplace {marketplace.id}: {marked_completed} delivering→completed, "
-                            f"{marked_delivered} delivered→hidden"
+                            f"Ozon marketplace {marketplace.id}: {marked_delivered} delivering/delivered→hidden"
                         )
                 except Exception as e:
                     logger.warning(f"Could not sync delivered Ozon orders: {e}")

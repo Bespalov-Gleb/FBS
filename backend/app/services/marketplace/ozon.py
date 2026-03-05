@@ -62,15 +62,16 @@ class OzonClient(BaseMarketplaceClient):
     
     def _map_ozon_status_to_common(self, ozon_status: str) -> str:
         """
-        Маппинг статусов Ozon в общий формат
+        Маппинг статусов Ozon в общий формат.
+        Документация: docs.ozon.ru, Posting FBS statuses.
         
         Статусы Ozon FBS:
         - awaiting_packaging - Ожидает упаковки
         - awaiting_approve - Ожидает подтверждения
         - awaiting_deliver - Ожидает отгрузки
-        - delivering - В доставке
-        - delivered - Доставлен
-        - cancelled - Отменен
+        - delivering - В доставке (скрываем)
+        - delivered - Доставлен (скрываем)
+        - cancelled - Отменён
         """
         status_mapping = {
             "awaiting_packaging": OrderStatus.AWAITING_PACKAGING.value,
