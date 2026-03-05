@@ -484,6 +484,57 @@ def _create_barcode_drawing(code: str, bar_width: float = 0.25):
     return createBarcodeDrawing("Code128", value=code, barWidth=bar_width)
 
 
+def _generate_product_barcode_pdf(
+    product_code: str,
+    product_name: str = "",
+    label_width_mm: int = 58,
+) -> bytes:
+    """
+    Штрихкод товара (Ozon): штрихкод + OZN-код + название.
+    Формат как на эталоне Ozon — без этикетки ФБС.
+    """
+    import io
+
+    from reportlab.graphics import renderPDF
+    from reportlab.lib.units import mm
+    from reportlab.pdfgen import canvas
+
+    label_w = label_width_mm * mm
+    label_h = 40 * mm
+    pagesize = (label_w, label_h)
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=pagesize)
+    h = label_h
+    margin = 2 * mm
+    x0 = margin
+    y0 = h - margin
+
+    bc_product = _create_barcode_drawing(product_code, bar_width=0.2)
+    bw1, bh1 = bc_product.width, bc_product.height
+    scale1 = min((label_w - 4 * mm) / bw1, 12 * mm / bh1, 1.5)
+    c.saveState()
+    c.translate(x0 + (label_w - bw1 * scale1) / 2, y0 - bh1 * scale1 - 2 * mm)
+    c.scale(scale1, scale1)
+    renderPDF.draw(bc_product, c, 0, 0)
+    c.restoreState()
+
+    ty = y0 - bh1 * scale1 - 4 * mm
+    c.setFont("Helvetica-Bold", 9)
+    c.drawCentredString(x0 + label_w / 2, ty, str(product_code)[:20])
+    ty -= 3.5 * mm
+
+    if product_name:
+        text_lines = _wrap_text(product_name, max_chars=24)
+        c.setFont("Helvetica", 8)
+        for line in reversed(text_lines):
+            c.drawCentredString(x0 + label_w / 2, ty, line[:40])
+            ty -= 3.5 * mm
+
+    c.save()
+    buf.seek(0)
+    return buf.getvalue()
+
+
 def _generate_barcodes_pdf(
     product_code: str,
     fbs_code: str,
@@ -713,13 +764,13 @@ async def get_order_product_barcode(
 @router.get("/{order_id}/barcodes-pdf")
 async def get_order_barcodes_pdf(
     order_id: int,
-    label_width: int = Query(58, description="Ширина этикетки в мм (58 или 80), для Ozon игнорируется"),
+    label_width: int = Query(58, description="Ширина этикетки в мм (58 или 80)"),
     db: Session = Depends(get_db),
     current_user: User = CurrentUser,
 ):
     """
-    PDF этикетки для печати. Ozon: официальная этикетка из API (POST /v2/posting/fbs/package-label).
-    Только Ozon.
+    Штрихкод товара Ozon: штрихкод + OZN-код + название (без этикетки ФБС).
+    Для этикетки ФБС используйте /label.
     """
     from app.core.exceptions import MarketplaceAPIException
     from app.models.marketplace import MarketplaceType
@@ -740,7 +791,7 @@ async def get_order_barcodes_pdf(
     api_key = decrypt_api_key(mp.api_key)
     try:
         async with OzonClient(api_key=api_key, client_id=mp.client_id) as client:
-            content = await client.get_order_label(order.posting_number)
+            details = await client.get_posting_details(order.posting_number, with_barcodes=True)
     except MarketplaceAPIException as e:
         err_str = str(e).lower()
         detail = getattr(e, "detail", None)
@@ -765,8 +816,26 @@ async def get_order_barcodes_pdf(
             )
         raise
 
+    barcodes = details.get("barcodes") or {}
+    products = details.get("products") or []
+    sku = products[0].get("sku") if products else None
+    upper = (barcodes.get("upper_barcode") or "").strip() if isinstance(barcodes, dict) else ""
+
+    if sku is not None:
+        product_code = f"OZN{sku}"
+    elif upper:
+        product_code = upper
+    else:
+        raise HTTPException(404, detail="Product barcode not found")
+
+    product_name = (order.product_name or "").strip()
+    if not product_name and products:
+        product_name = (products[0].get("name") or "").strip()
+
+    w = 80 if label_width >= 80 else 58
+    pdf_bytes = _generate_product_barcode_pdf(product_code, product_name, label_width_mm=w)
     return Response(
-        content=content,
+        content=pdf_bytes,
         media_type="application/pdf",
         headers={"Content-Disposition": f"inline; filename=barcodes-{order_id}.pdf"},
     )
