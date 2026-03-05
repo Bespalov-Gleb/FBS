@@ -491,8 +491,8 @@ def _generate_product_barcode_pdf(
     label_width_mm: int = 58,
 ) -> bytes:
     """
-    Штрихкод товара (Ozon): штрихкод + OZN-код + название.
-    barcode_value — значение для штрихкода (EAN или OZN+SKU), ozn_code — текст под штрихкодом.
+    Штрихкод товара (Ozon): как на эталоне — штрихкод сверху, OZN-код, название.
+    Без масштабирования вверх (scale max 1.0) — иначе артефакты при просмотре PDF.
     """
     import io
 
@@ -502,35 +502,37 @@ def _generate_product_barcode_pdf(
 
     display_code = ozn_code or barcode_value
     label_w = label_width_mm * mm
-    label_h = 40 * mm
+    label_h = 50 * mm  # чуть выше для читаемости
     pagesize = (label_w, label_h)
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=pagesize)
     h = label_h
-    margin = 2 * mm
+    margin = 3 * mm
     x0 = margin
     y0 = h - margin
 
-    bc_product = _create_barcode_drawing(barcode_value, bar_width=0.2)
+    # Штрихкод: bar_width меньше — влезает без scale>1 (артефакты)
+    bc_product = _create_barcode_drawing(barcode_value, bar_width=0.15)
     bw1, bh1 = bc_product.width, bc_product.height
-    scale1 = min((label_w - 4 * mm) / bw1, 12 * mm / bh1, 1.5)
+    # Не масштабировать вверх — только уменьшать при необходимости
+    scale1 = min((label_w - 2 * margin) / bw1, 14 * mm / bh1, 1.0)
     c.saveState()
     c.translate(x0 + (label_w - bw1 * scale1) / 2, y0 - bh1 * scale1 - 2 * mm)
     c.scale(scale1, scale1)
     renderPDF.draw(bc_product, c, 0, 0)
     c.restoreState()
 
-    ty = y0 - bh1 * scale1 - 4 * mm
-    c.setFont("Helvetica-Bold", 9)
+    ty = y0 - bh1 * scale1 - 5 * mm
+    c.setFont("Helvetica-Bold", 10)
     c.drawCentredString(x0 + label_w / 2, ty, str(display_code)[:20])
-    ty -= 3.5 * mm
+    ty -= 4 * mm
 
     if product_name:
-        text_lines = _wrap_text(product_name, max_chars=24)
-        c.setFont("Helvetica", 8)
+        text_lines = _wrap_text(product_name, max_chars=28)
+        c.setFont("Helvetica", 9)
         for line in reversed(text_lines):
-            c.drawCentredString(x0 + label_w / 2, ty, line[:40])
-            ty -= 3.5 * mm
+            c.drawCentredString(x0 + label_w / 2, ty, line[:45])
+            ty -= 4 * mm
 
     c.save()
     buf.seek(0)
