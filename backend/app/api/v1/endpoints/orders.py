@@ -487,12 +487,10 @@ def _create_barcode_drawing(code: str, bar_width: float = 0.25):
 def _generate_product_barcode_pdf(
     barcode_value: str,
     ozn_code: str = "",
-    product_name: str = "",
     label_width_mm: int = 58,
 ) -> bytes:
     """
-    Штрихкод товара (Ozon): как на эталоне — штрихкод сверху, OZN-код, название.
-    Без масштабирования вверх (scale max 1.0) — иначе артефакты при просмотре PDF.
+    Штрихкод товара (Ozon): большой штрихкод + OZN-код. Без названия.
     """
     import io
 
@@ -502,37 +500,28 @@ def _generate_product_barcode_pdf(
 
     display_code = ozn_code or barcode_value
     label_w = label_width_mm * mm
-    label_h = 50 * mm  # чуть выше для читаемости
+    label_h = 40 * mm
     pagesize = (label_w, label_h)
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=pagesize)
     h = label_h
-    margin = 3 * mm
+    margin = 2 * mm
     x0 = margin
     y0 = h - margin
 
-    # Штрихкод: bar_width меньше — влезает без scale>1 (артефакты)
-    bc_product = _create_barcode_drawing(barcode_value, bar_width=0.15)
+    # Большой штрихкод — занимает почти всю ширину
+    bc_product = _create_barcode_drawing(barcode_value, bar_width=0.35)
     bw1, bh1 = bc_product.width, bc_product.height
-    # Не масштабировать вверх — только уменьшать при необходимости
-    scale1 = min((label_w - 2 * margin) / bw1, 14 * mm / bh1, 1.0)
+    scale1 = min((label_w - 2 * margin) / bw1, 22 * mm / bh1, 2.0)
     c.saveState()
     c.translate(x0 + (label_w - bw1 * scale1) / 2, y0 - bh1 * scale1 - 2 * mm)
     c.scale(scale1, scale1)
     renderPDF.draw(bc_product, c, 0, 0)
     c.restoreState()
 
-    ty = y0 - bh1 * scale1 - 5 * mm
+    ty = y0 - bh1 * scale1 - 4 * mm
     c.setFont("Helvetica-Bold", 10)
     c.drawCentredString(x0 + label_w / 2, ty, str(display_code)[:20])
-    ty -= 4 * mm
-
-    if product_name:
-        text_lines = _wrap_text(product_name, max_chars=28)
-        c.setFont("Helvetica", 9)
-        for line in reversed(text_lines):
-            c.drawCentredString(x0 + label_w / 2, ty, line[:45])
-            ty -= 4 * mm
 
     c.save()
     buf.seek(0)
@@ -773,7 +762,7 @@ async def get_order_barcodes_pdf(
     current_user: User = CurrentUser,
 ):
     """
-    Штрихкод товара Ozon: штрихкод + OZN-код + название (без этикетки ФБС).
+    Штрихкод товара Ozon: большой штрихкод + OZN-код (без названия).
     Для этикетки ФБС используйте /label.
     """
     from app.core.exceptions import MarketplaceAPIException
@@ -833,12 +822,8 @@ async def get_order_barcodes_pdf(
     # Штрихкод: EAN (upper_barcode) если есть и валиден, иначе OZN+SKU (Code128)
     barcode_value = upper if (upper and len(upper) == 13 and upper.isdigit()) else ozn_code
 
-    product_name = (order.product_name or "").strip()
-    if not product_name and products:
-        product_name = (products[0].get("name") or "").strip()
-
     w = 80 if label_width >= 80 else 58
-    pdf_bytes = _generate_product_barcode_pdf(barcode_value, ozn_code, product_name, label_width_mm=w)
+    pdf_bytes = _generate_product_barcode_pdf(barcode_value, ozn_code, label_width_mm=w)
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
