@@ -523,11 +523,16 @@ def _generate_barcodes_pdf(
     renderPDF.draw(bc_product, c, 0, 0)
     c.restoreState()
 
-    # Текст под штрихкодом товара
+    # Код OZN под штрихкодом (как у Ozon: OZN1994424509)
+    ty = y0 - bh1 * scale1 - 4 * mm
+    c.setFont("Helvetica-Bold", 9)
+    c.drawCentredString(x0 + label_w / 2, ty, str(product_code)[:20])
+    ty -= 3.5 * mm
+
+    # Название товара
     if product_name:
         text_lines = _wrap_text(product_name, max_chars=24)
         c.setFont("Helvetica", 8)
-        ty = y0 - bh1 * scale1 - 5 * mm
         for line in reversed(text_lines):
             c.drawCentredString(x0 + label_w / 2, ty, line[:40])
             ty -= 3.5 * mm
@@ -708,13 +713,12 @@ async def get_order_product_barcode(
 @router.get("/{order_id}/barcodes-pdf")
 async def get_order_barcodes_pdf(
     order_id: int,
-    label_width: int = Query(58, description="Ширина этикетки в мм (58 или 80)"),
+    label_width: int = Query(58, description="Ширина этикетки в мм (58 или 80), для Ozon игнорируется"),
     db: Session = Depends(get_db),
     current_user: User = CurrentUser,
 ):
     """
-    PDF с обоими штрихкодами (товар + ШК ФБС) для качественной печати.
-    Векторный формат — чёткая печать без пикселизации.
+    PDF этикетки для печати. Ozon: официальная этикетка из API (POST /v2/posting/fbs/package-label).
     Только Ozon.
     """
     from app.core.exceptions import MarketplaceAPIException
@@ -736,11 +740,15 @@ async def get_order_barcodes_pdf(
     api_key = decrypt_api_key(mp.api_key)
     try:
         async with OzonClient(api_key=api_key, client_id=mp.client_id) as client:
-            details = await client.get_posting_details(order.posting_number, with_barcodes=True)
+            content = await client.get_order_label(order.posting_number)
     except MarketplaceAPIException as e:
         err_str = str(e).lower()
         detail = getattr(e, "detail", None)
         detail_str = str(detail).lower() if detail else ""
+        if isinstance(detail, dict):
+            for d in (detail.get("details") or []):
+                if isinstance(d, dict) and d.get("message"):
+                    detail_str += " " + str(d.get("message", "")).lower()
         is_delivered_error = (
             "delivered" in err_str or "delivered" in detail_str
             or "label not allowed" in detail_str
@@ -757,42 +765,11 @@ async def get_order_barcodes_pdf(
             )
         raise
 
-    barcodes = details.get("barcodes") or {}
-    if not isinstance(barcodes, dict):
-        raise HTTPException(404, detail="Barcodes not found")
-    upper = (barcodes.get("upper_barcode") or "").strip()
-    lower = (barcodes.get("lower_barcode") or "").strip()
-    products = details.get("products") or []
-    sku = products[0].get("sku") if products else None
-
-    if sku is not None:
-        product_code = f"OZN{sku}"
-    elif upper:
-        product_code = upper
-    else:
-        raise HTTPException(404, detail="Product barcode not found")
-    if not lower:
-        raise HTTPException(404, detail="FBS barcode (lower_barcode) not found")
-
-    product_name = (order.product_name or "").strip()
-    if not product_name and products:
-        product_name = (products[0].get("name") or "").strip()
-
-    try:
-        w = 80 if label_width >= 80 else 58
-        pdf_bytes = _generate_barcodes_pdf(product_code, lower, product_name, label_width_mm=w)
-        return Response(
-            content=pdf_bytes,
-            media_type="application/pdf",
-            headers={"Content-Disposition": f"inline; filename=barcodes-{order_id}.pdf"},
-        )
-    except Exception as e:
-        from app.utils.logger import logger
-        logger.exception(
-            f"barcodes-pdf generation failed for order {order_id}",
-            extra={"order_id": order_id, "product_code": product_code[:20] if product_code else None},
-        )
-        raise HTTPException(500, detail=f"Ошибка генерации PDF: {e}") from e
+    return Response(
+        content=content,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"inline; filename=barcodes-{order_id}.pdf"},
+    )
 
 
 @router.get("/{order_id}/label")
