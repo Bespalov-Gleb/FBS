@@ -5,6 +5,7 @@
 Основано на официальной документации и библиотеке ozon-seller
 https://github.com/irenicaa/ozon-seller
 """
+import json
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
@@ -627,6 +628,50 @@ class OzonClient(BaseMarketplaceClient):
     # Fallback: attribute_id 8229 — «Размер» (из неофициальных источников, может отличаться по категориям)
     OZON_SIZE_ATTRIBUTE_ID_FALLBACK = 8229
 
+    @staticmethod
+    def _parse_tctable_size(raw_val: Any) -> Optional[str]:
+        """
+        Парсит значение атрибута «Размер» от Ozon, когда оно приходит как tcTable (размерная сетка).
+        Возвращает читаемую строку вместо сырого JSON.
+        """
+        if not raw_val:
+            return None
+        obj = raw_val
+        if isinstance(raw_val, str):
+            raw_val = raw_val.strip()
+            if not raw_val or "tcTable" not in raw_val:
+                return raw_val if raw_val and not raw_val.startswith("{") else None
+            try:
+                obj = json.loads(raw_val)
+            except json.JSONDecodeError:
+                return None
+        if not isinstance(obj, dict):
+            return str(obj) if obj else None
+        content = obj.get("content")
+        if not isinstance(content, list) or not content:
+            return None
+        for item in content:
+            if not isinstance(item, dict) or item.get("widgetName") != "tcTable":
+                continue
+            table = item.get("table")
+            if not isinstance(table, dict):
+                continue
+            title = table.get("title") or "Размерная сетка"
+            body = table.get("body") or []
+            for row in body:
+                if not isinstance(row, dict):
+                    continue
+                data = row.get("data")
+                if isinstance(data, list) and len(data) >= 2:
+                    label = str(data[0] or "").lower()
+                    vals = [str(v) for v in data[1:7] if v]
+                    if "международный" in label and vals:
+                        return f"{title}: {', '.join(vals)}"
+                    if "российский" in label and vals:
+                        return f"{title}: {', '.join(vals)}"
+            return title
+        return None
+
     async def _get_category_size_attribute_id(
         self,
         description_category_id: int,
@@ -726,10 +771,17 @@ class OzonClient(BaseMarketplaceClient):
                         aid = a.get("attribute_id") or a.get("id")
                         if aid is not None and int(aid) == size_attr_id:
                             vals = a.get("values") or []
-                            if vals and isinstance(vals[0], dict):
-                                size_val = str(vals[0].get("value", "")).strip()
-                            elif vals:
-                                size_val = str(vals[0]).strip()
+                            raw = vals[0] if vals else None
+                            if isinstance(raw, dict):
+                                raw = raw.get("value", raw)
+                            if raw is not None:
+                                if isinstance(raw, dict):
+                                    parsed = self._parse_tctable_size(raw)
+                                    size_val = parsed or ""
+                                else:
+                                    s = str(raw).strip()
+                                    parsed = self._parse_tctable_size(s)
+                                    size_val = parsed if parsed else s
                             break
                     if size_val:
                         result[oid] = size_val

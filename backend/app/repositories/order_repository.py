@@ -105,13 +105,14 @@ class OrderRepository:
         """Список заказов пользователя с фильтрами. Поиск: артикул, название, номер заказа."""
         from app.models.marketplace import Marketplace, MarketplaceType
 
-        # Показывать: ожидает упаковки, в работе, собран. Скрыть: отменён, доставлен
+        # Показывать только заказы в сборке: ожидает упаковки, в работе. Скрыть: собран, доставлен, отменён
         query = (
             self.db.query(Order)
             .join(Marketplace)
             .filter(Marketplace.user_id == user_id)
             .filter(Order.status != OrderStatus.CANCELLED)
             .filter(Order.status != OrderStatus.DELIVERED)
+            .filter(Order.status != OrderStatus.COMPLETED)
         )
         mp_conds = []
         if marketplace_ids:
@@ -189,6 +190,7 @@ class OrderRepository:
             .filter(Marketplace.user_id == user_id)
             .filter(Order.status != OrderStatus.CANCELLED)
             .filter(Order.status != OrderStatus.DELIVERED)
+            .filter(Order.status != OrderStatus.COMPLETED)
         )
         mp_conds = []
         if marketplace_ids:
@@ -229,20 +231,33 @@ class OrderRepository:
         """
         from app.models.marketplace import Marketplace
 
+        # Только заказы в сборке (ожидает упаковки, в работе)
         base = (
             self.db.query(Order)
             .join(Marketplace, Order.marketplace_id == Marketplace.id)
             .filter(Marketplace.user_id == user_id)
             .filter(Order.status != OrderStatus.CANCELLED)
             .filter(Order.status != OrderStatus.DELIVERED)
+            .filter(Order.status != OrderStatus.COMPLETED)
         )
         today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
 
         total = base.count()
-        on_assembly = base.filter(Order.status != OrderStatus.COMPLETED).count()
-        completed = base.filter(Order.status == OrderStatus.COMPLETED).count()
+        on_assembly = total
+        completed = (
+            self.db.query(Order)
+            .join(Marketplace, Order.marketplace_id == Marketplace.id)
+            .filter(Marketplace.user_id == user_id)
+            .filter(Order.status != OrderStatus.CANCELLED)
+            .filter(Order.status != OrderStatus.DELIVERED)
+            .filter(Order.status == OrderStatus.COMPLETED)
+            .count()
+        )
         completed_today = (
-            base.filter(Order.status == OrderStatus.COMPLETED)
+            self.db.query(Order)
+            .join(Marketplace, Order.marketplace_id == Marketplace.id)
+            .filter(Marketplace.user_id == user_id)
+            .filter(Order.status == OrderStatus.COMPLETED)
             .filter(Order.completed_at >= today_start)
             .count()
         )
@@ -269,7 +284,7 @@ class OrderRepository:
             )
             .join(Order, Order.marketplace_id == Marketplace.id)
             .filter(Marketplace.user_id == user_id)
-            .filter(Order.status.notin_([OrderStatus.CANCELLED, OrderStatus.DELIVERED]))
+            .filter(Order.status.notin_([OrderStatus.CANCELLED, OrderStatus.DELIVERED, OrderStatus.COMPLETED]))
             .group_by(Marketplace.id, Marketplace.name, Marketplace.type)
             .all()
         )
