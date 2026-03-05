@@ -475,24 +475,12 @@ def _wrap_text(text: str, max_chars: int = 28) -> list[str]:
 
 def _create_barcode_drawing(code: str, bar_width: float = 0.25):
     """Создать Drawing со штрихкодом (reportlab). EAN13 для 13 цифр, иначе Code128."""
-    from reportlab.graphics.barcode import code128, eanbc
-    from reportlab.graphics.shapes import Drawing
+    from reportlab.graphics.barcode import createBarcodeDrawing
 
     code = str(code).strip()
-    try:
-        if len(code) == 13 and code.isdigit():
-            bc = eanbc.Ean13BarcodeWidget(code[:12], barWidth=bar_width)
-        else:
-            bc = code128.Code128(code, barWidth=bar_width)
-    except TypeError:
-        # barWidth не поддерживается в некоторых версиях
-        if len(code) == 13 and code.isdigit():
-            bc = eanbc.Ean13BarcodeWidget(code[:12])
-        else:
-            bc = code128.Code128(code)
-    d = Drawing(bc.width, bc.height)
-    d.add(bc)
-    return d
+    if len(code) == 13 and code.isdigit():
+        return createBarcodeDrawing("EAN13", value=code[:12], barWidth=bar_width)
+    return createBarcodeDrawing("Code128", value=code, barWidth=bar_width)
 
 
 def _generate_barcodes_pdf(
@@ -805,6 +793,7 @@ async def get_order_label(
     if mp.type == MarketplaceType.OZON:
         if not mp.client_id:
             raise HTTPException(400, detail="Ozon client_id missing")
+        is_delivered_error = False
         try:
             async with OzonClient(api_key=api_key, client_id=mp.client_id) as client:
                 content = await client.get_order_label(order.posting_number)
@@ -820,15 +809,15 @@ async def get_order_label(
                 or "доставлен" in detail_str
                 or "отгружен" in detail_str
             )
-        if is_delivered_error:
-            if order.status != OrderStatus.DELIVERED:
-                order.status = OrderStatus.DELIVERED
-                order.marketplace_status = "delivered"
-                db.commit()
-            raise HTTPException(
-                400,
-                detail="Заказ уже отгружен в Ozon. Этикетка недоступна. Обновите список заказов.",
-            )
+            if is_delivered_error:
+                if order.status != OrderStatus.DELIVERED:
+                    order.status = OrderStatus.DELIVERED
+                    order.marketplace_status = "delivered"
+                    db.commit()
+                raise HTTPException(
+                    400,
+                    detail="Заказ уже отгружен в Ozon. Этикетка недоступна. Обновите список заказов.",
+                )
             raise
         return Response(
             content=content,
