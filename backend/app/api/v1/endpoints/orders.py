@@ -485,13 +485,14 @@ def _create_barcode_drawing(code: str, bar_width: float = 0.25):
 
 
 def _generate_product_barcode_pdf(
-    product_code: str,
+    barcode_value: str,
+    ozn_code: str = "",
     product_name: str = "",
     label_width_mm: int = 58,
 ) -> bytes:
     """
     Штрихкод товара (Ozon): штрихкод + OZN-код + название.
-    Формат как на эталоне Ozon — без этикетки ФБС.
+    barcode_value — значение для штрихкода (EAN или OZN+SKU), ozn_code — текст под штрихкодом.
     """
     import io
 
@@ -499,6 +500,7 @@ def _generate_product_barcode_pdf(
     from reportlab.lib.units import mm
     from reportlab.pdfgen import canvas
 
+    display_code = ozn_code or barcode_value
     label_w = label_width_mm * mm
     label_h = 40 * mm
     pagesize = (label_w, label_h)
@@ -509,7 +511,7 @@ def _generate_product_barcode_pdf(
     x0 = margin
     y0 = h - margin
 
-    bc_product = _create_barcode_drawing(product_code, bar_width=0.2)
+    bc_product = _create_barcode_drawing(barcode_value, bar_width=0.2)
     bw1, bh1 = bc_product.width, bc_product.height
     scale1 = min((label_w - 4 * mm) / bw1, 12 * mm / bh1, 1.5)
     c.saveState()
@@ -520,7 +522,7 @@ def _generate_product_barcode_pdf(
 
     ty = y0 - bh1 * scale1 - 4 * mm
     c.setFont("Helvetica-Bold", 9)
-    c.drawCentredString(x0 + label_w / 2, ty, str(product_code)[:20])
+    c.drawCentredString(x0 + label_w / 2, ty, str(display_code)[:20])
     ty -= 3.5 * mm
 
     if product_name:
@@ -821,19 +823,20 @@ async def get_order_barcodes_pdf(
     sku = products[0].get("sku") if products else None
     upper = (barcodes.get("upper_barcode") or "").strip() if isinstance(barcodes, dict) else ""
 
-    if sku is not None:
-        product_code = f"OZN{sku}"
-    elif upper:
-        product_code = upper
-    else:
+    # OZN-код для отображения (OZN+SKU)
+    ozn_code = f"OZN{sku}" if sku is not None else (upper if upper else None)
+    if not ozn_code:
         raise HTTPException(404, detail="Product barcode not found")
+
+    # Штрихкод: EAN (upper_barcode) если есть и валиден, иначе OZN+SKU (Code128)
+    barcode_value = upper if (upper and len(upper) == 13 and upper.isdigit()) else ozn_code
 
     product_name = (order.product_name or "").strip()
     if not product_name and products:
         product_name = (products[0].get("name") or "").strip()
 
     w = 80 if label_width >= 80 else 58
-    pdf_bytes = _generate_product_barcode_pdf(product_code, product_name, label_width_mm=w)
+    pdf_bytes = _generate_product_barcode_pdf(barcode_value, ozn_code, product_name, label_width_mm=w)
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",

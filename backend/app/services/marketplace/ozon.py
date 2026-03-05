@@ -24,10 +24,15 @@ class OzonClient(BaseMarketplaceClient):
     
     Endpoints:
     - POST /v3/posting/fbs/unfulfilled/list - Список необработанных отправлений
-    - POST /v3/posting/fbs/get - Детали заказа + штрихкоды
-    - POST /v2/posting/fbs/package-label - Этикетка FBS (PDF)
+    - POST /v3/posting/fbs/get - Детали заказа + штрихкоды (upper_barcode, lower_barcode)
+    - POST /v2/posting/fbs/package-label - Этикетка ФБС (PDF, стикер отправления)
     - POST /v3/posting/fbs/ship - Подтверждение отгрузки
     - POST /v1/warehouse/list - Список складов
+
+    Штрихкод товара: Ozon НЕ даёт отдельный API для PDF штрихкода товара.
+    - /v1/barcode/generate, /v1/barcode/add — для каталога (создание/привязка штрихкодов к товарам).
+    - package-label — только этикетка ФБС (отправление).
+    - Штрихкод товара берём из posting/fbs/get (barcodes.upper_barcode, products[].sku).
     
     Авторизация:
     - Header: Client-Id
