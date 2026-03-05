@@ -34,7 +34,8 @@ def _print_pdf_with_printer(
     printer: Optional[str],
     print_settings: Optional[str] = None,
 ) -> bool:
-    """print_settings: noscale (100%), shrink, fit — для этикеток 58/80 мм используйте noscale."""
+    """print_settings: fit (рекомендуется для этикеток), shrink, noscale.
+    noscale на термо-принтерах часто даёт искажения — используйте fit."""
     sumatra = _find_sumatra()
     if not sumatra:
         _log_print_error("SumatraPDF не найден. Положите портативную версию в папку агента или %APPDATA%\\fbs-print-agent\\")
@@ -45,8 +46,11 @@ def _print_pdf_with_printer(
         cmd.extend(["-print-to", printer])
     else:
         cmd.append("-print-to-default")
-    if print_settings in ("noscale", "shrink", "fit"):
-        cmd.extend(["-print-settings", print_settings])
+    # noscale на этикеточных принтерах даёт искажения (чёрные блоки, наложение) — заменяем на fit
+    settings = print_settings if print_settings in ("noscale", "shrink", "fit") else "fit"
+    if settings == "noscale":
+        settings = "fit"
+    cmd.extend(["-print-settings", settings])
     cmd.append(abs_path)
     from config import PRINT_TIMEOUT
     timeout = PRINT_TIMEOUT

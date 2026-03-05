@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.utils.logger import logger
 from app.core.dependencies import CurrentAdminUser, CurrentUser
 from app.models.marketplace import Marketplace
 from app.models.order import Order, OrderStatus
@@ -548,6 +549,38 @@ def _generate_barcodes_pdf(
     return buf.getvalue()
 
 
+def _wb_sticker_to_pdf(image_bytes: bytes, label_width_mm: int = 58, label_height_mm: int = 40) -> bytes:
+    """Конвертировать PNG-стикер WB в PDF для печати (размер этикетки 58×40 мм)."""
+    import io
+
+    from PIL import Image
+    from reportlab.lib.units import mm
+    from reportlab.lib.utils import ImageReader
+    from reportlab.pdfgen import canvas
+
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    iw, ih = img.size
+    if iw <= 0 or ih <= 0:
+        raise ValueError("Invalid image dimensions")
+    label_w = label_width_mm * mm
+    label_h = label_height_mm * mm
+    scale = min(label_w / iw, label_h / ih, 1.0)
+    draw_w = iw * scale
+    draw_h = ih * scale
+    x0 = (label_w - draw_w) / 2
+    y0 = (label_h - draw_h) / 2
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=(label_w, label_h))
+    c.drawImage(
+        ImageReader(io.BytesIO(image_bytes)),
+        x0, y0, width=draw_w, height=draw_h,
+        preserveAspectRatio=True,
+    )
+    c.save()
+    buf.seek(0)
+    return buf.getvalue()
+
+
 def _add_product_name_to_barcode(image_bytes: bytes, product_name: str) -> bytes:
     """Добавить название товара под штрих-кодом (как в примере Ozon)."""
     import io
@@ -801,6 +834,11 @@ async def get_order_label(
             err_str = str(e).lower()
             detail = getattr(e, "detail", None)
             detail_str = str(detail).lower() if detail else ""
+            # Ozon: details[].message = "label not allowed for delivered postings"
+            if isinstance(detail, dict):
+                for d in (detail.get("details") or []):
+                    if isinstance(d, dict) and d.get("message"):
+                        detail_str += " " + str(d.get("message", "")).lower()
             # Ozon: "label not allowed for delivered postings" или "доставлен" / "отгружен"
             is_delivered_error = (
                 "delivered" in err_str or "delivered" in detail_str
@@ -814,6 +852,10 @@ async def get_order_label(
                     order.status = OrderStatus.DELIVERED
                     order.marketplace_status = "delivered"
                     db.commit()
+                    logger.info(
+                        f"Order {order_id} marked as DELIVERED (Ozon label rejected: already delivered)",
+                        extra={"order_id": order_id, "posting_number": order.posting_number},
+                    )
                 raise HTTPException(
                     400,
                     detail="Заказ уже отгружен в Ozon. Этикетка недоступна. Обновите список заказов.",
@@ -825,8 +867,8 @@ async def get_order_label(
             headers={"Content-Disposition": f"inline; filename=label-{order.posting_number}.pdf"},
         )
     elif mp.type == MarketplaceType.WILDBERRIES:
-        sticker_type = "png" if format == "png" else "svg"
-        # WB API: width 58 или 40, height 40 или 30
+        # WB API возвращает SVG/PNG. Запрашиваем PNG и конвертируем в PDF для качественной печати.
+        sticker_type = "png"
         w, h = (58, 40) if width >= 80 else (58, 40)
         async with WildberriesClient(api_key=api_key) as client:
             content = await client.get_order_label(
@@ -835,10 +877,11 @@ async def get_order_label(
                 width=w,
                 height=h,
             )
-        media_type = "image/png" if sticker_type == "png" else "image/svg+xml"
+        # Конвертация PNG в PDF (58×40 мм) для печати
+        content = _wb_sticker_to_pdf(content, label_width_mm=w, label_height_mm=h)
         return Response(
             content=content,
-            media_type=media_type,
-            headers={"Content-Disposition": f"inline; filename=label-{order.posting_number}.{sticker_type}"},
+            media_type="application/pdf",
+            headers={"Content-Disposition": f"inline; filename=label-{order.posting_number}.pdf"},
         )
     raise HTTPException(400, detail="Unknown marketplace type")

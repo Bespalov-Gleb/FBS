@@ -27,7 +27,7 @@ class PrintRequest(BaseModel):
     data: str  # base64
     printer: str | None = None
     mime: str = "application/pdf"
-    print_settings: str | None = None  # noscale | shrink | fit — для этикеток 58/80 мм: noscale (100%)
+    print_settings: str | None = None  # fit (рекомендуется) | shrink | noscale — noscale заменяется на fit из-за искажений на термо-принтерах
 
 
 app = FastAPI(title="FBS Print Agent", version=__version__)
