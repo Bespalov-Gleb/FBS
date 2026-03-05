@@ -35,6 +35,23 @@ class OrderRepository:
             .first()
         )
 
+    def get_by_posting_number(
+        self,
+        marketplace_id: int,
+        posting_number: str,
+    ) -> Optional[Order]:
+        """Получить заказ по marketplace и posting_number (Ozon)"""
+        if not posting_number:
+            return None
+        return (
+            self.db.query(Order)
+            .filter(
+                Order.marketplace_id == marketplace_id,
+                Order.posting_number == str(posting_number),
+            )
+            .first()
+        )
+
     def create(
         self,
         marketplace_id: int,
@@ -308,10 +325,17 @@ class OrderRepository:
         return True
 
     def mark_delivered_by_marketplace(
-        self, marketplace_id: int, external_id: str
+        self,
+        marketplace_id: int,
+        external_id: str,
+        *,
+        posting_number: Optional[str] = None,
     ) -> bool:
-        """Отметить заказ как доставленный (Ozon delivered). Не показывать в списке."""
+        """Отметить заказ как доставленный (Ozon delivered). Не показывать в списке.
+        Для Ozon: ищем по external_id, при неудаче — по posting_number."""
         order = self.get_by_external_id(marketplace_id, external_id)
+        if not order and posting_number:
+            order = self.get_by_posting_number(marketplace_id, posting_number)
         if not order or order.status == OrderStatus.DELIVERED:
             return False
         order.status = OrderStatus.DELIVERED
