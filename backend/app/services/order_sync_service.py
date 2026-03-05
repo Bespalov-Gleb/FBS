@@ -133,8 +133,9 @@ class OrderSyncService:
                     off = 0
                     marked_delivered = 0
                     while True:
+                        # Ozon fbs/list: PERIOD_IS_TOO_LONG при >30 дней — используем 30
                         batch, has_next = await client.get_orders_delivered_or_delivering(
-                            limit=1000, offset=off, days_back=365
+                            limit=1000, offset=off, days_back=30
                         )
                         for mo in batch:
                             delivered_ids.add(mo.external_id)

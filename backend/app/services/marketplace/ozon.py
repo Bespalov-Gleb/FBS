@@ -185,13 +185,14 @@ class OzonClient(BaseMarketplaceClient):
         self,
         limit: int = 1000,
         offset: int = 0,
-        days_back: int = 90,
+        days_back: int = 30,
     ) -> tuple[list[MarketplaceOrder], bool]:
         """
         Получение заказов в статусе delivered или delivering.
         Используется при синхронизации: unfulfilled/list не возвращает доставленные,
-        поэтому их нужно помечать completed, а не cancelled.
+        поэтому их нужно помечать DELIVERED (скрыть).
         Endpoint: POST /v3/posting/fbs/list
+        Ozon API: PERIOD_IS_TOO_LONG при периоде >30 дней — days_back не более 30.
         """
         now = datetime.utcnow()
         period_from = now - timedelta(days=days_back)
