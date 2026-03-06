@@ -70,9 +70,16 @@ export interface User {
   is_active: boolean;
 }
 
+export interface LabelSize {
+  width_mm?: number;
+  height_mm?: number;
+}
+
 export interface PrintSettings {
   default_printer?: string;
   label_format?: '58mm' | '80mm';
   auto_print_on_click?: boolean;
   auto_print_kiz_duplicate?: boolean;
+  ozon_labels?: LabelSize;
+  wb_labels?: LabelSize;
 }

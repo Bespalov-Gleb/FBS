@@ -102,9 +102,10 @@ export const ordersApi = {
     return `${base}/orders/${id}/label?format=${format}${token ? `&token=${token}` : ''}`;
   },
 
-  getLabelBlob: async (id: number, format = 'pdf', labelWidth?: number): Promise<Blob> => {
+  getLabelBlob: async (id: number, format = 'pdf', labelWidth?: number, labelHeight?: number): Promise<Blob> => {
     const params: Record<string, string | number> = { format };
     if (labelWidth) params.width = labelWidth;
+    if (labelHeight) params.height = labelHeight;
     const { data } = await apiClient.get(`/orders/${id}/label`, {
       params,
       responseType: 'blob',
@@ -148,7 +149,7 @@ export const ordersApi = {
   },
 
   /** PDF с обоими штрихкодами (товар + ШК ФБС) для качественной печати. Только Ozon. */
-  getBarcodesPdfBlob: async (orderId: number, labelWidth?: 58 | 80): Promise<Blob | null> => {
+  getBarcodesPdfBlob: async (orderId: number, labelWidth?: number): Promise<Blob | null> => {
     try {
       const params = labelWidth ? { label_width: labelWidth } : {};
       const { data } = await apiClient.get(`/orders/${orderId}/barcodes-pdf`, {

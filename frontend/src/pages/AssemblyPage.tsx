@@ -155,18 +155,21 @@ export default function AssemblyPage() {
       const shouldAutoPrint = printSettings?.auto_print_on_click !== false;
       if (shouldAutoPrint) {
         const labelFormat = order.marketplace_type === 'ozon' ? 'pdf' : agentAvailable ? 'png' : 'svg';
-        const labelWidth = printSettings?.label_format === '80mm' ? 80 : 58;
+        const ozonWidth = printSettings?.ozon_labels?.width_mm ?? (printSettings?.label_format === '80mm' ? 80 : 58);
+        const wbWidth = printSettings?.wb_labels?.width_mm ?? (printSettings?.label_format === '80mm' ? 80 : 58);
+        const wbHeight = printSettings?.wb_labels?.height_mm ?? 40;
         try {
           // Ozon: PDF с обоими штрихкодами (товар + ШК ФБС) — качественная печать
           // WB: без отдельного штрихкода товара
           const barcodesBlob =
             order.marketplace_type === 'ozon'
-              ? await ordersApi.getBarcodesPdfBlob(order.id, labelWidth)
+              ? await ordersApi.getBarcodesPdfBlob(order.id, ozonWidth)
               : null;
           const labelBlob = await ordersApi.getLabelBlob(
             order.id,
             labelFormat,
-            order.marketplace_type === 'wildberries' ? labelWidth : undefined,
+            order.marketplace_type === 'wildberries' ? wbWidth : undefined,
+            order.marketplace_type === 'wildberries' ? wbHeight : undefined,
           );
           if (barcodesBlob) await printBlob(barcodesBlob);
           if (agentAvailable) {

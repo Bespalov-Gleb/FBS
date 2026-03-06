@@ -1,11 +1,18 @@
 import { apiClient } from './client';
 import type { PrintSettings } from '../types/api';
 
+export interface LabelSizeUpdate {
+  width_mm?: number;
+  height_mm?: number;
+}
+
 export interface PrintSettingsUpdate {
   default_printer?: string;
   label_format?: string;
   auto_print_on_click?: boolean;
   auto_print_kiz_duplicate?: boolean;
+  ozon_labels?: LabelSizeUpdate;
+  wb_labels?: LabelSizeUpdate;
 }
 
 export const printSettingsApi = {

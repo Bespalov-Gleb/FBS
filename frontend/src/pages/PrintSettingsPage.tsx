@@ -25,6 +25,10 @@ export default function PrintSettingsPage() {
   const queryClient = useQueryClient();
   const [defaultPrinter, setDefaultPrinter] = useState('');
   const [labelFormat, setLabelFormat] = useState<'58mm' | '80mm'>('58mm');
+  const [ozonWidth, setOzonWidth] = useState(58);
+  const [ozonHeight, setOzonHeight] = useState(40);
+  const [wbWidth, setWbWidth] = useState(58);
+  const [wbHeight, setWbHeight] = useState(40);
   const [autoPrint, setAutoPrint] = useState(true);
   const [autoPrintKiz, setAutoPrintKiz] = useState(true);
   const [agentAvailable, setAgentAvailable] = useState(false);
@@ -41,6 +45,10 @@ export default function PrintSettingsPage() {
     if (settings) {
       setDefaultPrinter(settings.default_printer ?? '');
       setLabelFormat((settings.label_format as '58mm' | '80mm') ?? '58mm');
+      setOzonWidth(settings.ozon_labels?.width_mm ?? 58);
+      setOzonHeight(settings.ozon_labels?.height_mm ?? 40);
+      setWbWidth(settings.wb_labels?.width_mm ?? 58);
+      setWbHeight(settings.wb_labels?.height_mm ?? 40);
       setAutoPrint(settings.auto_print_on_click !== false);
       setAutoPrintKiz(settings.auto_print_kiz_duplicate !== false);
     }
@@ -62,6 +70,8 @@ export default function PrintSettingsPage() {
       printSettingsApi.update({
         default_printer: defaultPrinter,
         label_format: labelFormat,
+        ozon_labels: { width_mm: ozonWidth, height_mm: ozonHeight },
+        wb_labels: { width_mm: wbWidth, height_mm: wbHeight },
         auto_print_on_click: autoPrint,
         auto_print_kiz_duplicate: autoPrintKiz,
       }),
@@ -131,7 +141,62 @@ export default function PrintSettingsPage() {
                   <MenuItem value="58mm">58 мм</MenuItem>
                   <MenuItem value="80mm">80 мм</MenuItem>
                 </Select>
+                <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
+                  Ширина для штрихкодов Ozon и WB (58 или 80 мм)
+                </Typography>
               </FormControl>
+              <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
+                <Box>
+                  <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
+                    Размер этикеток Ozon (мм)
+                  </Typography>
+                  <Box sx={{ display: 'flex', gap: 1 }}>
+                    <TextField
+                      type="number"
+                      label="Ширина"
+                      value={ozonWidth}
+                      onChange={(e) => setOzonWidth(Math.max(40, Math.min(120, parseInt(e.target.value, 10) || 58)))}
+                      inputProps={{ min: 40, max: 120 }}
+                      size="small"
+                      sx={{ flex: 1 }}
+                    />
+                    <TextField
+                      type="number"
+                      label="Высота"
+                      value={ozonHeight}
+                      onChange={(e) => setOzonHeight(Math.max(30, Math.min(120, parseInt(e.target.value, 10) || 40)))}
+                      inputProps={{ min: 30, max: 120 }}
+                      size="small"
+                      sx={{ flex: 1 }}
+                    />
+                  </Box>
+                </Box>
+                <Box>
+                  <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
+                    Размер этикеток Wildberries (мм)
+                  </Typography>
+                  <Box sx={{ display: 'flex', gap: 1 }}>
+                    <TextField
+                      type="number"
+                      label="Ширина"
+                      value={wbWidth}
+                      onChange={(e) => setWbWidth(Math.max(40, Math.min(120, parseInt(e.target.value, 10) || 58)))}
+                      inputProps={{ min: 40, max: 120 }}
+                      size="small"
+                      sx={{ flex: 1 }}
+                    />
+                    <TextField
+                      type="number"
+                      label="Высота"
+                      value={wbHeight}
+                      onChange={(e) => setWbHeight(Math.max(30, Math.min(120, parseInt(e.target.value, 10) || 40)))}
+                      inputProps={{ min: 30, max: 120 }}
+                      size="small"
+                      sx={{ flex: 1 }}
+                    />
+                  </Box>
+                </Box>
+              </Box>
               <FormControlLabel
                 control={
                   <Switch checked={autoPrint} onChange={(e) => setAutoPrint(e.target.checked)} />

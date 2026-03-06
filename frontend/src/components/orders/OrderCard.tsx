@@ -21,7 +21,7 @@ function ProductRow({ product, highlightQuantity }: { product: OrderProduct; hig
           src={imgUrl}
           alt={product.name}
           onError={() => setImgErr(true)}
-          sx={{ width: 48, height: 48, objectFit: 'cover', borderRadius: 1, flexShrink: 0 }}
+          sx={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 1, flexShrink: 0 }}
         />
       )}
       <Box sx={{ flex: 1, minWidth: 0 }}>
@@ -114,8 +114,8 @@ export default function OrderCard({ order, onClick }: OrderCardProps) {
                 alt={order.product_name}
                 onError={() => setImageError(true)}
                 sx={{
-                  width: 56,
-                  height: 56,
+                  width: 80,
+                  height: 80,
                   objectFit: 'cover',
                   borderRadius: 1,
                   flexShrink: 0,

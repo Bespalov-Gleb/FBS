@@ -16,7 +16,7 @@ export default function OrderCardGrid({ orders, onOrderClick }: OrderCardGridPro
       <Box
         sx={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+          gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))',
           gap: 2,
         }}
       >
@@ -46,7 +46,7 @@ export default function OrderCardGrid({ orders, onOrderClick }: OrderCardGridPro
           <Box
             sx={{
               display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))',
               gap: 2,
             }}
           >
