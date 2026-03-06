@@ -353,6 +353,33 @@ class OzonClient(BaseMarketplaceClient):
                 detail=str(e),
             )
     
+    async def get_postings_details_for_sizes(
+        self,
+        posting_numbers: list[str],
+        max_concurrent: int = 5,
+    ) -> dict[str, dict[str, Any]]:
+        """
+        Получить детали posting для извлечения dimensions (конкретный размер заказа).
+        posting/fbs/get возвращает products с dimensions.size_name — реальный размер.
+        Returns: { posting_number: { products: [...] } }
+        """
+        import asyncio
+
+        sem = asyncio.Semaphore(max_concurrent)
+        result: dict[str, dict[str, Any]] = {}
+
+        async def fetch_one(pn: str) -> None:
+            async with sem:
+                try:
+                    details = await self.get_posting_details(pn, with_barcodes=False)
+                    if details:
+                        result[pn] = details
+                except Exception as e:
+                    logger.debug(f"get_posting_details {pn} failed: {e}")
+
+        await asyncio.gather(*[fetch_one(pn) for pn in posting_numbers if pn])
+        return result
+
     async def get_posting_details(
         self,
         posting_number: str,

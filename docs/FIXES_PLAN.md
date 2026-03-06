@@ -58,4 +58,4 @@ Ozon использует `primary_image` из API — это корректно
 
 1. Синхронизировать заказы заново — чтобы подтянулись новые размеры и фото.
 2. Проверить заказы Ozon и WB — корректность размеров и фото.
-3. При необходимости — уточнить в Ozon API, возвращается ли `dimensions` в posting products для `unfulfilled/list`.
+3. **Ozon размер из posting/fbs/get:** unfulfilled/list не возвращает dimensions. Добавлен вызов `posting/fbs/get` для каждого заказа — из products извлекаем dimensions.size_name или optional/required_product_attributes с «размер». Отключить: `FBS_OZON_FETCH_POSTING_DETAILS=0`.
