@@ -84,10 +84,11 @@ def print_job(req: PrintRequest):
     except Exception as e:
         print_journal.log_print(None, req.mime or "?", 0, False, str(e))
         raise HTTPException(400, detail=f"Invalid base64: {e}")
+    # Принтер: из запроса (сайт передаёт из настроек пользователя) или env/конфиг
     printer_name = req.printer or config.DEFAULT_PRINTER or None
     mime = req.mime or "application/pdf"
-    print_settings = req.print_settings if req.print_settings in ("noscale", "shrink", "fit") else None
-    ok = printer.print_document(data, mime, printer_name, print_settings=print_settings)
+    print_settings_val = req.print_settings if req.print_settings in ("noscale", "shrink", "fit") else None
+    ok = printer.print_document(data, mime, printer_name, print_settings=print_settings_val)
     print_journal.log_print(printer_name, mime, len(data), ok, None if ok else "Print failed")
     if not ok:
         raise HTTPException(500, detail="Print failed")
@@ -136,7 +137,9 @@ def run_tray():
         return img
 
     def on_open(icon, item):
-        # Окно статуса с журналом печати
+        _show_main_window()
+
+    def _show_main_window():
         import tkinter as tk
         from tkinter import ttk
 
@@ -145,7 +148,6 @@ def run_tray():
         root.geometry("420x380")
         root.resizable(True, True)
 
-        # Статус
         f_top = tk.Frame(root)
         f_top.pack(fill=tk.X, padx=10, pady=10)
         tk.Label(f_top, text="Агент печати работает", font=("", 12)).pack()
@@ -155,7 +157,8 @@ def run_tray():
         sp = printer.get_sumatra_path()
         tk.Label(f_top, text=f"SumatraPDF: {sp or 'не найден'}", font=("", 9), fg="gray").pack()
 
-        # Журнал печати
+        tk.Label(root, text="Настройки печати — на сайте fbs-upakovka.ru", font=("", 9), fg="gray").pack(pady=5)
+
         tk.Label(root, text="Журнал печати (последние задания):", font=("", 10)).pack(anchor=tk.W, padx=10, pady=(10, 0))
         journal_frame = tk.Frame(root)
         journal_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)

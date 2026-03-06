@@ -14,6 +14,7 @@ from app.utils.logger import logger
 from app.core.dependencies import CurrentAdminUser, CurrentUser
 from app.models.marketplace import Marketplace
 from app.models.order import Order, OrderStatus
+from app.models.print_settings import PrintSettings
 from app.models.user import User
 from app.repositories.order_repository import OrderRepository
 from app.schemas.order import OrderProductItem, OrderResponse, OrdersListResponse
@@ -224,29 +225,89 @@ def kiz_export(
     )
 
 
+def _generate_kiz_label_pdf(kiz_full: str, kiz_31: str) -> bytes:
+    """
+    PDF этикетки-дубля КИЗ: DataMatrix (полный код) + 31 символ текстом снизу.
+    Размер DataMatrix ~22×22 мм по инструкции WB.
+    GS1: > в выводе сканера = GS (ASCII 29), добавляем FNC1 (ASCII 232) в начало.
+    """
+    import io
+
+    from reportlab.graphics import renderPDF
+    from reportlab.graphics.barcode import createBarcodeDrawing
+    from reportlab.lib.units import mm
+    from reportlab.pdfgen import canvas
+
+    # GS1 DataMatrix: > → GS, FNC1 в начало (если нет)
+    data_for_dm = kiz_full.replace(">", "\x1d")
+    if not data_for_dm.startswith("\xe8"):
+        data_for_dm = "\xe8" + data_for_dm
+
+    dm = createBarcodeDrawing("ECC200DataMatrix", value=data_for_dm)
+
+    dm_size_mm = 22
+    label_w = 40 * mm
+    label_h = 35 * mm
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=(label_w, label_h))
+    margin = 2 * mm
+    x0 = margin
+    y0 = label_h - margin
+
+    # DataMatrix 22×22 мм
+    scale = (dm_size_mm * mm) / max(dm.width, dm.height)
+    dm_w = dm.width * scale
+    dm_h = dm.height * scale
+    c.saveState()
+    c.translate(x0 + (label_w - 2 * margin - dm_w) / 2, y0 - dm_h)
+    c.scale(scale, scale)
+    renderPDF.draw(dm, c, 0, 0)
+    c.restoreState()
+
+    # 31 символ текстом снизу
+    ty = y0 - dm_h - 4 * mm
+    c.setFont("Helvetica", 8)
+    c.drawCentredString(label_w / 2, ty, kiz_31[:31])
+
+    c.save()
+    buf.seek(0)
+    return buf.getvalue()
+
+
 @router.get("/kiz-label")
 def get_kiz_label(
-    kiz_code: str = Query(..., min_length=1, description="Код КИЗ (маркировка)"),
+    kiz_code: str = Query(..., min_length=1, description="Код КИЗ (маркировка, полный или 31 символ)"),
     current_user: User = CurrentUser,
 ):
     """
     Этикетка-дубль КИЗ для печати после сканирования.
-    Возвращает SVG с QR-кодом кода маркировки.
+    DataMatrix с полным КИЗ + 31 символ текстом снизу (для ручного ввода).
+    Возвращает PDF.
     """
-    import io
-    import qrcode
-    kiz = kiz_code.strip()[:31]  # WB/Ozon принимают только 31 символ
-    qr = qrcode.QRCode(version=1, box_size=6, border=2)
-    qr.add_data(kiz)
-    qr.make(fit=True)
-    img = qr.make_image(fill_color="black", back_color="white")
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    buf.seek(0)
+    kiz = kiz_code.strip()
+    kiz_31 = kiz[:31]
+    try:
+        pdf_bytes = _generate_kiz_label_pdf(kiz, kiz_31)
+    except Exception as e:
+        logger.warning("DataMatrix failed, fallback to QR: %s", e)
+        import io
+        import qrcode
+        qr = qrcode.QRCode(version=1, box_size=6, border=2)
+        qr.add_data(kiz_31)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="black", back_color="white")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        buf.seek(0)
+        return Response(
+            content=buf.getvalue(),
+            media_type="image/png",
+            headers={"Content-Disposition": f"inline; filename=kiz-{kiz_31[:20]}.png"},
+        )
     return Response(
-        content=buf.getvalue(),
-        media_type="image/png",
-        headers={"Content-Disposition": f"inline; filename=kiz-{kiz[:20]}.png"},
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"inline; filename=kiz-{kiz_31[:20]}.pdf"},
     )
 
 
@@ -447,9 +508,16 @@ async def complete_order(
     kiz = (data.kiz_code if data else None) or None
     if mp.is_kiz_enabled and not kiz:
         raise HTTPException(400, detail="kiz_code required for this marketplace")
-    ok = await OrderCompleteService.complete_order(
-        order, current_user.id, kiz, db,
-    )
+    try:
+        ok = await OrderCompleteService.complete_order(
+            order, current_user.id, kiz, db,
+        )
+    except Exception as e:
+        from app.core.exceptions import MarketplaceAPIException
+        if isinstance(e, MarketplaceAPIException):
+            detail = e.detail if e.detail else str(e)
+            raise HTTPException(status_code=e.status_code, detail=detail)
+        raise
     if not ok:
         raise HTTPException(500, detail="Failed to complete order in marketplace API")
     return {"ok": True, "order_id": order_id}
@@ -529,6 +597,58 @@ def _generate_product_barcode_pdf(
     return buf.getvalue()
 
 
+def _generate_multi_product_barcode_pdf(
+    items: list[tuple[str, str]],
+    label_width_mm: int = 58,
+) -> bytes:
+    """
+    PDF с несколькими страницами — по одному штрихкоду на каждый товар (Ozon двойные заказы).
+    items: [(barcode_value, ozn_code), ...]
+    """
+    import io
+
+    from reportlab.graphics import renderPDF
+    from reportlab.lib.units import mm
+    from reportlab.pdfgen import canvas
+
+    if not items:
+        raise ValueError("No items for barcode PDF")
+    if len(items) == 1:
+        return _generate_product_barcode_pdf(items[0][0], items[0][1], label_width_mm)
+
+    label_w = label_width_mm * mm
+    label_h = 45 * mm
+    pagesize = (label_w, label_h)
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=pagesize)
+    margin = 2 * mm
+    x0 = margin
+
+    for i, (barcode_value, ozn_code) in enumerate(items):
+        if i > 0:
+            c.showPage()
+        display_code = ozn_code or barcode_value
+        h = label_h
+        y0 = h - margin
+
+        bc_product = _create_barcode_drawing(barcode_value, bar_width=0.4)
+        bw1, bh1 = bc_product.width, bc_product.height
+        scale1 = min((label_w - 2 * margin) / bw1, 25 * mm / bh1, 2.2)
+        c.saveState()
+        c.translate(x0 + (label_w - bw1 * scale1) / 2, y0 - bh1 * scale1 - 2 * mm)
+        c.scale(scale1, scale1)
+        renderPDF.draw(bc_product, c, 0, 0)
+        c.restoreState()
+
+        ty = y0 - bh1 * scale1 - 8 * mm
+        c.setFont("Helvetica-Bold", 10)
+        c.drawCentredString(x0 + label_w / 2, ty, str(display_code)[:20])
+
+    c.save()
+    buf.seek(0)
+    return buf.getvalue()
+
+
 def _generate_barcodes_pdf(
     product_code: str,
     fbs_code: str,
@@ -599,7 +719,12 @@ def _generate_barcodes_pdf(
     return buf.getvalue()
 
 
-def _wb_sticker_to_pdf(image_bytes: bytes, label_width_mm: int = 58, label_height_mm: int = 40) -> bytes:
+def _wb_sticker_to_pdf(
+    image_bytes: bytes,
+    label_width_mm: int = 58,
+    label_height_mm: int = 40,
+    order_number: str | None = None,
+) -> bytes:
     """Конвертировать PNG-стикер WB в PDF для печати (размер этикетки 58×40 мм)."""
     import io
 
@@ -626,6 +751,11 @@ def _wb_sticker_to_pdf(image_bytes: bytes, label_width_mm: int = 58, label_heigh
         x0, y0, width=draw_w, height=draw_h,
         preserveAspectRatio=True,
     )
+    # Номер заказа WB — внизу этикетки
+    if order_number and str(order_number).strip():
+        c.setFont("Helvetica-Bold", 8)
+        num_text = str(order_number).strip()[:25]
+        c.drawCentredString(label_w / 2, 2 * mm, num_text)
     c.save()
     buf.seek(0)
     return buf.getvalue()
@@ -758,7 +888,7 @@ async def get_order_product_barcode(
 @router.get("/{order_id}/barcodes-pdf")
 async def get_order_barcodes_pdf(
     order_id: int,
-    label_width: int = Query(58, description="Ширина этикетки в мм (58 или 80)"),
+    label_width: Optional[int] = Query(None, description="Ширина этикетки в мм (58 или 80). Если не указано — из настроек пользователя."),
     db: Session = Depends(get_db),
     current_user: User = CurrentUser,
 ):
@@ -812,19 +942,29 @@ async def get_order_barcodes_pdf(
 
     barcodes = details.get("barcodes") or {}
     products = details.get("products") or []
-    sku = products[0].get("sku") if products else None
     upper = (barcodes.get("upper_barcode") or "").strip() if isinstance(barcodes, dict) else ""
 
-    # OZN-код для отображения (OZN+SKU)
-    ozn_code = f"OZN{sku}" if sku is not None else (upper if upper else None)
-    if not ozn_code:
+    # По одному штрихкоду на каждую единицу товара (для двойных заказов Ozon)
+    items: list[tuple[str, str]] = []
+    for p in products:
+        sku = p.get("sku")
+        qty = max(1, int(p.get("quantity", 1)))
+        ozn_code = f"OZN{sku}" if sku is not None else (upper if upper else None)
+        if not ozn_code:
+            continue
+        # Штрихкод: OZN+SKU (Code128) для каждого товара
+        barcode_value = ozn_code
+        for _ in range(qty):
+            items.append((barcode_value, ozn_code))
+
+    if not items:
         raise HTTPException(404, detail="Product barcode not found")
 
-    # Штрихкод: EAN (upper_barcode) если есть и валиден, иначе OZN+SKU (Code128)
-    barcode_value = upper if (upper and len(upper) == 13 and upper.isdigit()) else ozn_code
-
-    w = 80 if label_width >= 80 else 58
-    pdf_bytes = _generate_product_barcode_pdf(barcode_value, ozn_code, label_width_mm=w)
+    # Ширина этикетки: из query или из настроек пользователя
+    if label_width is None:
+        ps = db.query(PrintSettings).filter(PrintSettings.user_id == current_user.id).first()
+        label_width = (ps.ozon_width_mm or 58) if ps else 58
+    pdf_bytes = _generate_multi_product_barcode_pdf(items, label_width_mm=label_width)
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
@@ -836,8 +976,8 @@ async def get_order_barcodes_pdf(
 async def get_order_label(
     order_id: int,
     format: str = Query("pdf", description="Ozon: pdf. WB: svg, png, zplv, zplh"),
-    width: int = Query(58, description="WB: ширина этикетки 58 или 80 мм"),
-    height: int = Query(40, description="WB: высота этикетки 40 или 30 мм"),
+    width: Optional[int] = Query(None, description="WB: ширина этикетки в мм. Если не указано — из настроек пользователя."),
+    height: Optional[int] = Query(None, description="WB: высота этикетки в мм. Если не указано — из настроек пользователя."),
     db: Session = Depends(get_db),
     current_user: User = CurrentUser,
 ):
@@ -906,7 +1046,12 @@ async def get_order_label(
     elif mp.type == MarketplaceType.WILDBERRIES:
         # WB API возвращает SVG/PNG. Запрашиваем PNG и конвертируем в PDF для качественной печати.
         sticker_type = "png"
-        w, h = (58, 40) if width >= 80 else (58, 40)
+        if width is None or height is None:
+            ps = db.query(PrintSettings).filter(PrintSettings.user_id == current_user.id).first()
+            w = width if width is not None else (ps.wb_width_mm if ps else 58) or 58
+            h = height if height is not None else (ps.wb_height_mm if ps else 40) or 40
+        else:
+            w, h = width, height
         async with WildberriesClient(api_key=api_key) as client:
             content = await client.get_order_label(
                 order.external_id,
@@ -914,8 +1059,8 @@ async def get_order_label(
                 width=w,
                 height=h,
             )
-        # Конвертация PNG в PDF (58×40 мм) для печати
-        content = _wb_sticker_to_pdf(content, label_width_mm=w, label_height_mm=h)
+        order_num = order.posting_number or order.external_id or ""
+        content = _wb_sticker_to_pdf(content, label_width_mm=w, label_height_mm=h, order_number=order_num)
         return Response(
             content=content,
             media_type="application/pdf",

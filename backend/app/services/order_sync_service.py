@@ -108,8 +108,15 @@ class OrderSyncService:
                                 elif url and i == 0:
                                     mo.metadata["product_image_url"] = url
                                 p["image_url"] = url or ""
-                                if oid and sizes.get(oid):
-                                    p["size"] = sizes[oid]
+                                # Размер: приоритет dimensions из posting (реальный размер заказа),
+                                # затем get_product_sizes (атрибут товара — может быть вся сетка)
+                                if oid and not p.get("size"):
+                                    dims = p.get("dimensions") or {}
+                                    size_from_dims = dims.get("size_name") or dims.get("size") if isinstance(dims, dict) else None
+                                    if size_from_dims:
+                                        p["size"] = str(size_from_dims).strip()
+                                    elif sizes.get(oid):
+                                        p["size"] = sizes[oid]
                             # Размер первого товара — в extra_data для карточки заказа
                             first_size = next(
                                 (p.get("size") for p in (mo.metadata or {}).get("products", []) if p.get("size")),
@@ -205,7 +212,9 @@ class OrderSyncService:
                         if card:
                             photos = card.get("photos") or card.get("mediaFiles") or []
                             if photos:
-                                first = photos[0]
+                                # У части товаров WB первое фото — штрихкод; при нескольких фото берём второе (основное)
+                                idx = 1 if len(photos) > 1 else 0
+                                first = photos[idx]
                                 url = ""
                                 if isinstance(first, str) and first.startswith("http"):
                                     url = first

@@ -70,7 +70,7 @@ export default function Sidebar() {
     >
       <Box sx={{ p: 2 }}>
         <Typography variant="h6" fontWeight={600}>
-          FBS.tools
+          FBS-upakovka
         </Typography>
       </Box>
       {user && (

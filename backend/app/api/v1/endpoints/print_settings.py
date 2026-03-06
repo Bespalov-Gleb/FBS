@@ -16,6 +16,16 @@ from app.models.user import User
 router = APIRouter(prefix="/print-settings", tags=["Print Settings"])
 
 
+class OzonLabelsSchema(BaseModel):
+    width_mm: Optional[int] = None
+    height_mm: Optional[int] = None
+
+
+class WbLabelsSchema(BaseModel):
+    width_mm: Optional[int] = None
+    height_mm: Optional[int] = None
+
+
 class PrintSettingsResponse(BaseModel):
     """Настройки печати"""
     default_printer: Optional[str] = None
@@ -23,6 +33,8 @@ class PrintSettingsResponse(BaseModel):
     label_template: Optional[str] = None
     auto_print_on_click: Optional[bool] = None
     auto_print_kiz_duplicate: Optional[bool] = None
+    ozon_labels: Optional[dict] = None  # {width_mm, height_mm}
+    wb_labels: Optional[dict] = None  # {width_mm, height_mm}
 
 
 class PrintSettingsUpdate(BaseModel):
@@ -32,6 +44,20 @@ class PrintSettingsUpdate(BaseModel):
     label_template: Optional[str] = None
     auto_print_on_click: Optional[bool] = None
     auto_print_kiz_duplicate: Optional[bool] = None
+    ozon_labels: Optional[OzonLabelsSchema] = None
+    wb_labels: Optional[WbLabelsSchema] = None
+
+
+def _ozon_labels_from_ps(ps: PrintSettings) -> dict | None:
+    if ps.ozon_width_mm is None and ps.ozon_height_mm is None:
+        return None
+    return {"width_mm": ps.ozon_width_mm or 58, "height_mm": ps.ozon_height_mm or 40}
+
+
+def _wb_labels_from_ps(ps: PrintSettings) -> dict | None:
+    if ps.wb_width_mm is None and ps.wb_height_mm is None:
+        return None
+    return {"width_mm": ps.wb_width_mm or 58, "height_mm": ps.wb_height_mm or 40}
 
 
 @router.get("", response_model=PrintSettingsResponse)
@@ -44,13 +70,18 @@ def get_print_settings(
         PrintSettings.user_id == current_user.id,
     ).first()
     if not ps:
-        return PrintSettingsResponse()
+        return PrintSettingsResponse(
+            ozon_labels={"width_mm": 58, "height_mm": 40},
+            wb_labels={"width_mm": 58, "height_mm": 40},
+        )
     return PrintSettingsResponse(
         default_printer=ps.default_printer,
         label_format=ps.label_format,
         label_template=ps.label_template,
         auto_print_on_click=ps.auto_print_on_click == "true" if ps.auto_print_on_click else None,
         auto_print_kiz_duplicate=ps.auto_print_kiz_duplicate == "true" if ps.auto_print_kiz_duplicate else None,
+        ozon_labels=_ozon_labels_from_ps(ps) or {"width_mm": 58, "height_mm": 40},
+        wb_labels=_wb_labels_from_ps(ps) or {"width_mm": 58, "height_mm": 40},
     )
 
 
@@ -78,6 +109,16 @@ def update_print_settings(
         ps.auto_print_on_click = "true" if data.auto_print_on_click else "false"
     if data.auto_print_kiz_duplicate is not None:
         ps.auto_print_kiz_duplicate = "true" if data.auto_print_kiz_duplicate else "false"
+    if data.ozon_labels is not None:
+        if data.ozon_labels.width_mm is not None:
+            ps.ozon_width_mm = max(40, min(data.ozon_labels.width_mm, 120))
+        if data.ozon_labels.height_mm is not None:
+            ps.ozon_height_mm = max(30, min(data.ozon_labels.height_mm, 120))
+    if data.wb_labels is not None:
+        if data.wb_labels.width_mm is not None:
+            ps.wb_width_mm = max(40, min(data.wb_labels.width_mm, 120))
+        if data.wb_labels.height_mm is not None:
+            ps.wb_height_mm = max(30, min(data.wb_labels.height_mm, 120))
     db.commit()
     db.refresh(ps)
     return PrintSettingsResponse(
@@ -86,6 +127,8 @@ def update_print_settings(
         label_template=ps.label_template,
         auto_print_on_click=ps.auto_print_on_click == "true" if ps.auto_print_on_click else None,
         auto_print_kiz_duplicate=ps.auto_print_kiz_duplicate == "true" if ps.auto_print_kiz_duplicate else None,
+        ozon_labels=_ozon_labels_from_ps(ps) or {"width_mm": 58, "height_mm": 40},
+        wb_labels=_wb_labels_from_ps(ps) or {"width_mm": 58, "height_mm": 40},
     )
 
 

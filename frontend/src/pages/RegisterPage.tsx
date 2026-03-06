@@ -101,7 +101,7 @@ export default function RegisterPage() {
       <Card sx={{ width: 400, maxWidth: '90%' }}>
         <CardContent sx={{ p: 3 }}>
           <Typography variant="h5" component="h1" gutterBottom align="center" fontWeight={600}>
-            FBS.tools
+            FBS-upakovka
           </Typography>
           <Typography variant="h6" gutterBottom align="center" color="text.secondary">
             Регистрация

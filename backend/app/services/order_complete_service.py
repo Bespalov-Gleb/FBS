@@ -42,8 +42,34 @@ class OrderCompleteService:
             if not mp.client_id:
                 logger.error("Ozon marketplace without client_id")
                 return False
+            # Ozon ship требует products: [{product_id, quantity, sku}]
+            prods = (order.extra_data or {}).get("products", [])
+            if not prods:
+                logger.error(f"Ozon order {order.id} has no products in extra_data")
+                return False
+            products = []
+            for p in prods:
+                pid = p.get("product_id") or p.get("sku")
+                sku_val = p.get("sku") or pid
+                if pid is None and sku_val is None:
+                    continue
+                try:
+                    pid_int = int(pid) if pid is not None else int(sku_val)
+                    sku_int = int(sku_val) if sku_val is not None else int(pid)
+                except (ValueError, TypeError):
+                    logger.warning(f"Ozon order {order.id} product invalid id/sku: pid={pid} sku={sku_val}")
+                    continue
+                products.append({
+                    "product_id": pid_int,
+                    "quantity": int(p.get("quantity", 1)),
+                    "sku": sku_int,
+                })
+            if not products:
+                logger.error(f"Ozon order {order.id} products missing product_id/sku")
+                return False
+            # Ozon: КИЗ только в БД, в API не передаём (exemplar_info с is_gtd_absent)
             async with OzonClient(api_key=api_key, client_id=mp.client_id) as client:
-                await client.ship_posting(order.posting_number)
+                await client.ship_posting(order.posting_number, products)
             return True
 
         elif mp.type == MarketplaceType.WILDBERRIES:

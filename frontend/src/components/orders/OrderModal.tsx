@@ -100,10 +100,10 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
   // ТЗ: после скана печатать дубль КИЗ сразу же, как у markznak.ru (если включено в диспетчере)
   useEffect(() => {
     if (!order || !isKizRequired || isCompleted || !kizCode.trim() || !autoPrintKizDuplicate) return;
-    const kizTrimmed = kizCode.trim().slice(0, 31);
-    if (!kizTrimmed || kizPrintedRef.current === kizTrimmed) return;
-    kizPrintedRef.current = kizTrimmed;
-    ordersApi.getKizLabelBlob(kizTrimmed).then(async (blob) => {
+    const kizFull = kizCode.trim();
+    if (!kizFull || kizPrintedRef.current === kizFull) return;
+    kizPrintedRef.current = kizFull;
+    ordersApi.getKizLabelBlob(kizFull).then(async (blob) => {
       if (agentAvailable) {
         await printViaAgent(blob, undefined, 'noscale');
       } else {
@@ -157,7 +157,7 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
   const handlePrintKizDuplicate = async () => {
     if (!kizCode.trim()) return;
     try {
-      const blob = await ordersApi.getKizLabelBlob(kizCode);
+      const blob = await ordersApi.getKizLabelBlob(kizCode.trim());
       if (agentAvailable) {
         await printViaAgent(blob, defaultPrinter, 'noscale');
       } else {

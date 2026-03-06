@@ -182,7 +182,9 @@ class WildberriesClient(BaseMarketplaceClient):
         photos = card.get("photos") or card.get("mediaFiles") or []
         if not photos:
             return ""
-        first = photos[0]
+        # У части товаров WB первое фото — штрихкод; при нескольких фото берём второе (основное)
+        idx = 1 if len(photos) > 1 else 0
+        first = photos[idx]
         if isinstance(first, str) and first.startswith("http"):
             return first
         if isinstance(first, dict):
@@ -203,13 +205,22 @@ class WildberriesClient(BaseMarketplaceClient):
         Поддержка вариантов: chrtID, chrtId, chrt_id (snake_case).
         """
         sizes = card.get("sizes") or []
+        if not sizes:
+            return ""
+        # Нормализация chrt_id (API может вернуть int или str)
+        chrt_int = None
+        if chrt_id is not None:
+            try:
+                chrt_int = int(chrt_id)
+            except (ValueError, TypeError):
+                pass
         for s in sizes:
             sid = s.get("chrtID") or s.get("chrtId") or s.get("chrt_id")
-            if chrt_id is not None and sid == chrt_id:
+            sid_int = int(sid) if sid is not None else None
+            if chrt_int is not None and sid_int is not None and sid_int == chrt_int:
                 return str(s.get("techSize") or s.get("origName") or "")
-        if sizes and chrt_id is None:
-            return str(sizes[0].get("techSize") or sizes[0].get("origName") or "")
-        return ""
+        # Fallback: первый размер, если chrt_id не совпал или не передан
+        return str(sizes[0].get("techSize") or sizes[0].get("origName") or "")
 
     def _map_wb_status_to_common(self, supplier_status: str) -> str:
         """

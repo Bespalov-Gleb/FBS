@@ -684,7 +684,7 @@ class OzonClient(BaseMarketplaceClient):
     ) -> Optional[int]:
         """
         Получить attribute_id размера для категории через POST /v1/description-category/attribute.
-        Ищет атрибут с именем «Размер» (без учёта регистра).
+        Приоритет: «Размер продавца» (формат 46-48 / M) — затем «Размер» (только цифры).
         """
         try:
             response = await self._request(
@@ -698,6 +698,15 @@ class OzonClient(BaseMarketplaceClient):
             attrs = response.get("result") or response.get("attributes") or []
             if not isinstance(attrs, list):
                 attrs = []
+            # Сначала ищем «Размер продавца» (формат 46-48 / M с буквами)
+            for a in attrs:
+                name = (a.get("name") or a.get("title") or "").strip().lower()
+                if "размер продавца" in name:
+                    aid = a.get("id") or a.get("attribute_id")
+                    if aid is not None:
+                        logger.info(f"Ozon category attr 'Размер продавца' found: id={aid} (cat={description_category_id} type={type_id})")
+                        return int(aid)
+            # Fallback: «Размер» (только цифры)
             for a in attrs:
                 name = (a.get("name") or a.get("title") or "").strip().lower()
                 if "размер" in name:
