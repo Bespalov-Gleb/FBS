@@ -542,6 +542,8 @@ class OzonClient(BaseMarketplaceClient):
             logger.info(f"Successfully shipped posting {posting_number}")
             return response
             
+        except MarketplaceAPIException:
+            raise
         except Exception as e:
             logger.error(
                 f"Failed to ship Ozon posting {posting_number}",
@@ -627,16 +629,17 @@ class OzonClient(BaseMarketplaceClient):
                         },
                     )
                 for item in items:
-                    primary = item.get("primary_image")
                     url = ""
-                    if isinstance(primary, str) and primary:
-                        url = primary
-                    elif isinstance(primary, dict):
-                        url = primary.get("url") or primary.get("file_name") or ""
-                    elif item.get("images"):
-                        imgs = item["images"]
-                        first = imgs[0] if imgs else ""
+                    imgs = item.get("images") or []
+                    if imgs:
+                        first = imgs[0]
                         url = first if isinstance(first, str) else (first.get("url") or first.get("file_name") or "")
+                    if not url:
+                        primary = item.get("primary_image")
+                        if isinstance(primary, str) and primary:
+                            url = primary
+                        elif isinstance(primary, dict):
+                            url = primary.get("url") or primary.get("file_name") or ""
                     # Ключ результата — article (для единообразия с sync)
                     if req_key == "product_id" and sku_to_article:
                         pid = item.get("id")

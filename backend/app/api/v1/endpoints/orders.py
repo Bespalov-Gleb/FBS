@@ -515,8 +515,14 @@ async def complete_order(
     except Exception as e:
         from app.core.exceptions import MarketplaceAPIException
         if isinstance(e, MarketplaceAPIException):
+            status = e.status_code
             detail = e.detail if e.detail else str(e)
-            raise HTTPException(status_code=e.status_code, detail=detail)
+            if status == 404 and mp and mp.type.value == "ozon":
+                detail = (
+                    "Отправление не найдено в Ozon или уже отгружено. "
+                    "Проверьте статус в личном кабинете Ozon."
+                )
+            raise HTTPException(status_code=status, detail=detail)
         raise
     if not ok:
         raise HTTPException(500, detail="Failed to complete order in marketplace API")

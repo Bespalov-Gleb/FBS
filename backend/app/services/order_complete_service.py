@@ -30,11 +30,11 @@ class OrderCompleteService:
         WB: create supply (if needed) -> add order -> deliver supply
         """
         kiz_trimmed = (kiz_code.strip()[:KIZ_MAX_LENGTH] if kiz_code and kiz_code.strip() else None) or None
-        order.complete(user_id=user_id, kiz_code=kiz_trimmed)
-        db.commit()
 
         mp = order.marketplace
         if not mp:
+            order.complete(user_id=user_id, kiz_code=kiz_trimmed)
+            db.commit()
             return True
         api_key = decrypt_api_key(mp.api_key)
 
@@ -67,9 +67,11 @@ class OrderCompleteService:
             if not products:
                 logger.error(f"Ozon order {order.id} products missing product_id/sku")
                 return False
-            # Ozon: КИЗ только в БД, в API не передаём (exemplar_info с is_gtd_absent)
+            # Ozon: сначала ship, при успехе — сохраняем в БД
             async with OzonClient(api_key=api_key, client_id=mp.client_id) as client:
                 await client.ship_posting(order.posting_number, products)
+            order.complete(user_id=user_id, kiz_code=kiz_trimmed)
+            db.commit()
             return True
 
         elif mp.type == MarketplaceType.WILDBERRIES:
@@ -82,6 +84,8 @@ class OrderCompleteService:
                 )
                 await client.add_orders_to_supply(supply_id, [order_id_wb])
                 await client.deliver_supply(supply_id)
+            order.complete(user_id=user_id, kiz_code=kiz_trimmed)
+            db.commit()
             return True
 
         return False
