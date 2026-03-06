@@ -96,6 +96,23 @@ class OrderSyncService:
                                     sizes_from_get += 1
                         if sizes_from_get:
                             logger.info(f"Ozon: got {sizes_from_get} sizes from posting/fbs/get")
+                        elif details_map:
+                            # Debug: структура первого product для поиска размера
+                            first_pn = next(iter(details_map), None)
+                            if first_pn:
+                                prods = (details_map[first_pn] or {}).get("products") or []
+                                if prods:
+                                    dp = prods[0]
+                                    logger.debug(
+                                        "Ozon posting/fbs/get product structure (first product keys)",
+                                        extra={
+                                            "posting": first_pn,
+                                            "keys": list(dp.keys()),
+                                            "dimensions": dp.get("dimensions"),
+                                            "optional_product_attributes": dp.get("optional_product_attributes"),
+                                            "required_product_attributes": dp.get("required_product_attributes"),
+                                        },
+                                    )
                     except Exception as e:
                         logger.warning(f"Could not fetch posting details for sizes: {e}")
                 # Получаем фото товаров (POST /v3/product/info/list) — для всех товаров в posting
@@ -137,19 +154,18 @@ class OrderSyncService:
                             prods = (mo.metadata or {}).get("products", [])
                             if mo.metadata is None:
                                 mo.metadata = {}
-                            mo.metadata["product_image_url"] = ""  # fallback для первого
+                            mo.metadata["product_image_url"] = ""
                             for i, p in enumerate(prods):
                                 oid = p.get("offer_id")
                                 url = images.get(oid) if oid else ""
                                 if not url and p.get("sku") is not None:
                                     url = images.get(str(p["sku"])) or images.get(int(p["sku"])) or ""
-                                if mo.metadata.get("product_image_url") and not url:
-                                    pass
-                                elif url and i == 0:
-                                    mo.metadata["product_image_url"] = url
                                 p["image_url"] = url or ""
+                                # Первое фото — для карточки заказа (если первый товар без фото — берём любой)
+                                if url and not mo.metadata.get("product_image_url"):
+                                    mo.metadata["product_image_url"] = url
                                 # Размер: приоритет dimensions (posting/fbs/get или unfulfilled),
-                                # fallback get_product_sizes — только если не «размерная сетка» (вся сетка)
+                                # fallback get_product_sizes — даже «Размерная сетка: 44-46, 46-48, ...» лучше чем пусто
                                 if oid and not p.get("size"):
                                     dims = p.get("dimensions") or {}
                                     size_from_dims = dims.get("size_name") or dims.get("size") if isinstance(dims, dict) else None
@@ -157,9 +173,8 @@ class OrderSyncService:
                                         p["size"] = str(size_from_dims).strip()
                                     else:
                                         fallback = sizes.get(oid) or ""
-                                        # Не использовать «Размерная сетка: 44-46, 46-48, ...» — это вся сетка
-                                        if fallback and "размерная сетка" not in fallback.lower():
-                                            p["size"] = fallback
+                                        if fallback and str(fallback).strip():
+                                            p["size"] = str(fallback).strip()
                             # Размер первого товара — в extra_data для карточки заказа
                             first_size = next(
                                 (p.get("size") for p in (mo.metadata or {}).get("products", []) if p.get("size")),
