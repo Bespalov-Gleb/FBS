@@ -486,7 +486,7 @@ class OzonClient(BaseMarketplaceClient):
         """
         Подтверждение отгрузки ("Собрано")
         
-        Endpoint: POST /v3/posting/fbs/ship
+        Endpoint: POST /v4/posting/fbs/ship (v3 deprecated, возвращает 404)
         
         Args:
             posting_number: Номер отправления
@@ -535,7 +535,7 @@ class OzonClient(BaseMarketplaceClient):
         try:
             response = await self._request(
                 method="POST",
-                endpoint="/v3/posting/fbs/ship",
+                endpoint="/v4/posting/fbs/ship",
                 json_data=request_body,
             )
             
@@ -630,16 +630,17 @@ class OzonClient(BaseMarketplaceClient):
                     )
                 for item in items:
                     url = ""
-                    imgs = item.get("images") or []
-                    if imgs:
-                        first = imgs[0]
-                        url = first if isinstance(first, str) else (first.get("url") or first.get("file_name") or "")
+                    # primary_image — главное фото товара (Ozon), size chart обычно в images[0]
+                    primary = item.get("primary_image")
+                    if isinstance(primary, str) and primary:
+                        url = primary
+                    elif isinstance(primary, dict):
+                        url = primary.get("url") or primary.get("file_name") or ""
                     if not url:
-                        primary = item.get("primary_image")
-                        if isinstance(primary, str) and primary:
-                            url = primary
-                        elif isinstance(primary, dict):
-                            url = primary.get("url") or primary.get("file_name") or ""
+                        imgs = item.get("images") or []
+                        if imgs:
+                            first = imgs[0]
+                            url = first if isinstance(first, str) else (first.get("url") or first.get("file_name") or "")
                     # Ключ результата — article (для единообразия с sync)
                     if req_key == "product_id" and sku_to_article:
                         pid = item.get("id")
