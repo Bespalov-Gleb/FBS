@@ -537,23 +537,25 @@ class OzonClient(BaseMarketplaceClient):
         Получение URL фото товаров.
         
         Endpoint: POST /v3/product/info/list (docs.ozon.ru)
-        Пробует product_id (sku), затем offer_id.
+        Приоритет: offer_id (артикул) — надёжнее, product_id и sku в Ozon разные.
         
         Args:
-            offer_ids: Артикулы (offer_id)
-            product_ids: ID товаров (sku из posting)
-            sku_to_article: {sku: article} для маппинга при запросе по product_id
+            offer_ids: Артикулы (offer_id) — предпочтительный идентификатор
+            product_ids: ID товаров в каталоге Ozon (НЕ sku!)
+            sku_to_article: {product_id: article} для маппинга
             
         Returns:
             dict: { article: image_url } — ключи всегда article для единообразия
         """
         result: dict[str, str] = {}
-        if product_ids:
+        # Сначала offer_id — в posting всегда есть, product/info/list принимает
+        if offer_ids:
+            result = await self._fetch_product_images_batch("offer_id", offer_ids, None)
+        # Fallback: product_id (только если это реальные product_id из каталога, не sku)
+        if not result and product_ids:
             result = await self._fetch_product_images_batch(
                 "product_id", [int(x) for x in product_ids], sku_to_article
             )
-        if not result and offer_ids:
-            result = await self._fetch_product_images_batch("offer_id", offer_ids, None)
         return result
 
     async def _fetch_product_images_batch(
