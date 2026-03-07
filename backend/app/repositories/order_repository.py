@@ -237,7 +237,7 @@ class OrderRepository:
         sort_by: str = "completed_at",
         sort_desc: bool = True,
     ) -> list[Order]:
-        """Список собранных заказов (отмечены «Собрано» в приложении)."""
+        """Список заказов, собранных текущим пользователем в приложении (completed_by_id = user_id)."""
         from app.models.marketplace import Marketplace, MarketplaceType
 
         query = (
@@ -245,7 +245,7 @@ class OrderRepository:
             .join(Marketplace)
             .filter(Marketplace.user_id == user_id)
             .filter(Order.status == OrderStatus.COMPLETED)
-            .filter(Order.completed_by_id.isnot(None))
+            .filter(Order.completed_by_id == user_id)
         )
         mp_conds = []
         if marketplace_ids:
@@ -296,7 +296,7 @@ class OrderRepository:
         warehouse_ids: Optional[List[int]] = None,
         search: Optional[str] = None,
     ) -> int:
-        """Количество собранных заказов."""
+        """Количество заказов, собранных текущим пользователем в приложении."""
         from app.models.marketplace import Marketplace, MarketplaceType
 
         query = (
@@ -304,7 +304,7 @@ class OrderRepository:
             .join(Marketplace)
             .filter(Marketplace.user_id == user_id)
             .filter(Order.status == OrderStatus.COMPLETED)
-            .filter(Order.completed_by_id.isnot(None))
+            .filter(Order.completed_by_id == user_id)
         )
         if marketplace_ids:
             query = query.filter(Order.marketplace_id.in_(marketplace_ids))
