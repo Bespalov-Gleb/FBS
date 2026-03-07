@@ -146,6 +146,73 @@ def list_orders(
     return OrdersListResponse(items=items, total=total)
 
 
+@router.get("/completed", response_model=OrdersListResponse)
+def list_completed_orders(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    marketplace_ids: Optional[List[int]] = Query(None),
+    marketplace_types: Optional[List[str]] = Query(None),
+    warehouse_ids: Optional[List[int]] = Query(None),
+    search: Optional[str] = Query(None),
+    sort_by: str = Query("completed_at", description="completed_at, marketplace_created_at, article"),
+    sort_desc: bool = Query(True),
+    db: Session = Depends(get_db),
+    current_user: User = CurrentUser,
+):
+    """
+    Список собранных заказов (отмечены «Собрано» в приложении).
+    Для секции «Собрано» на странице сборки.
+    """
+    order_repo = OrderRepository(db)
+    total = order_repo.get_completed_count(
+        user_id=current_user.id,
+        marketplace_ids=marketplace_ids,
+        marketplace_types=marketplace_types,
+        warehouse_ids=warehouse_ids,
+        search=search,
+    )
+    orders = order_repo.get_completed_list(
+        user_id=current_user.id,
+        skip=skip,
+        limit=limit,
+        marketplace_ids=marketplace_ids,
+        marketplace_types=marketplace_types,
+        warehouse_ids=warehouse_ids,
+        search=search,
+        sort_by=sort_by,
+        sort_desc=sort_desc,
+    )
+    items = [
+        OrderResponse(
+            id=o.id,
+            external_id=o.external_id,
+            posting_number=o.posting_number,
+            article=o.article,
+            product_name=o.product_name,
+            quantity=o.quantity,
+            status=o.status.value,
+            marketplace_id=o.marketplace_id,
+            marketplace_type=o.marketplace.type.value if o.marketplace else None,
+            warehouse_id=o.warehouse_id,
+            warehouse_name=o.warehouse_name,
+            warehouse_color=o.warehouse.color if o.warehouse else None,
+            product_image_url=_product_image_url_for_order(o),
+            size=(o.extra_data or {}).get("size"),
+            marketplace_created_at=o.marketplace_created_at,
+            completed_at=o.completed_at,
+            assigned_to_id=o.assigned_to_id,
+            assigned_at=o.assigned_at,
+            assigned_to_name=o.assigned_to_user.full_name if o.assigned_to_user else None,
+            is_locked_by_me=o.is_locked_by(current_user.id),
+            is_locked_by_other=o.is_locked_by_other(current_user.id),
+            is_kiz_enabled=o.marketplace.is_kiz_enabled if o.marketplace else False,
+            products=_order_products(o),
+        )
+        for o in orders
+    ]
+    return OrdersListResponse(items=items, total=total)
+
+
 @router.get("/stats")
 def get_orders_stats(
     db: Session = Depends(get_db),

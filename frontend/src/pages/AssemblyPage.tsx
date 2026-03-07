@@ -71,6 +71,22 @@ export default function AssemblyPage() {
   const total = ordersData?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
+  const completedParams = {
+    skip: 0,
+    limit: 50,
+    marketplace_ids: filters.marketplace_ids.length > 0 ? filters.marketplace_ids : undefined,
+    marketplace_types: filters.marketplace_types.length > 0 ? filters.marketplace_types : undefined,
+    warehouse_ids: filters.warehouse_ids.length > 0 ? filters.warehouse_ids : undefined,
+    search: filters.search || undefined,
+    sort_by: 'completed_at',
+    sort_desc: true,
+  };
+  const { data: completedData } = useQuery({
+    queryKey: ['orders-completed', completedParams],
+    queryFn: () => ordersApi.listCompleted(completedParams),
+  });
+  const completedOrders = completedData?.items ?? [];
+
   // Сброс на страницу 1 при смене фильтров
   useEffect(() => {
     setPage(1);
@@ -303,7 +319,11 @@ export default function AssemblyPage() {
               )}
             </Typography>
           </Box>
-          <OrderCardGrid orders={orders} onOrderClick={handleOrderClick} />
+          <OrderCardGrid
+            orders={orders}
+            completedOrders={completedOrders}
+            onOrderClick={handleOrderClick}
+          />
           {totalPages > 1 && (
             <Box sx={{ display: 'flex', justifyContent: 'center', mt: 3, mb: 2 }}>
               <Pagination
@@ -340,6 +360,7 @@ export default function AssemblyPage() {
         onClose={handleModalClose}
         onComplete={() => {
           refetch();
+          queryClient.invalidateQueries({ queryKey: ['orders-completed'] });
           queryClient.invalidateQueries({ queryKey: ['kiz-scans-count'] });
           setSelectedOrder(null);
         }}

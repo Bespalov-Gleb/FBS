@@ -59,6 +59,17 @@ export const ordersApi = {
     return data;
   },
 
+  /** Список собранных заказов (отмечены «Собрано» в приложении). */
+  listCompleted: async (
+    params?: Omit<OrdersParams, 'status'> & { sort_by?: string },
+  ): Promise<OrdersListResponse> => {
+    const p = { ...params, sort_by: params?.sort_by ?? 'completed_at' };
+    const query = p ? stringifyOrdersParams(p as OrdersParams) : '';
+    const url = query ? `/orders/completed?${query}` : '/orders/completed';
+    const { data } = await apiClient.get<OrdersListResponse>(url);
+    return data;
+  },
+
   get: async (id: number): Promise<Order> => {
     const { data } = await apiClient.get<Order>(`/orders/${id}`);
     return data;

@@ -224,6 +224,115 @@ class OrderRepository:
             )
         return query.scalar() or 0
 
+    def get_completed_list(
+        self,
+        user_id: int,
+        *,
+        skip: int = 0,
+        limit: int = 50,
+        marketplace_ids: Optional[List[int]] = None,
+        marketplace_types: Optional[List[str]] = None,
+        warehouse_ids: Optional[List[int]] = None,
+        search: Optional[str] = None,
+        sort_by: str = "completed_at",
+        sort_desc: bool = True,
+    ) -> list[Order]:
+        """Список собранных заказов (отмечены «Собрано» в приложении)."""
+        from app.models.marketplace import Marketplace, MarketplaceType
+
+        query = (
+            self.db.query(Order)
+            .join(Marketplace)
+            .filter(Marketplace.user_id == user_id)
+            .filter(Order.status == OrderStatus.COMPLETED)
+            .filter(Order.completed_by_id.isnot(None))
+        )
+        mp_conds = []
+        if marketplace_ids:
+            mp_conds.append(Order.marketplace_id.in_(marketplace_ids))
+        if marketplace_types:
+            valid_types = []
+            for t in marketplace_types:
+                if not t:
+                    continue
+                try:
+                    valid_types.append(MarketplaceType(str(t).lower()))
+                except ValueError:
+                    pass
+            if valid_types:
+                mp_conds.append(Marketplace.type.in_(valid_types))
+        if mp_conds:
+            query = query.filter(or_(*mp_conds))
+        if warehouse_ids:
+            query = query.filter(Order.warehouse_id.in_(warehouse_ids))
+        if search and search.strip():
+            search_pattern = f"%{search.strip()}%"
+            query = query.filter(
+                or_(
+                    Order.article.ilike(search_pattern),
+                    Order.product_name.ilike(search_pattern),
+                    Order.posting_number.ilike(search_pattern),
+                    Order.external_id.ilike(search_pattern),
+                )
+            )
+        order_col = getattr(Order, sort_by, Order.completed_at)
+        if sort_desc:
+            query = query.order_by(order_col.desc().nullslast())
+        else:
+            query = query.order_by(order_col.asc().nullsfirst())
+        query = query.options(
+            joinedload(Order.marketplace),
+            joinedload(Order.warehouse),
+            joinedload(Order.assigned_to_user),
+        )
+        return query.offset(skip).limit(limit).all()
+
+    def get_completed_count(
+        self,
+        user_id: int,
+        *,
+        marketplace_ids: Optional[List[int]] = None,
+        marketplace_types: Optional[List[str]] = None,
+        warehouse_ids: Optional[List[int]] = None,
+        search: Optional[str] = None,
+    ) -> int:
+        """Количество собранных заказов."""
+        from app.models.marketplace import Marketplace, MarketplaceType
+
+        query = (
+            self.db.query(func.count(Order.id))
+            .join(Marketplace)
+            .filter(Marketplace.user_id == user_id)
+            .filter(Order.status == OrderStatus.COMPLETED)
+            .filter(Order.completed_by_id.isnot(None))
+        )
+        if marketplace_ids:
+            query = query.filter(Order.marketplace_id.in_(marketplace_ids))
+        if marketplace_types:
+            valid_types = []
+            for t in marketplace_types:
+                if not t:
+                    continue
+                try:
+                    valid_types.append(MarketplaceType(str(t).lower()))
+                except ValueError:
+                    pass
+            if valid_types:
+                query = query.filter(Marketplace.type.in_(valid_types))
+        if warehouse_ids:
+            query = query.filter(Order.warehouse_id.in_(warehouse_ids))
+        if search and search.strip():
+            search_pattern = f"%{search.strip()}%"
+            query = query.filter(
+                or_(
+                    Order.article.ilike(search_pattern),
+                    Order.product_name.ilike(search_pattern),
+                    Order.posting_number.ilike(search_pattern),
+                    Order.external_id.ilike(search_pattern),
+                )
+            )
+        return query.scalar() or 0
+
     def get_stats(self, user_id: int) -> dict:
         """
         Общая статистика по заказам пользователя.

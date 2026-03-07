@@ -4,12 +4,13 @@ import type { Order } from '../../types/api';
 
 interface OrderCardGridProps {
   orders: Order[];
+  completedOrders?: Order[];
   onOrderClick: (order: Order) => void;
 }
 
-export default function OrderCardGrid({ orders, onOrderClick }: OrderCardGridProps) {
+export default function OrderCardGrid({ orders, completedOrders = [], onOrderClick }: OrderCardGridProps) {
   const active = orders.filter((o) => o.status !== 'completed');
-  const completed = orders.filter((o) => o.status === 'completed');
+  const completed = completedOrders.length > 0 ? completedOrders : orders.filter((o) => o.status === 'completed');
 
   return (
     <Box>
@@ -40,7 +41,7 @@ export default function OrderCardGrid({ orders, onOrderClick }: OrderCardGridPro
             }}
           >
             <Box component="span" sx={{ px: 2, color: 'text.secondary', fontSize: '0.875rem' }}>
-              Собранные
+              Собрано
             </Box>
           </Box>
           <Box
