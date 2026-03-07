@@ -533,11 +533,23 @@ class OzonClient(BaseMarketplaceClient):
         logger.info(f"Shipping Ozon posting {posting_number}")
         
         try:
-            response = await self._request(
-                method="POST",
-                endpoint="/v4/posting/fbs/ship",
-                json_data=request_body,
-            )
+            try:
+                response = await self._request(
+                    method="POST",
+                    endpoint="/v4/posting/fbs/ship",
+                    json_data=request_body,
+                )
+            except MarketplaceAPIException as e:
+                # v4 требует роль, которой может не быть у ключа — пробуем v3
+                if e.status_code == 403 and "required role" in str(e.detail or "").lower():
+                    logger.info("v4 ship returned 403 (missing role), trying v3")
+                    response = await self._request(
+                        method="POST",
+                        endpoint="/v3/posting/fbs/ship",
+                        json_data=request_body,
+                    )
+                else:
+                    raise
             
             logger.info(f"Successfully shipped posting {posting_number}")
             return response
@@ -559,41 +571,49 @@ class OzonClient(BaseMarketplaceClient):
     async def get_product_images(
         self,
         offer_ids: Optional[list[str]] = None,
-        product_ids: Optional[list[int]] = None,
+        sku_list: Optional[list[int]] = None,
         sku_to_article: Optional[dict[int, str]] = None,
     ) -> dict[str, str]:
         """
         Получение URL фото товаров.
         
         Endpoint: POST /v3/product/info/list (docs.ozon.ru)
-        Приоритет: offer_id (артикул) — надёжнее, product_id и sku в Ozon разные.
+        API принимает один тип идентификатора за запрос: offer_id или sku.
+        product_id и sku в Ozon — разные сущности.
         
         Args:
             offer_ids: Артикулы (offer_id) — предпочтительный идентификатор
-            product_ids: ID товаров в каталоге Ozon (НЕ sku!)
-            sku_to_article: {product_id: article} для маппинга
+            sku_list: SKU товаров в Ozon — fallback когда offer_id не находит
+            sku_to_article: {sku: offer_id} для маппинга при запросе по sku
             
         Returns:
-            dict: { article: image_url } — ключи всегда article для единообразия
+            dict: { offer_id: image_url }
         """
         result: dict[str, str] = {}
-        # Сначала offer_id — в posting всегда есть, product/info/list принимает
+        # 1. Сначала offer_id — в posting всегда есть
         if offer_ids:
-            result = await self._fetch_product_images_batch("offer_id", offer_ids, None)
-        # Fallback: product_id (только если это реальные product_id из каталога, не sku)
-        if not result and product_ids:
-            result = await self._fetch_product_images_batch(
-                "product_id", [int(x) for x in product_ids], sku_to_article
+            result = await self._fetch_product_images_batch("offer_id", offer_ids, None, None)
+        # 2. Fallback: sku — для товаров, по которым offer_id не вернул результат
+        if sku_list and sku_to_article:
+            sku_result = await self._fetch_product_images_batch(
+                "sku", [int(x) for x in sku_list], sku_to_article, "sku"
             )
+            for k, v in sku_result.items():
+                if v and (k not in result or not result.get(k)):
+                    result[k] = v
         return result
 
     async def _fetch_product_images_batch(
         self,
         req_key: str,
         ids: list,
-        sku_to_article: Optional[dict[int, str]] = None,
+        id_to_offer: Optional[dict[int, str]] = None,
+        map_from: Optional[str] = None,
     ) -> dict[str, str]:
-        """Один запрос к product/info/list"""
+        """
+        Один запрос к product/info/list.
+        map_from: "sku" | "id" — поле в item для маппинга в offer_id через id_to_offer.
+        """
         if not ids:
             return {}
         result: dict[str, str] = {}
@@ -611,7 +631,6 @@ class OzonClient(BaseMarketplaceClient):
                     endpoint="/v3/product/info/list",
                     json_data={req_key: req_val},
                 )
-                # Ozon: items на верхнем уровне ИЛИ result.items[]
                 items = response.get("items")
                 res = response.get("result")
                 if items is None:
@@ -622,32 +641,21 @@ class OzonClient(BaseMarketplaceClient):
                         "Ozon product/info/list returned 0 items",
                         extra={
                             "response_keys": list(response.keys()),
-                            "result_type": type(res).__name__ if res is not None else "None",
-                            "result_sample": str(res)[:500] if res else None,
                             "request_key": req_key,
                             "request_sample": batch[:3],
                         },
                     )
                 for item in items:
-                    url = ""
-                    # primary_image — главное фото товара (Ozon), size chart обычно в images[0]
-                    primary = item.get("primary_image")
-                    if isinstance(primary, str) and primary:
-                        url = primary
-                    elif isinstance(primary, dict):
-                        url = primary.get("url") or primary.get("file_name") or ""
+                    url = self._extract_product_image_url(item)
                     if not url:
-                        imgs = item.get("images") or []
-                        if imgs:
-                            first = imgs[0]
-                            url = first if isinstance(first, str) else (first.get("url") or first.get("file_name") or "")
-                    # Ключ результата — article (для единообразия с sync)
-                    if req_key == "product_id" and sku_to_article:
-                        pid = item.get("id")
-                        if pid is not None:
-                            map_key = sku_to_article.get(int(pid))
-                            if map_key:
-                                result[map_key] = url
+                        continue
+                    # Ключ результата — offer_id
+                    if map_from and id_to_offer:
+                        raw = item.get(map_from)
+                        if raw is not None:
+                            key = id_to_offer.get(int(raw)) or id_to_offer.get(raw)
+                            if key:
+                                result[key] = url
                     else:
                         map_key = item.get("offer_id")
                         if map_key:
@@ -659,9 +667,28 @@ class OzonClient(BaseMarketplaceClient):
             except Exception as e:
                 logger.warning(
                     f"Failed to fetch product images for batch: {e}",
-                    extra={"offer_ids": batch[:5]},
+                    extra={"request_key": req_key, "sample": batch[:5]},
                 )
         return result
+
+    def _extract_product_image_url(self, item: dict) -> str:
+        """
+        Извлечь URL главного фото товара.
+        Документация Ozon: primary_image — главное фото, images[0] — первое при загрузке.
+        Приоритет primary_image (Ozon выбирает главное), fallback images[0].
+        """
+        url = ""
+        primary = item.get("primary_image")
+        if isinstance(primary, str) and primary:
+            url = primary
+        elif isinstance(primary, dict):
+            url = primary.get("url") or primary.get("file_name") or ""
+        if not url:
+            imgs = item.get("images") or []
+            if imgs:
+                first = imgs[0]
+                url = first if isinstance(first, str) else (first.get("url") or first.get("file_name") or "")
+        return url or ""
 
     # Fallback: attribute_id 8229 — «Размер» (из неофициальных источников, может отличаться по категориям)
     OZON_SIZE_ATTRIBUTE_ID_FALLBACK = 8229

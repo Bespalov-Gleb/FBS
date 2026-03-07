@@ -7,13 +7,14 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.core.database import get_db
 from app.utils.logger import logger
 from app.core.dependencies import CurrentAdminUser, CurrentUser
-from app.models.marketplace import Marketplace
+from app.models.marketplace import Marketplace, MarketplaceType
 from app.models.order import Order, OrderStatus
+from app.models.scanned_kiz import ScannedKiz
 from app.models.print_settings import PrintSettings
 from app.models.user import User
 from app.repositories.order_repository import OrderRepository
@@ -157,45 +158,123 @@ def get_orders_stats(
     return order_repo.get_stats(user_id=current_user.id)
 
 
+@router.get("/kiz-scans")
+def get_kiz_scans_count(
+    db: Session = Depends(get_db),
+    current_user: User = CurrentUser,
+):
+    """
+    Количество отсканированных КИЗ в таблице пользователя.
+    Для отображения в UI (счётчик перед скачиванием).
+    """
+    count = (
+        db.query(ScannedKiz)
+        .filter(ScannedKiz.user_id == current_user.id)
+        .count()
+    )
+    return {"count": count}
+
+
+@router.delete("/kiz-scans")
+def clear_kiz_scans(
+    db: Session = Depends(get_db),
+    current_user: User = CurrentUser,
+):
+    """
+    Очистить таблицу отсканированных КИЗ.
+    Начать новый рабочий день с чистой таблицей.
+    """
+    deleted = (
+        db.query(ScannedKiz)
+        .filter(ScannedKiz.user_id == current_user.id)
+        .delete()
+    )
+    db.commit()
+    return {"ok": True, "deleted": deleted}
+
+
+class KizScanAddRequest(BaseModel):
+    """Добавить КИЗ в таблицу (свободное сканирование без заказа)."""
+    kiz_code: str
+    external_id: Optional[str] = None
+    posting_number: Optional[str] = None
+    marketplace_id: Optional[int] = None
+
+
+@router.post("/kiz-scans")
+def add_kiz_scan(
+    data: KizScanAddRequest,
+    db: Session = Depends(get_db),
+    current_user: User = CurrentUser,
+):
+    """
+    Добавить КИЗ в таблицу отсканированных (свободное сканирование).
+    При «Собрано» КИЗ добавляется автоматически. Этот endpoint — для ручного добавления.
+    """
+    kiz = (data.kiz_code or "").strip()[:31]
+    if not kiz:
+        raise HTTPException(400, detail="kiz_code required")
+    if data.marketplace_id:
+        mp = db.query(Marketplace).filter(
+            Marketplace.id == data.marketplace_id,
+            Marketplace.user_id == current_user.id,
+        ).first()
+        if not mp:
+            raise HTTPException(404, detail="Marketplace not found")
+    sk = ScannedKiz(
+        user_id=current_user.id,
+        kiz_code=kiz,
+        external_id=data.external_id,
+        posting_number=data.posting_number,
+        marketplace_id=data.marketplace_id,
+    )
+    db.add(sk)
+    db.commit()
+    return {"ok": True, "id": sk.id}
+
+
 @router.get("/kiz-export")
 def kiz_export(
-    marketplace_id: Optional[int] = Query(None, description="Фильтр по маркетплейсу"),
+    marketplace_id: Optional[int] = Query(None, description="Фильтр по маркетплейсу (обязателен для формата WB/Ozon)"),
     export_format: str = Query("xlsx", description="xlsx | txt"),
     db: Session = Depends(get_db),
     current_user: User = CurrentUser,
 ):
     """
-    Выгрузка КИЗ собранных заказов.
-    Возвращает Excel или TXT со всеми просканированными КИЗ.
+    Выгрузка отсканированных КИЗ из таблицы пользователя.
+    
+    Источник: таблица scanned_kiz (накапливается при «Собрано» и свободном сканировании).
+    
+    Формат зависит от маркетплейса (marketplace_id):
+    - WB: № задания, Стикер, КИЗ (для массовой загрузки в WB)
+    - Ozon: Номер отправления, КИЗ
+    - Без marketplace_id: общий формат
     """
     from datetime import datetime
     from io import BytesIO
 
     query = (
-        db.query(Order)
-        .join(Marketplace)
-        .filter(Marketplace.user_id == current_user.id)
-        .filter(Order.status == OrderStatus.COMPLETED)
-        .filter(Order.kiz_code.isnot(None))
-        .filter(Order.kiz_code != "")
+        db.query(ScannedKiz)
+        .options(joinedload(ScannedKiz.marketplace))
+        .filter(ScannedKiz.user_id == current_user.id)
     )
     if marketplace_id:
-        query = query.filter(Order.marketplace_id == marketplace_id)
-    orders = query.order_by(Order.completed_at.desc()).limit(10000).all()
+        query = query.filter(ScannedKiz.marketplace_id == marketplace_id)
+    rows = query.order_by(ScannedKiz.created_at.asc()).limit(10000).all()
 
-    rows = []
-    for o in orders:
-        rows.append({
-            "kiz_code": o.kiz_code or "",
-            "posting_number": o.posting_number,
-            "article": o.article,
-            "product_name": (o.product_name or "")[:100],
-            "completed_at": o.completed_at.strftime("%Y-%m-%d %H:%M") if o.completed_at else "",
-            "marketplace": o.marketplace.type.value if o.marketplace else "",
-        })
+    mp_type = None
+    if marketplace_id:
+        mp = db.query(Marketplace).filter(
+            Marketplace.id == marketplace_id,
+            Marketplace.user_id == current_user.id,
+        ).first()
+        if mp:
+            mp_type = mp.type
+    elif rows and rows[0].marketplace:
+        mp_type = rows[0].marketplace.type
 
     if export_format == "txt":
-        lines = [r["kiz_code"] for r in rows]
+        lines = [(r.kiz_code or "")[:31] for r in rows]
         content = "\n".join(lines).encode("utf-8")
         return Response(
             content=content,
@@ -205,14 +284,31 @@ def kiz_export(
             },
         )
 
-    # xlsx
     from openpyxl import Workbook
+
     wb = Workbook()
     ws = wb.active
-    ws.title = "КИЗ"
-    ws.append(["КИЗ", "Номер отправления", "Артикул", "Товар", "Дата сборки", "Маркетплейс"])
-    for r in rows:
-        ws.append([r["kiz_code"], r["posting_number"], r["article"], r["product_name"], r["completed_at"], r["marketplace"]])
+
+    if mp_type == MarketplaceType.WILDBERRIES:
+        ws.title = "Сборочные задания"
+        ws.append(["№ задания", "Стикер", "КИЗ"])
+        for r in rows:
+            ws.append([r.external_id or "", r.posting_number or "", (r.kiz_code or "")[:31]])
+        filename = f"kiz-export-WB-{datetime.utcnow().strftime('%Y%m%d-%H%M')}.xlsx"
+    elif mp_type == MarketplaceType.OZON:
+        ws.title = "КИЗ Ozon"
+        ws.append(["Номер отправления", "КИЗ"])
+        for r in rows:
+            ws.append([r.posting_number or "", (r.kiz_code or "")[:31]])
+        filename = f"kiz-export-Ozon-{datetime.utcnow().strftime('%Y%m%d-%H%M')}.xlsx"
+    else:
+        ws.title = "КИЗ"
+        ws.append(["КИЗ", "№ задания", "Стикер", "Маркетплейс"])
+        for r in rows:
+            mp_val = r.marketplace.type.value if r.marketplace else ""
+            ws.append([(r.kiz_code or "")[:31], r.external_id or "", r.posting_number or "", mp_val])
+        filename = f"kiz-export-{datetime.utcnow().strftime('%Y%m%d-%H%M')}.xlsx"
+
     buf = BytesIO()
     wb.save(buf)
     buf.seek(0)
@@ -220,7 +316,7 @@ def kiz_export(
         content=buf.getvalue(),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={
-            "Content-Disposition": f"attachment; filename=kiz-export-{datetime.utcnow().strftime('%Y%m%d-%H%M')}.xlsx",
+            "Content-Disposition": f"attachment; filename={filename}",
         },
     )
 
@@ -264,10 +360,18 @@ def _generate_kiz_label_pdf(kiz_full: str, kiz_31: str) -> bytes:
     renderPDF.draw(dm, c, 0, 0)
     c.restoreState()
 
-    # 31 символ текстом снизу
+    # 31 символ текстом снизу — уменьшенный шрифт, чтобы влезал в 40 мм
     ty = y0 - dm_h - 4 * mm
-    c.setFont("Helvetica", 8)
-    c.drawCentredString(label_w / 2, ty, kiz_31[:31])
+    text = kiz_31[:31]
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+    max_w = label_w - 2 * margin
+    font_size = 5
+    for fs in (5, 4, 3):
+        if stringWidth(text, "Helvetica", fs) <= max_w:
+            font_size = fs
+            break
+    c.setFont("Helvetica", font_size)
+    c.drawCentredString(label_w / 2, ty, text)
 
     c.save()
     buf.seek(0)
@@ -521,6 +625,11 @@ async def complete_order(
                 detail = (
                     "Отправление не найдено в Ozon или уже отгружено. "
                     "Проверьте статус в личном кабинете Ozon."
+                )
+            elif status == 403 and mp and mp.type.value == "ozon":
+                detail = (
+                    "API-ключ Ozon не имеет прав для отгрузки. "
+                    "В личном кабинете seller.ozon.ru → Настройки → API: создайте новый ключ с правами «Отправления» (Posting)."
                 )
             raise HTTPException(status_code=status, detail=detail)
         raise

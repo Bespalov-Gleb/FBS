@@ -13,6 +13,7 @@ import {
 } from '@mui/material';
 import Sync from '@mui/icons-material/Sync';
 import Download from '@mui/icons-material/Download';
+import DeleteSweep from '@mui/icons-material/DeleteSweep';
 import { useSelector } from 'react-redux';
 import OrderFilters, { defaultFilters, type OrderFiltersState } from '../components/orders/OrderFilters';
 import OrderCardGrid from '../components/orders/OrderCardGrid';
@@ -39,6 +40,7 @@ export default function AssemblyPage() {
   const [snackbar, setSnackbar] = useState<{ message: string } | null>(null);
   const [kizMenuAnchor, setKizMenuAnchor] = useState<HTMLElement | null>(null);
   const [agentAvailable, setAgentAvailable] = useState(false);
+  const [kizClearConfirm, setKizClearConfirm] = useState(false);
 
   useEffect(() => {
     isPrintAgentAvailable().then(setAgentAvailable);
@@ -107,6 +109,12 @@ export default function AssemblyPage() {
     queryFn: () => printSettingsApi.get(),
   });
 
+  const { data: kizScansData } = useQuery({
+    queryKey: ['kiz-scans-count'],
+    queryFn: () => ordersApi.getKizScansCount(),
+  });
+  const kizScansCount = kizScansData?.count ?? 0;
+
   const syncMutation = useMutation({
     mutationFn: () => ordersApi.syncAll(),
     onSuccess: () => {
@@ -131,6 +139,28 @@ export default function AssemblyPage() {
       URL.revokeObjectURL(url);
     } catch {
       setSnackbar({ message: 'Ошибка выгрузки КИЗ' });
+    }
+  };
+
+  const clearKizMutation = useMutation({
+    mutationFn: () => ordersApi.clearKizScans(),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ['kiz-scans-count'] });
+      setKizClearConfirm(false);
+      setSnackbar({ message: `Таблица очищена. Удалено записей: ${res.deleted}` });
+    },
+    onError: () => {
+      setSnackbar({ message: 'Ошибка очистки таблицы КИЗ' });
+    },
+  });
+
+  const handleClearKiz = () => {
+    if (kizClearConfirm) {
+      clearKizMutation.mutate();
+    } else {
+      setKizClearConfirm(true);
+      setSnackbar({ message: 'Нажмите ещё раз для подтверждения очистки' });
+      setTimeout(() => setKizClearConfirm(false), 3000);
     }
   };
 
@@ -217,8 +247,17 @@ export default function AssemblyPage() {
           <Button
             startIcon={<Download />}
             onClick={(e) => setKizMenuAnchor(e.currentTarget)}
+            disabled={kizScansCount === 0}
           >
-            Скачать КИЗ
+            Скачать КИЗ {kizScansCount > 0 && `(${kizScansCount})`}
+          </Button>
+          <Button
+            startIcon={<DeleteSweep />}
+            onClick={handleClearKiz}
+            disabled={kizScansCount === 0 || clearKizMutation.isPending}
+            color={kizClearConfirm ? 'error' : 'inherit'}
+          >
+            Очистить таблицу
           </Button>
           <Menu
             anchorEl={kizMenuAnchor}
@@ -301,6 +340,7 @@ export default function AssemblyPage() {
         onClose={handleModalClose}
         onComplete={() => {
           refetch();
+          queryClient.invalidateQueries({ queryKey: ['kiz-scans-count'] });
           setSelectedOrder(null);
         }}
       />

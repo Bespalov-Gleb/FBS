@@ -121,6 +121,18 @@ export const ordersApi = {
     return data;
   },
 
+  /** Количество отсканированных КИЗ в таблице пользователя. */
+  getKizScansCount: async (): Promise<{ count: number }> => {
+    const { data } = await apiClient.get<{ count: number }>('/orders/kiz-scans');
+    return data;
+  },
+
+  /** Очистить таблицу отсканированных КИЗ (начать новый рабочий день). */
+  clearKizScans: async (): Promise<{ ok: boolean; deleted: number }> => {
+    const { data } = await apiClient.delete<{ ok: boolean; deleted: number }>('/orders/kiz-scans');
+    return data;
+  },
+
   /** Выгрузка КИЗ собранных заказов (Excel или TXT). */
   getKizExportBlob: async (
     options?: { marketplace_id?: number; format?: 'xlsx' | 'txt' },

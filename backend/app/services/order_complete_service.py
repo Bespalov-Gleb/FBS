@@ -5,16 +5,29 @@ from sqlalchemy.orm import Session
 
 from app.core.security import decrypt_api_key
 from app.models.marketplace import MarketplaceType
-from app.models.order import Order, OrderStatus
-from app.services.marketplace.ozon import OzonClient
+from app.models.order import Order
+from app.models.scanned_kiz import ScannedKiz
 from app.services.marketplace.wildberries import WildberriesClient
-from app.utils.logger import logger
 
 KIZ_MAX_LENGTH = 31  # WB и Ozon принимают только первые 31 символ
 
 
+def _add_to_scanned_kiz(db: Session, user_id: int, kiz_code: str, order: Order) -> None:
+    """Добавить КИЗ в таблицу отсканированных (для выгрузки в WB/Ozon)."""
+    if not kiz_code or not kiz_code.strip():
+        return
+    sk = ScannedKiz(
+        user_id=user_id,
+        kiz_code=kiz_code[:KIZ_MAX_LENGTH],
+        external_id=order.external_id,
+        posting_number=order.posting_number,
+        marketplace_id=order.marketplace_id,
+    )
+    db.add(sk)
+
+
 class OrderCompleteService:
-    """Отметка заказа как собранного с синхронизацией в API"""
+    """Отметка заказа как собранного с синхронизацией в API (WB) или только локально (Ozon)"""
 
     @staticmethod
     async def complete_order(
@@ -24,57 +37,34 @@ class OrderCompleteService:
         db: Session,
     ) -> bool:
         """
-        Отметить заказ «Собрано»: обновить в БД и вызвать API маркетплейса.
+        Отметить заказ «Собрано»: обновить в БД.
         
-        Ozon: ship_posting(posting_number)
-        WB: create supply (if needed) -> add order -> deliver supply
+        Ozon: только локально — сохраняем статус и КИЗ. На Ozon нет кнопки «Собрано»,
+        заказ пропадает только после приёмки на складе Ozon. Номер заказа уникален,
+        запоминаем что собран — скрываем из списка.
+        
+        WB: create supply -> add order -> deliver supply (вызов API).
         """
         kiz_trimmed = (kiz_code.strip()[:KIZ_MAX_LENGTH] if kiz_code and kiz_code.strip() else None) or None
 
         mp = order.marketplace
         if not mp:
+            if kiz_trimmed:
+                _add_to_scanned_kiz(db, user_id, kiz_trimmed, order)
             order.complete(user_id=user_id, kiz_code=kiz_trimmed)
             db.commit()
             return True
-        api_key = decrypt_api_key(mp.api_key)
 
         if mp.type == MarketplaceType.OZON:
-            if not mp.client_id:
-                logger.error("Ozon marketplace without client_id")
-                return False
-            # Ozon ship требует products: [{product_id, quantity, sku}]
-            prods = (order.extra_data or {}).get("products", [])
-            if not prods:
-                logger.error(f"Ozon order {order.id} has no products in extra_data")
-                return False
-            products = []
-            for p in prods:
-                pid = p.get("product_id") or p.get("sku")
-                sku_val = p.get("sku") or pid
-                if pid is None and sku_val is None:
-                    continue
-                try:
-                    pid_int = int(pid) if pid is not None else int(sku_val)
-                    sku_int = int(sku_val) if sku_val is not None else int(pid)
-                except (ValueError, TypeError):
-                    logger.warning(f"Ozon order {order.id} product invalid id/sku: pid={pid} sku={sku_val}")
-                    continue
-                products.append({
-                    "product_id": pid_int,
-                    "quantity": int(p.get("quantity", 1)),
-                    "sku": sku_int,
-                })
-            if not products:
-                logger.error(f"Ozon order {order.id} products missing product_id/sku")
-                return False
-            # Ozon: сначала ship, при успехе — сохраняем в БД
-            async with OzonClient(api_key=api_key, client_id=mp.client_id) as client:
-                await client.ship_posting(order.posting_number, products)
+            # Ozon: только локально — без вызова ship API
+            if kiz_trimmed:
+                _add_to_scanned_kiz(db, user_id, kiz_trimmed, order)
             order.complete(user_id=user_id, kiz_code=kiz_trimmed)
             db.commit()
             return True
 
-        elif mp.type == MarketplaceType.WILDBERRIES:
+        if mp.type == MarketplaceType.WILDBERRIES:
+            api_key = decrypt_api_key(mp.api_key)
             async with WildberriesClient(api_key=api_key) as client:
                 order_id_wb = int(order.external_id)
                 if kiz_trimmed:
@@ -84,6 +74,8 @@ class OrderCompleteService:
                 )
                 await client.add_orders_to_supply(supply_id, [order_id_wb])
                 await client.deliver_supply(supply_id)
+            if kiz_trimmed:
+                _add_to_scanned_kiz(db, user_id, kiz_trimmed, order)
             order.complete(user_id=user_id, kiz_code=kiz_trimmed)
             db.commit()
             return True

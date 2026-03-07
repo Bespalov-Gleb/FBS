@@ -63,6 +63,14 @@ def init_db() -> None:
     Создание всех таблиц
     """
     # Импорт всех моделей для создания таблиц
-    from app.models import user, marketplace, order, warehouse, print_settings, audit_log  # noqa: F401
-    
+    from app.models import (  # noqa: F401
+        audit_log,
+        marketplace,
+        order,
+        print_settings,
+        scanned_kiz,
+        user,
+        warehouse,
+    )
+
     Base.metadata.create_all(bind=engine)

@@ -117,8 +117,8 @@ class OrderSyncService:
                         logger.warning(f"Could not fetch posting details for sizes: {e}")
                 # Получаем фото товаров (POST /v3/product/info/list) — для всех товаров в posting
                 offer_ids = []
-                product_ids = []
-                sku_to_article = {}
+                sku_list = []
+                sku_to_article = {}  # {sku: offer_id} для маппинга при запросе по sku
                 for mo in orders:
                     prods = (mo.metadata or {}).get("products", [])
                     for p in prods:
@@ -128,18 +128,18 @@ class OrderSyncService:
                         sku = p.get("sku")
                         if sku is not None and oid:
                             try:
-                                pid = int(sku)
-                                product_ids.append(pid)
-                                sku_to_article[pid] = oid
+                                sku_int = int(sku)
+                                sku_list.append(sku_int)
+                                sku_to_article[sku_int] = oid
                             except (ValueError, TypeError):
                                 pass
                 offer_ids = list(dict.fromkeys(offer_ids))
-                product_ids = list(dict.fromkeys(product_ids))
-                if offer_ids or product_ids:
+                sku_list = list(dict.fromkeys(sku_list))
+                if offer_ids or sku_list:
                     try:
                         images = await client.get_product_images(
                             offer_ids=offer_ids or None,
-                            product_ids=product_ids or None,
+                            sku_list=sku_list or None,
                             sku_to_article=sku_to_article or None,
                         )
                         # Размер: Ozon posting не содержит size — получаем через /v4/products/info/attributes
@@ -343,9 +343,13 @@ class OrderSyncService:
 
         existing = order_repo.get_by_external_id(marketplace.id, mo.external_id)
         if existing:
+            # Не перезаписывать статус, если заказ уже собран локально (Ozon: без ship API).
+            # На Ozon заказ остаётся в awaiting_deliver до приёмки на складе — синхронизация
+            # не должна возвращать его в «в сборке».
+            status_to_set = order_status if existing.status != OrderStatus.COMPLETED else None
             order_repo.update_from_marketplace(
                 existing,
-                status=order_status,
+                status=status_to_set,
                 marketplace_status=mo.status,
                 warehouse_id=warehouse_id,
                 warehouse_name=mo.warehouse_name,
