@@ -577,9 +577,8 @@ class OzonClient(BaseMarketplaceClient):
         """
         Получение URL фото товаров.
         
-        Endpoint: POST /v3/product/info/list (docs.ozon.ru)
-        API принимает один тип идентификатора за запрос: offer_id или sku.
-        product_id и sku в Ozon — разные сущности.
+        Приоритет: POST /v2/product/pictures/info (primary_photo) — главное фото Ozon.
+        Fallback: POST /v3/product/info/list — если pictures/info не вернул результат.
         
         Args:
             offer_ids: Артикулы (offer_id) — предпочтительный идентификатор
@@ -590,12 +589,12 @@ class OzonClient(BaseMarketplaceClient):
             dict: { offer_id: image_url }
         """
         result: dict[str, str] = {}
-        # 1. Сначала offer_id — в posting всегда есть
+        # 1. Сначала offer_id — через pictures/info (primary_photo приоритет)
         if offer_ids:
-            result = await self._fetch_product_images_batch("offer_id", offer_ids, None, None)
+            result = await self._fetch_product_images_via_pictures_info("offer_id", offer_ids, None, None)
         # 2. Fallback: sku — для товаров, по которым offer_id не вернул результат
         if sku_list and sku_to_article:
-            sku_result = await self._fetch_product_images_batch(
+            sku_result = await self._fetch_product_images_via_pictures_info(
                 "sku", [int(x) for x in sku_list], sku_to_article, "sku"
             )
             for k, v in sku_result.items():
@@ -603,7 +602,21 @@ class OzonClient(BaseMarketplaceClient):
                     result[k] = v
         return result
 
-    async def _fetch_product_images_batch(
+    def _extract_pictures_info_url(self, item: dict) -> str:
+        """
+        Извлечь URL фото из ответа /v2/product/pictures/info.
+        Приоритет: primary_photo[0] → photo[0] → color_photo[0] → photo_360[0].
+        """
+        primary = item.get("primary_photo") or []
+        if isinstance(primary, list) and primary and isinstance(primary[0], str):
+            return primary[0]
+        for key in ("photo", "color_photo", "photo_360"):
+            arr = item.get(key) or []
+            if isinstance(arr, list) and arr and isinstance(arr[0], str):
+                return arr[0]
+        return ""
+
+    async def _fetch_product_images_via_pictures_info(
         self,
         req_key: str,
         ids: list,
@@ -611,19 +624,21 @@ class OzonClient(BaseMarketplaceClient):
         map_from: Optional[str] = None,
     ) -> dict[str, str]:
         """
-        Один запрос к product/info/list.
-        map_from: "sku" | "id" — поле в item для маппинга в offer_id через id_to_offer.
+        Получение фото через /v2/product/pictures/info (primary_photo приоритет).
+        Сначала product/info/list для маппинга offer_id/sku -> product_id, затем pictures/info.
+        Fallback на product/info/list если pictures/info не вернул результат.
         """
         if not ids:
             return {}
         result: dict[str, str] = {}
         batch_size = 100
+        pictures_batch_size = 1000  # лимит API pictures/info
         for i in range(0, len(ids), batch_size):
             batch = ids[i : i + batch_size]
             try:
-                req_val = batch
+                req_val = [str(x) for x in batch] if req_key == "offer_id" else batch
                 logger.info(
-                    "Fetching product images from Ozon",
+                    "Fetching product info from Ozon (for product_id)",
                     extra={"key": req_key, "count": len(batch), "sample": batch[:3]},
                 )
                 response = await self._request(
@@ -639,17 +654,108 @@ class OzonClient(BaseMarketplaceClient):
                 if not items:
                     logger.warning(
                         "Ozon product/info/list returned 0 items",
-                        extra={
-                            "response_keys": list(response.keys()),
-                            "request_key": req_key,
-                            "request_sample": batch[:3],
-                        },
+                        extra={"request_key": req_key, "request_sample": batch[:3]},
                     )
+                    continue
+                # Собираем product_id и маппинг product_id -> offer_id
+                product_ids: list[str] = []
+                pid_to_offer: dict[int, str] = {}
+                for item in items:
+                    pid = item.get("id") or item.get("product_id")
+                    if pid is None:
+                        continue
+                    pid_int = int(pid)
+                    product_ids.append(str(pid_int))
+                    if map_from and id_to_offer:
+                        raw = item.get(map_from)
+                        if raw is not None:
+                            oid = id_to_offer.get(int(raw)) or id_to_offer.get(raw)
+                            if oid:
+                                pid_to_offer[pid_int] = oid
+                    else:
+                        oid = item.get("offer_id")
+                        if oid:
+                            pid_to_offer[pid_int] = oid
+                if not product_ids:
+                    continue
+                # Запрос /v2/product/pictures/info
+                try:
+                    for j in range(0, len(product_ids), pictures_batch_size):
+                        pid_batch = product_ids[j : j + pictures_batch_size]
+                        pics_response = await self._request(
+                            method="POST",
+                            endpoint="/v2/product/pictures/info",
+                            json_data={"product_id": pid_batch},
+                        )
+                        pics_items = pics_response.get("result", {}).get("items") or pics_response.get("items") or []
+                        for pic_item in pics_items:
+                            url = self._extract_pictures_info_url(pic_item)
+                            if not url:
+                                continue
+                            pid_val = pic_item.get("product_id")
+                            if pid_val is not None:
+                                oid = pid_to_offer.get(int(pid_val)) or pid_to_offer.get(pid_val)
+                                if oid:
+                                    result[oid] = url
+                    if result:
+                        logger.info(
+                            f"Got {len([u for u in result.values() if u])} product images from Ozon pictures/info",
+                        )
+                except Exception as e:
+                    logger.warning(f"Ozon pictures/info failed: {e}, fallback to product/info/list")
+                # Fallback: если pictures/info не вернул достаточно — берём из product/info/list
+                for item in items:
+                    oid = None
+                    if map_from and id_to_offer:
+                        raw = item.get(map_from)
+                        if raw is not None:
+                            oid = id_to_offer.get(int(raw)) or id_to_offer.get(raw)
+                    else:
+                        oid = item.get("offer_id")
+                    if oid and (oid not in result or not result.get(oid)):
+                        url = self._extract_product_image_url(item)
+                        if url:
+                            result[oid] = url
+            except Exception as e:
+                logger.warning(
+                    f"Failed to fetch product images for batch: {e}",
+                    extra={"request_key": req_key, "sample": batch[:5]},
+                )
+        return result
+
+    async def _fetch_product_images_batch(
+        self,
+        req_key: str,
+        ids: list,
+        id_to_offer: Optional[dict[int, str]] = None,
+        map_from: Optional[str] = None,
+    ) -> dict[str, str]:
+        """
+        Fallback: один запрос к product/info/list (если pictures/info недоступен).
+        map_from: "sku" | "id" — поле в item для маппинга в offer_id через id_to_offer.
+        """
+        if not ids:
+            return {}
+        result: dict[str, str] = {}
+        batch_size = 100
+        for i in range(0, len(ids), batch_size):
+            batch = ids[i : i + batch_size]
+            try:
+                req_val = batch
+                response = await self._request(
+                    method="POST",
+                    endpoint="/v3/product/info/list",
+                    json_data={req_key: req_val},
+                )
+                items = response.get("items")
+                res = response.get("result")
+                if items is None:
+                    items = res.get("items", []) if isinstance(res, dict) else (res if isinstance(res, list) else [])
+                items = items or []
                 for item in items:
                     url = self._extract_product_image_url(item)
                     if not url:
                         continue
-                    # Ключ результата — offer_id
                     if map_from and id_to_offer:
                         raw = item.get(map_from)
                         if raw is not None:
@@ -660,22 +766,14 @@ class OzonClient(BaseMarketplaceClient):
                         map_key = item.get("offer_id")
                         if map_key:
                             result[map_key] = url
-                logger.info(
-                    f"Got {len(result)} product images from Ozon",
-                    extra={"fetched": len([u for u in result.values() if u])},
-                )
             except Exception as e:
-                logger.warning(
-                    f"Failed to fetch product images for batch: {e}",
-                    extra={"request_key": req_key, "sample": batch[:5]},
-                )
+                logger.warning(f"Failed to fetch product images for batch: {e}")
         return result
 
     def _extract_product_image_url(self, item: dict) -> str:
         """
-        Извлечь URL главного фото товара.
-        Документация Ozon: primary_image — главное фото, images[0] — первое при загрузке.
-        Приоритет primary_image (Ozon выбирает главное), fallback images[0].
+        Извлечь URL главного фото из product/info/list (fallback).
+        Приоритет primary_image, fallback images[0].
         """
         url = ""
         primary = item.get("primary_image")
