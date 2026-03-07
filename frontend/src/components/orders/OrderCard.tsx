@@ -46,7 +46,11 @@ function ProductRow({ product, highlightQuantity }: { product: OrderProduct; hig
 export default function OrderCard({ order, onClick }: OrderCardProps) {
   const [imageError, setImageError] = useState(false);
   const imageUrl = getProductImageUrl(order.product_image_url);
-  const displayId = order.posting_number || order.external_id || `#${order.id}`;
+  // Ozon: posting_number (номер отправления). WB: external_id (ID сборочного задания) — как в модалке
+  const displayId =
+    order.marketplace_type === 'ozon'
+      ? (order.posting_number || order.external_id || `#${order.id}`)
+      : (order.external_id || order.posting_number || `#${order.id}`);
   const isLockedByOther = order.is_locked_by_other;
   const isLockedByMe = order.is_locked_by_me;
   const isCompleted = order.status === 'completed';
