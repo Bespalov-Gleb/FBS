@@ -4,7 +4,7 @@
 import enum
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, Enum, ForeignKey, Integer, JSON, String, Text
+from sqlalchemy import Boolean, Column, DateTime, Enum, ForeignKey, Integer, JSON, String, Text
 from sqlalchemy.orm import relationship
 
 from app.models.base import BaseModel
@@ -76,7 +76,9 @@ class Order(BaseModel):
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
-    
+    # Отмечен «Собрано» в нашем приложении (не статус от Ozon/WB)
+    collected_in_app = Column(Boolean, default=False, nullable=False, index=True)
+
     # КИЗ (для Wildberries)
     kiz_code = Column(String(255), nullable=True)
     
@@ -169,7 +171,7 @@ class Order(BaseModel):
 
     def complete(self, user_id: int, kiz_code: str | None = None) -> None:
         """
-        Отметить заказ как собранный
+        Отметить заказ как собранный в нашем приложении.
         
         Args:
             user_id: ID пользователя, который собрал
@@ -178,7 +180,8 @@ class Order(BaseModel):
         self.completed_by_id = user_id
         self.completed_at = datetime.utcnow()
         self.status = OrderStatus.COMPLETED
-        
+        self.collected_in_app = True
+
         if kiz_code:
             self.kiz_code = kiz_code
     

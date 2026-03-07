@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
-Скрипт: проставить completed_by_id для заказов со статусом COMPLETED, у которых он пустой.
-Для заказов, которые были отмечены «Собрано» до добавления поля completed_by_id.
-Использует assigned_to_id (кто работал с заказом) или первого админа.
+Скрипт: проставить collected_in_app=True для заказов, отмеченных «Собрано» в приложении.
+Для заказов с completed_by_id (кто-то нажал «Собрано») — ставим collected_in_app=True.
 """
 import os
 import sys
@@ -10,29 +9,23 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.core.database import SessionLocal
-from app.models.order import Order, OrderStatus
-from app.models.user import User, UserRole
+from app.models.order import Order
 
 
 def main():
     db = SessionLocal()
     try:
-        fixed = db.query(Order).filter(
-            Order.status == OrderStatus.COMPLETED,
-            Order.completed_by_id.is_(None),
+        to_fix = db.query(Order).filter(
+            Order.completed_by_id.isnot(None),
+            Order.collected_in_app.is_(False),
         ).all()
-        if not fixed:
+        if not to_fix:
             print("Нет заказов для исправления.")
             return
-        admin = db.query(User).filter(User.role == UserRole.ADMIN).first()
-        default_user_id = admin.id if admin else None
-        updated = 0
-        for order in fixed:
-            order.completed_by_id = order.assigned_to_id or default_user_id
-            if order.completed_by_id:
-                updated += 1
+        for order in to_fix:
+            order.collected_in_app = True
         db.commit()
-        print(f"Исправлено заказов: {updated} из {len(fixed)}")
+        print(f"Проставлено collected_in_app=True для {len(to_fix)} заказов")
     finally:
         db.close()
 
