@@ -270,9 +270,7 @@ class OrderSyncService:
                         if card:
                             photos = card.get("photos") or card.get("mediaFiles") or []
                             if photos:
-                                # У части товаров WB первое фото — штрихкод; при нескольких фото берём второе (основное)
-                                idx = 1 if len(photos) > 1 else 0
-                                first = photos[idx]
+                                first = photos[0]
                                 url = ""
                                 if isinstance(first, str) and first.startswith("http"):
                                     url = first

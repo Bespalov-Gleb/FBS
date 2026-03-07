@@ -182,9 +182,7 @@ class WildberriesClient(BaseMarketplaceClient):
         photos = card.get("photos") or card.get("mediaFiles") or []
         if not photos:
             return ""
-        # У части товаров WB первое фото — штрихкод; при нескольких фото берём второе (основное)
-        idx = 1 if len(photos) > 1 else 0
-        first = photos[idx]
+        first = photos[0]
         if isinstance(first, str) and first.startswith("http"):
             return first
         if isinstance(first, dict):
