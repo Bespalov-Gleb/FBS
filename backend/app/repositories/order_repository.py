@@ -1,7 +1,7 @@
 """
 Репозиторий для работы с заказами
 """
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional
 
 from sqlalchemy import case, func, or_
@@ -240,14 +240,16 @@ class OrderRepository:
         sort_by: str = "completed_at",
         sort_desc: bool = True,
     ) -> list[Order]:
-        """Список заказов, отмеченных «Собрано» в нашем приложении (не от Ozon/WB)."""
+        """Список заказов, отмеченных «Собрано» в нашем приложении. Только за последние 3 дня."""
         from app.models.marketplace import Marketplace, MarketplaceType
 
+        completed_since = datetime.utcnow() - timedelta(days=3)
         query = (
             self.db.query(Order)
             .join(Marketplace)
             .filter(Marketplace.user_id == user_id)
             .filter(Order.collected_in_app == True)
+            .filter(Order.completed_at >= completed_since)
         )
         mp_conds = []
         if marketplace_ids:
@@ -298,14 +300,16 @@ class OrderRepository:
         warehouse_ids: Optional[List[int]] = None,
         search: Optional[str] = None,
     ) -> int:
-        """Количество заказов, отмеченных «Собрано» в нашем приложении."""
+        """Количество заказов, отмеченных «Собрано» в нашем приложении (за последние 3 дня)."""
         from app.models.marketplace import Marketplace, MarketplaceType
 
+        completed_since = datetime.utcnow() - timedelta(days=3)
         query = (
             self.db.query(func.count(Order.id))
             .join(Marketplace)
             .filter(Marketplace.user_id == user_id)
             .filter(Order.collected_in_app == True)
+            .filter(Order.completed_at >= completed_since)
         )
         if marketplace_ids:
             query = query.filter(Order.marketplace_id.in_(marketplace_ids))
@@ -355,11 +359,13 @@ class OrderRepository:
 
         total = base.count()
         on_assembly = total
+        completed_since = datetime.utcnow() - timedelta(days=3)
         completed = (
             self.db.query(Order)
             .join(Marketplace, Order.marketplace_id == Marketplace.id)
             .filter(Marketplace.user_id == user_id)
             .filter(Order.collected_in_app == True)
+            .filter(Order.completed_at >= completed_since)
             .count()
         )
         completed_today = (
@@ -371,12 +377,13 @@ class OrderRepository:
             .count()
         )
 
-        # По маркетплейсам: отдельно total и completed для надёжности
+        # По маркетплейсам: отдельно total и completed для надёжности (за последние 3 дня)
         completed_counts = (
             self.db.query(Order.marketplace_id, func.count(Order.id).label("cnt"))
             .join(Marketplace, Order.marketplace_id == Marketplace.id)
             .filter(Marketplace.user_id == user_id)
             .filter(Order.collected_in_app == True)
+            .filter(Order.completed_at >= completed_since)
             .group_by(Order.marketplace_id)
             .all()
         )
@@ -456,8 +463,9 @@ class OrderRepository:
         *,
         posting_number: Optional[str] = None,
     ) -> bool:
-        """Отметить заказ как доставленный (Ozon delivered). Не показывать в списке.
-        Для Ozon: ищем по external_id, при неудаче — по posting_number."""
+        """Отметить заказ как доставленный (Ozon delivered/delivering). Не показывать в списке.
+        Для Ozon: ищем по external_id, при неудаче — по posting_number.
+        Сбрасываем collected_in_app — при смене статуса с «В сборке» убираем из «Собрано»."""
         order = self.get_by_external_id(marketplace_id, external_id)
         if not order and posting_number:
             order = self.get_by_posting_number(marketplace_id, posting_number)
@@ -465,6 +473,7 @@ class OrderRepository:
             return False
         order.status = OrderStatus.DELIVERED
         order.marketplace_status = "delivered"
+        order.collected_in_app = False
         self.db.commit()
         self.db.refresh(order)
         return True
