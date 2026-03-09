@@ -258,8 +258,14 @@ class OrderSyncService:
                     f"all_external_ids={len(all_external_ids)}, status_updates={len(status_updates)}"
                 )
                 # Обновить статусы: complete (в доставке) → DELIVERED (скрыть), cancel/new → cancelled
+                # Не трогаем заказы, собранные в приложении (collected_in_app=True):
+                # WB отдаёт complete, но мы больше не вызываем supply API при сборке —
+                # статус меняется только локально, синк не должен его сбрасывать.
                 for ext_id, wb_status in status_updates.items():
                     if wb_status == "complete":
+                        existing_order = order_repo.get_by_external_id(marketplace.id, ext_id)
+                        if existing_order and existing_order.collected_in_app:
+                            continue
                         if order_repo.mark_delivered_by_marketplace(marketplace.id, ext_id):
                             count += 1
                     elif wb_status in ("cancel", "new"):
@@ -366,9 +372,10 @@ class OrderSyncService:
 
         existing = order_repo.get_by_external_id(marketplace.id, mo.external_id)
         if existing:
-            # Не перезаписывать статус, если заказ уже собран локально (Ozon: без ship API).
-            # На Ozon заказ остаётся в awaiting_deliver до приёмки на складе — синхронизация
-            # не должна возвращать его в «в сборке».
+            # Не перезаписывать статус, если заказ уже собран локально.
+            # Ozon: остаётся в awaiting_deliver до приёмки на складе Ozon — синк не сбрасывает.
+            # WB: supply API не вызывается, заказ остаётся confirm на WB — синк не сбрасывает
+            # COMPLETED обратно в awaiting_packaging.
             status_to_set = order_status if existing.status != OrderStatus.COMPLETED else None
             order_repo.update_from_marketplace(
                 existing,
