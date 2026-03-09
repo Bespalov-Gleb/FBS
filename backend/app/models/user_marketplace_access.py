@@ -1,29 +1,31 @@
 """
 Доступ упаковщика к конкретным маркетплейсам.
 Если у пользователя нет строк в этой таблице — он видит все магазины своего владельца.
+
+Используем Base напрямую (без BaseModel), т.к. это простая join-таблица
+без нужды в автоинкрементном id и временны́х метках.
 """
 from sqlalchemy import Column, ForeignKey, Integer
 from sqlalchemy.orm import relationship
 
-from app.models.base import BaseModel
+from app.core.database import Base
 
 
-class UserMarketplaceAccess(BaseModel):
+class UserMarketplaceAccess(Base):
     """Разрешение упаковщику видеть конкретный маркетплейс."""
 
     __tablename__ = "user_marketplace_access"
 
-    # Переопределяем PK: используем составной (user_id, marketplace_id)
-    # BaseModel добавляет автоинкрементный id — оставляем его для совместимости
     user_id = Column(
         Integer,
         ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
         nullable=False,
-        index=True,
     )
     marketplace_id = Column(
         Integer,
         ForeignKey("marketplaces.id", ondelete="CASCADE"),
+        primary_key=True,
         nullable=False,
     )
 
