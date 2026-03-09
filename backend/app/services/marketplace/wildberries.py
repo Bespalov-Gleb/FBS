@@ -135,6 +135,7 @@ class WildberriesClient(BaseMarketplaceClient):
         """
         Получить карточку товара через Content API WB (для фото и размера).
         Требует токен с категорией «Контент».
+        При 429 делает до 4 попыток с экспоненциальным backoff (5s, 10s, 20s, 40s).
         """
         try:
             nm = int(nm_id)
@@ -156,23 +157,32 @@ class WildberriesClient(BaseMarketplaceClient):
         auth = self.api_key
         if auth and not auth.lower().startswith("bearer "):
             auth = f"Bearer {auth}"
+        headers = {"Authorization": auth, "Content-Type": "application/json"}
+        max_retries = 4
+        backoff = 5.0
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                r = await client.post(
-                    url,
-                    json=body,
-                    headers={
-                        "Authorization": auth,
-                        "Content-Type": "application/json",
-                    },
-                )
-                if r.status_code != 200:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                for attempt in range(max_retries + 1):
+                    try:
+                        r = await client.post(url, json=body, headers=headers)
+                    except Exception:
+                        return None
+                    if r.status_code == 200:
+                        data = r.json()
+                        cards = data.get("cards") or []
+                        return cards[0] if cards else None
+                    if r.status_code == 429 and attempt < max_retries:
+                        wait = backoff * (2 ** attempt)
+                        logger.warning(
+                            f"WB Content API 429 для nm_id={nm_id}, "
+                            f"retry {attempt + 1}/{max_retries} через {wait:.0f}s"
+                        )
+                        await asyncio.sleep(wait)
+                        continue
                     return None
-                data = r.json()
         except Exception:
             return None
-        cards = data.get("cards") or []
-        return cards[0] if cards else None
+        return None
 
     async def get_product_image_url_content_api(self, nm_id: int | str) -> str:
         """URL изображения товара через Content API."""

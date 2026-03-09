@@ -3,6 +3,7 @@
 """
 import asyncio
 import os
+import random
 from datetime import datetime
 
 from sqlalchemy.orm import Session
@@ -264,29 +265,26 @@ class OrderSyncService:
                     elif wb_status in ("cancel", "new"):
                         if order_repo.mark_cancelled_by_marketplace(marketplace.id, ext_id):
                             count += 1
-                # URL фото и размер: Content API (официально), fallback — CDN
-                # Лимит Content API: 100 req/min → батчи по 10 с паузой 6 сек между ними
-                # Это даёт 10 запросов за ~6 сек = ~100 req/min при соблюдении лимита.
-                # Внутри батча запросы идут параллельно — экономим N×0.7 сек sequential sleep.
+                # URL фото и размер: Content API (официально), fallback — CDN.
+                # WB Content API имеет жёсткий лимит. Запросы последовательные с паузой
+                # _WB_CONTENT_SLEEP между ними. Случайный начальный сдвиг (jitter) не даёт
+                # двум Celery-воркерам синхронно бомбить один endpoint одним API-ключом.
                 unique_nm_ids = list({
                     (mo.metadata or {}).get("nm_id")
                     for mo in orders_new
                     if (mo.metadata or {}).get("nm_id") is not None
                 })
-                _WB_CONTENT_BATCH = 10
-                _WB_CONTENT_SLEEP = 6.0  # 10 req / 6 s = 100 req/min
+                _WB_CONTENT_SLEEP = 2.0  # 1 req / 2s = 30 req/min на воркер
 
                 nm_to_card: dict[int | str, dict | None] = {}
-                for _i in range(0, len(unique_nm_ids), _WB_CONTENT_BATCH):
-                    _batch = unique_nm_ids[_i : _i + _WB_CONTENT_BATCH]
-                    _results = await asyncio.gather(
-                        *[client.get_product_card_content_api(nm_id) for nm_id in _batch],
-                        return_exceptions=True,
-                    )
-                    for nm_id, _res in zip(_batch, _results):
-                        nm_to_card[nm_id] = None if isinstance(_res, Exception) else _res
-                    if _i + _WB_CONTENT_BATCH < len(unique_nm_ids):
-                        await asyncio.sleep(_WB_CONTENT_SLEEP)
+                if unique_nm_ids:
+                    # Случайный сдвиг 0–4s, чтобы воркеры не шли в ногу
+                    await asyncio.sleep(random.uniform(0, 4))
+                    for idx, nm_id in enumerate(unique_nm_ids):
+                        _res = await client.get_product_card_content_api(nm_id)
+                        nm_to_card[nm_id] = _res
+                        if idx < len(unique_nm_ids) - 1:
+                            await asyncio.sleep(_WB_CONTENT_SLEEP)
                 for mo in orders_new:
                     nm_id = (mo.metadata or {}).get("nm_id")
                     chrt_id = (mo.metadata or {}).get("chrt_id")
