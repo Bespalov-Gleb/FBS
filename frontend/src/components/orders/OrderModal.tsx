@@ -75,6 +75,7 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
   const [imageError, setImageError] = useState(false);
   const kizPrintedRef = useRef<string | null>(null);
   const kizInputRef = useRef<HTMLInputElement>(null);
+  const kizDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const marketplace = order ? marketplaces.find((m) => m.id === order.marketplace_id) : null;
   const isKizRequired = order?.is_kiz_enabled ?? marketplace?.is_kiz_enabled ?? false;
@@ -97,19 +98,32 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
     }
   }, [order?.id, isKizRequired, isCompleted]);
 
-  // ТЗ: после скана печатать дубль КИЗ сразу же, как у markznak.ru (если включено в диспетчере)
+  // Автопечать дубля КИЗ после завершения ввода (debounce 500ms).
+  // Сканер вбивает символы посимвольно — ждём паузы, только потом печатаем.
   useEffect(() => {
     if (!order || !isKizRequired || isCompleted || !kizCode.trim() || !autoPrintKizDuplicate) return;
     const kizFull = kizCode.trim();
-    if (!kizFull || kizPrintedRef.current === kizFull) return;
-    kizPrintedRef.current = kizFull;
-    ordersApi.getKizLabelBlob(kizFull).then(async (blob) => {
-      if (agentAvailable) {
-        await printViaAgent(blob, undefined, 'noscale');
-      } else {
-        openBlobInNewWindow(blob);
-      }
-    }).catch(() => {});
+    if (!kizFull) return;
+
+    // Отменяем предыдущий таймер
+    if (kizDebounceRef.current) clearTimeout(kizDebounceRef.current);
+
+    // Запускаем новый: если 500ms нет новых символов — код введён полностью
+    kizDebounceRef.current = setTimeout(() => {
+      if (kizPrintedRef.current === kizFull) return;
+      kizPrintedRef.current = kizFull;
+      ordersApi.getKizLabelBlob(kizFull).then(async (blob) => {
+        if (agentAvailable) {
+          await printViaAgent(blob, undefined, 'noscale');
+        } else {
+          openBlobInNewWindow(blob);
+        }
+      }).catch(() => {});
+    }, 500);
+
+    return () => {
+      if (kizDebounceRef.current) clearTimeout(kizDebounceRef.current);
+    };
   }, [order, kizCode, isKizRequired, isCompleted, autoPrintKizDuplicate, agentAvailable]);
 
   if (!order) return null;
@@ -126,18 +140,17 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
   const handlePrint = async () => {
     setError(null);
     try {
-      // Ozon: сначала штрихкоды (товар + ШК ФБС) в PDF, затем этикетка
-      if (order.marketplace_type === 'ozon') {
-        const labelWidth = labelFormatProp === '80mm' ? 80 : 58;
-        const barcodesBlob = await ordersApi.getBarcodesPdfBlob(order.id, labelWidth);
-        if (barcodesBlob) {
-          if (agentAvailable) {
-            await printViaAgent(barcodesBlob, defaultPrinter, 'noscale');
-          } else {
-            openBlobInNewWindow(barcodesBlob);
-          }
+      // Товарный штрихкод: и для Ozon, и для WB
+      const lw = labelFormatProp === '80mm' ? 80 : 58;
+      const barcodesBlob = await ordersApi.getBarcodesPdfBlob(order.id, lw).catch(() => null);
+      if (barcodesBlob) {
+        if (agentAvailable) {
+          await printViaAgent(barcodesBlob, defaultPrinter, 'noscale');
+        } else {
+          openBlobInNewWindow(barcodesBlob);
         }
       }
+      // ФБС этикетка (стикер отправления)
       const blob = await ordersApi.getLabelBlob(
         order.id,
         labelFormat,
@@ -189,7 +202,7 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
   };
 
   return (
-    <Dialog open={!!order} onClose={onClose} maxWidth="sm" fullWidth disableRestoreFocus>
+    <Dialog open={!!order} onClose={onClose} maxWidth="md" fullWidth disableRestoreFocus>
       <DialogTitle>{displayId}</DialogTitle>
       <DialogContent>
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>

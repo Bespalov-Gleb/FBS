@@ -18,6 +18,7 @@ class RegisterRequest(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=6, max_length=PASSWORD_MAX_LENGTH)
     full_name: str
+    invite_code: str = Field(default="", description="Инвайт-код от администратора (опционально)")
 
 
 class TokenResponse(BaseModel):

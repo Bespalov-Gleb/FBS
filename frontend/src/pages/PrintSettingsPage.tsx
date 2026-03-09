@@ -16,19 +16,43 @@ import {
   Switch,
   Button,
   Alert,
+  Divider,
 } from '@mui/material';
 import LocalPrintshop from '@mui/icons-material/LocalPrintshop';
 import { printSettingsApi } from '../api/printSettings';
 import LoadingSpinner from '../components/common/LoadingSpinner';
 
+function SectionTitle({ children }: { children: React.ReactNode }) {
+  return (
+    <Typography variant="subtitle1" fontWeight={600} sx={{ mt: 1, mb: 0.5 }}>
+      {children}
+    </Typography>
+  );
+}
+
 export default function PrintSettingsPage() {
   const queryClient = useQueryClient();
   const [defaultPrinter, setDefaultPrinter] = useState('');
   const [labelFormat, setLabelFormat] = useState<'58mm' | '80mm'>('58mm');
+
+  // Ozon ФБС этикетка
   const [ozonWidth, setOzonWidth] = useState(58);
   const [ozonHeight, setOzonHeight] = useState(40);
+  const [ozonRotate, setOzonRotate] = useState(0);
+
+  // WB ФБС стикер
   const [wbWidth, setWbWidth] = useState(58);
   const [wbHeight, setWbHeight] = useState(40);
+  const [wbRotate, setWbRotate] = useState(0);
+
+  // Штрихкоды товаров
+  const [barcodeRotate, setBarcodeRotate] = useState(0);
+
+  // КИЗ
+  const [kizWidth, setKizWidth] = useState(40);
+  const [kizHeight, setKizHeight] = useState(35);
+  const [kizRotate, setKizRotate] = useState(0);
+
   const [autoPrint, setAutoPrint] = useState(true);
   const [autoPrintKiz, setAutoPrintKiz] = useState(true);
   const [agentAvailable, setAgentAvailable] = useState(false);
@@ -47,8 +71,14 @@ export default function PrintSettingsPage() {
       setLabelFormat((settings.label_format as '58mm' | '80mm') ?? '58mm');
       setOzonWidth(settings.ozon_labels?.width_mm ?? 58);
       setOzonHeight(settings.ozon_labels?.height_mm ?? 40);
+      setOzonRotate(settings.ozon_labels?.rotate ?? 0);
       setWbWidth(settings.wb_labels?.width_mm ?? 58);
       setWbHeight(settings.wb_labels?.height_mm ?? 40);
+      setWbRotate(settings.wb_labels?.rotate ?? 0);
+      setBarcodeRotate(settings.barcode_labels?.rotate ?? 0);
+      setKizWidth(settings.kiz_labels?.width_mm ?? 40);
+      setKizHeight(settings.kiz_labels?.height_mm ?? 35);
+      setKizRotate(settings.kiz_labels?.rotate ?? 0);
       setAutoPrint(settings.auto_print_on_click !== false);
       setAutoPrintKiz(settings.auto_print_kiz_duplicate !== false);
     }
@@ -70,8 +100,10 @@ export default function PrintSettingsPage() {
       printSettingsApi.update({
         default_printer: defaultPrinter,
         label_format: labelFormat,
-        ozon_labels: { width_mm: ozonWidth, height_mm: ozonHeight },
-        wb_labels: { width_mm: wbWidth, height_mm: wbHeight },
+        ozon_labels: { width_mm: ozonWidth, height_mm: ozonHeight, rotate: ozonRotate },
+        wb_labels: { width_mm: wbWidth, height_mm: wbHeight, rotate: wbRotate },
+        barcode_labels: { rotate: barcodeRotate },
+        kiz_labels: { width_mm: kizWidth, height_mm: kizHeight, rotate: kizRotate },
         auto_print_on_click: autoPrint,
         auto_print_kiz_duplicate: autoPrintKiz,
       }),
@@ -99,6 +131,41 @@ export default function PrintSettingsPage() {
       setTestPrinting(false);
     }
   };
+
+  const rotateSelect = (value: number, onChange: (v: number) => void) => (
+    <FormControl size="small" sx={{ flex: 1, minWidth: 130 }}>
+      <InputLabel>Поворот</InputLabel>
+      <Select
+        value={value}
+        label="Поворот"
+        onChange={(e) => onChange(Number(e.target.value))}
+      >
+        <MenuItem value={0}>0° (без поворота)</MenuItem>
+        <MenuItem value={90}>90° по часовой</MenuItem>
+        <MenuItem value={180}>180°</MenuItem>
+        <MenuItem value={270}>270° (против часовой)</MenuItem>
+      </Select>
+    </FormControl>
+  );
+
+  const sizeField = (
+    label: string,
+    value: number,
+    onChange: (v: number) => void,
+    min = 30,
+    max = 120,
+    defaultVal = 58,
+  ) => (
+    <TextField
+      type="number"
+      label={label}
+      value={value}
+      onChange={(e) => onChange(Math.max(min, Math.min(max, parseInt(e.target.value, 10) || defaultVal)))}
+      inputProps={{ min, max }}
+      size="small"
+      sx={{ flex: 1 }}
+    />
+  );
 
   return (
     <Box>
@@ -131,84 +198,9 @@ export default function PrintSettingsPage() {
         <Card>
           <CardContent>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-              <FormControl fullWidth>
-                <InputLabel>Формат этикеток</InputLabel>
-                <Select
-                  value={labelFormat}
-                  label="Формат этикеток"
-                  onChange={(e) => setLabelFormat(e.target.value as '58mm' | '80mm')}
-                >
-                  <MenuItem value="58mm">58 мм</MenuItem>
-                  <MenuItem value="80mm">80 мм</MenuItem>
-                </Select>
-                <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
-                  Ширина для штрихкодов Ozon и WB (58 или 80 мм)
-                </Typography>
-              </FormControl>
-              <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
-                <Box>
-                  <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
-                    Размер этикеток Ozon (мм)
-                  </Typography>
-                  <Box sx={{ display: 'flex', gap: 1 }}>
-                    <TextField
-                      type="number"
-                      label="Ширина"
-                      value={ozonWidth}
-                      onChange={(e) => setOzonWidth(Math.max(40, Math.min(120, parseInt(e.target.value, 10) || 58)))}
-                      inputProps={{ min: 40, max: 120 }}
-                      size="small"
-                      sx={{ flex: 1 }}
-                    />
-                    <TextField
-                      type="number"
-                      label="Высота"
-                      value={ozonHeight}
-                      onChange={(e) => setOzonHeight(Math.max(30, Math.min(120, parseInt(e.target.value, 10) || 40)))}
-                      inputProps={{ min: 30, max: 120 }}
-                      size="small"
-                      sx={{ flex: 1 }}
-                    />
-                  </Box>
-                </Box>
-                <Box>
-                  <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
-                    Размер этикеток Wildberries (мм)
-                  </Typography>
-                  <Box sx={{ display: 'flex', gap: 1 }}>
-                    <TextField
-                      type="number"
-                      label="Ширина"
-                      value={wbWidth}
-                      onChange={(e) => setWbWidth(Math.max(40, Math.min(120, parseInt(e.target.value, 10) || 58)))}
-                      inputProps={{ min: 40, max: 120 }}
-                      size="small"
-                      sx={{ flex: 1 }}
-                    />
-                    <TextField
-                      type="number"
-                      label="Высота"
-                      value={wbHeight}
-                      onChange={(e) => setWbHeight(Math.max(30, Math.min(120, parseInt(e.target.value, 10) || 40)))}
-                      inputProps={{ min: 30, max: 120 }}
-                      size="small"
-                      sx={{ flex: 1 }}
-                    />
-                  </Box>
-                </Box>
-              </Box>
-              <FormControlLabel
-                control={
-                  <Switch checked={autoPrint} onChange={(e) => setAutoPrint(e.target.checked)} />
-                }
-                label="Автопечать 2 этикеток при клике на артикул"
-              />
-              <FormControlLabel
-                control={
-                  <Switch checked={autoPrintKiz} onChange={(e) => setAutoPrintKiz(e.target.checked)} />
-                }
-                label="Автопечать дубля КИЗ после скана"
-              />
+
+              {/* ── Принтер ── */}
+              <SectionTitle>Принтер</SectionTitle>
               {agentAvailable && agentPrinters.length > 0 ? (
                 <FormControl fullWidth size="small">
                   <InputLabel>Принтер</InputLabel>
@@ -219,9 +211,7 @@ export default function PrintSettingsPage() {
                   >
                     <MenuItem value="">По умолчанию</MenuItem>
                     {agentPrinters.map((p) => (
-                      <MenuItem key={p} value={p}>
-                        {p}
-                      </MenuItem>
+                      <MenuItem key={p} value={p}>{p}</MenuItem>
                     ))}
                   </Select>
                   <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
@@ -238,6 +228,83 @@ export default function PrintSettingsPage() {
                   helperText={agentAvailable ? 'Агент использует системный принтер по умолчанию' : 'Браузер не может задать принтер. Выберите его при первой печати.'}
                 />
               )}
+
+              <Divider />
+
+              {/* ── ФБС этикетка Ozon ── */}
+              <SectionTitle>ФБС этикетка Ozon</SectionTitle>
+              <Typography variant="caption" color="text.secondary">
+                Этикетка отправления, которую Ozon возвращает в PDF. Размер и поворот для вашего принтера.
+              </Typography>
+              <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                {sizeField('Ширина (мм)', ozonWidth, setOzonWidth, 40, 120, 58)}
+                {sizeField('Высота (мм)', ozonHeight, setOzonHeight, 30, 120, 40)}
+                {rotateSelect(ozonRotate, setOzonRotate)}
+              </Box>
+
+              <Divider />
+
+              {/* ── ФБС стикер Wildberries ── */}
+              <SectionTitle>ФБС стикер Wildberries</SectionTitle>
+              <Typography variant="caption" color="text.secondary">
+                PNG-стикер WB, конвертируется в PDF. Укажите размер и поворот для вашего принтера.
+              </Typography>
+              <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                {sizeField('Ширина (мм)', wbWidth, setWbWidth, 40, 120, 58)}
+                {sizeField('Высота (мм)', wbHeight, setWbHeight, 30, 120, 40)}
+                {rotateSelect(wbRotate, setWbRotate)}
+              </Box>
+
+              <Divider />
+
+              {/* ── Штрихкоды товаров ── */}
+              <SectionTitle>Штрихкоды товаров</SectionTitle>
+              <Typography variant="caption" color="text.secondary">
+                Штрихкоды Ozon (OZN+SKU) и WB (EAN13). Ширина и поворот — общие для обоих.
+              </Typography>
+              <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                <FormControl size="small" sx={{ flex: 1, minWidth: 130 }}>
+                  <InputLabel>Ширина этикетки</InputLabel>
+                  <Select
+                    value={labelFormat}
+                    label="Ширина этикетки"
+                    onChange={(e) => setLabelFormat(e.target.value as '58mm' | '80mm')}
+                  >
+                    <MenuItem value="58mm">58 мм</MenuItem>
+                    <MenuItem value="80mm">80 мм</MenuItem>
+                  </Select>
+                </FormControl>
+                {rotateSelect(barcodeRotate, setBarcodeRotate)}
+              </Box>
+
+              <Divider />
+
+              {/* ── КИЗ ── */}
+              <SectionTitle>Этикетка КИЗ (DataMatrix)</SectionTitle>
+              <Typography variant="caption" color="text.secondary">
+                Дубль КИЗ — DataMatrix + 31 символ кода. По умолчанию 40×35 мм.
+              </Typography>
+              <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                {sizeField('Ширина (мм)', kizWidth, setKizWidth, 20, 100, 40)}
+                {sizeField('Высота (мм)', kizHeight, setKizHeight, 20, 100, 35)}
+                {rotateSelect(kizRotate, setKizRotate)}
+              </Box>
+
+              <Divider />
+
+              {/* ── Автоматизация ── */}
+              <SectionTitle>Автоматизация</SectionTitle>
+              <FormControlLabel
+                control={<Switch checked={autoPrint} onChange={(e) => setAutoPrint(e.target.checked)} />}
+                label="Автопечать этикеток при клике на артикул"
+              />
+              <FormControlLabel
+                control={<Switch checked={autoPrintKiz} onChange={(e) => setAutoPrintKiz(e.target.checked)} />}
+                label="Автопечать дубля КИЗ после скана"
+              />
+
+              <Divider />
+
               <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
                 <Button variant="contained" onClick={handleSave} disabled={updateMutation.isPending}>
                   Сохранить

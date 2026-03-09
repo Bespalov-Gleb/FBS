@@ -19,11 +19,23 @@ router = APIRouter(prefix="/print-settings", tags=["Print Settings"])
 class OzonLabelsSchema(BaseModel):
     width_mm: Optional[int] = None
     height_mm: Optional[int] = None
+    rotate: Optional[int] = None  # 0 / 90 / 180 / 270
 
 
 class WbLabelsSchema(BaseModel):
     width_mm: Optional[int] = None
     height_mm: Optional[int] = None
+    rotate: Optional[int] = None  # 0 / 90 / 180 / 270
+
+
+class KizLabelsSchema(BaseModel):
+    width_mm: Optional[int] = None
+    height_mm: Optional[int] = None
+    rotate: Optional[int] = None  # 0 / 90 / 180 / 270
+
+
+class BarcodeLabelsSchema(BaseModel):
+    rotate: Optional[int] = None  # 0 / 90 / 180 / 270
 
 
 class PrintSettingsResponse(BaseModel):
@@ -33,8 +45,10 @@ class PrintSettingsResponse(BaseModel):
     label_template: Optional[str] = None
     auto_print_on_click: Optional[bool] = None
     auto_print_kiz_duplicate: Optional[bool] = None
-    ozon_labels: Optional[dict] = None  # {width_mm, height_mm}
-    wb_labels: Optional[dict] = None  # {width_mm, height_mm}
+    ozon_labels: Optional[dict] = None     # {width_mm, height_mm, rotate}
+    wb_labels: Optional[dict] = None       # {width_mm, height_mm, rotate}
+    kiz_labels: Optional[dict] = None      # {width_mm, height_mm, rotate}
+    barcode_labels: Optional[dict] = None  # {rotate}
 
 
 class PrintSettingsUpdate(BaseModel):
@@ -46,18 +60,38 @@ class PrintSettingsUpdate(BaseModel):
     auto_print_kiz_duplicate: Optional[bool] = None
     ozon_labels: Optional[OzonLabelsSchema] = None
     wb_labels: Optional[WbLabelsSchema] = None
+    kiz_labels: Optional[KizLabelsSchema] = None
+    barcode_labels: Optional[BarcodeLabelsSchema] = None
 
 
-def _ozon_labels_from_ps(ps: PrintSettings) -> dict | None:
-    if ps.ozon_width_mm is None and ps.ozon_height_mm is None:
-        return None
-    return {"width_mm": ps.ozon_width_mm or 58, "height_mm": ps.ozon_height_mm or 40}
+def _ozon_labels_from_ps(ps: PrintSettings) -> dict:
+    return {
+        "width_mm": ps.ozon_width_mm or 58,
+        "height_mm": ps.ozon_height_mm or 40,
+        "rotate": ps.ozon_label_rotate or 0,
+    }
 
 
-def _wb_labels_from_ps(ps: PrintSettings) -> dict | None:
-    if ps.wb_width_mm is None and ps.wb_height_mm is None:
-        return None
-    return {"width_mm": ps.wb_width_mm or 58, "height_mm": ps.wb_height_mm or 40}
+def _wb_labels_from_ps(ps: PrintSettings) -> dict:
+    return {
+        "width_mm": ps.wb_width_mm or 58,
+        "height_mm": ps.wb_height_mm or 40,
+        "rotate": ps.wb_label_rotate or 0,
+    }
+
+
+def _kiz_labels_from_ps(ps: PrintSettings) -> dict:
+    return {
+        "width_mm": ps.kiz_width_mm or 40,
+        "height_mm": ps.kiz_height_mm or 35,
+        "rotate": ps.kiz_rotate or 0,
+    }
+
+
+def _barcode_labels_from_ps(ps: PrintSettings) -> dict:
+    return {
+        "rotate": ps.barcode_rotate or 0,
+    }
 
 
 @router.get("", response_model=PrintSettingsResponse)
@@ -71,8 +105,10 @@ def get_print_settings(
     ).first()
     if not ps:
         return PrintSettingsResponse(
-            ozon_labels={"width_mm": 58, "height_mm": 40},
-            wb_labels={"width_mm": 58, "height_mm": 40},
+            ozon_labels={"width_mm": 58, "height_mm": 40, "rotate": 0},
+            wb_labels={"width_mm": 58, "height_mm": 40, "rotate": 0},
+            kiz_labels={"width_mm": 40, "height_mm": 35, "rotate": 0},
+            barcode_labels={"rotate": 0},
         )
     return PrintSettingsResponse(
         default_printer=ps.default_printer,
@@ -80,8 +116,10 @@ def get_print_settings(
         label_template=ps.label_template,
         auto_print_on_click=ps.auto_print_on_click == "true" if ps.auto_print_on_click else None,
         auto_print_kiz_duplicate=ps.auto_print_kiz_duplicate == "true" if ps.auto_print_kiz_duplicate else None,
-        ozon_labels=_ozon_labels_from_ps(ps) or {"width_mm": 58, "height_mm": 40},
-        wb_labels=_wb_labels_from_ps(ps) or {"width_mm": 58, "height_mm": 40},
+        ozon_labels=_ozon_labels_from_ps(ps),
+        wb_labels=_wb_labels_from_ps(ps),
+        kiz_labels=_kiz_labels_from_ps(ps),
+        barcode_labels=_barcode_labels_from_ps(ps),
     )
 
 
@@ -114,11 +152,25 @@ def update_print_settings(
             ps.ozon_width_mm = max(40, min(data.ozon_labels.width_mm, 120))
         if data.ozon_labels.height_mm is not None:
             ps.ozon_height_mm = max(30, min(data.ozon_labels.height_mm, 120))
+        if data.ozon_labels.rotate is not None:
+            ps.ozon_label_rotate = data.ozon_labels.rotate if data.ozon_labels.rotate in (0, 90, 180, 270) else 0
     if data.wb_labels is not None:
         if data.wb_labels.width_mm is not None:
             ps.wb_width_mm = max(40, min(data.wb_labels.width_mm, 120))
         if data.wb_labels.height_mm is not None:
             ps.wb_height_mm = max(30, min(data.wb_labels.height_mm, 120))
+        if data.wb_labels.rotate is not None:
+            ps.wb_label_rotate = data.wb_labels.rotate if data.wb_labels.rotate in (0, 90, 180, 270) else 0
+    if data.kiz_labels is not None:
+        if data.kiz_labels.width_mm is not None:
+            ps.kiz_width_mm = max(20, min(data.kiz_labels.width_mm, 100))
+        if data.kiz_labels.height_mm is not None:
+            ps.kiz_height_mm = max(20, min(data.kiz_labels.height_mm, 100))
+        if data.kiz_labels.rotate is not None:
+            ps.kiz_rotate = data.kiz_labels.rotate if data.kiz_labels.rotate in (0, 90, 180, 270) else 0
+    if data.barcode_labels is not None:
+        if data.barcode_labels.rotate is not None:
+            ps.barcode_rotate = data.barcode_labels.rotate if data.barcode_labels.rotate in (0, 90, 180, 270) else 0
     db.commit()
     db.refresh(ps)
     return PrintSettingsResponse(
@@ -127,8 +179,10 @@ def update_print_settings(
         label_template=ps.label_template,
         auto_print_on_click=ps.auto_print_on_click == "true" if ps.auto_print_on_click else None,
         auto_print_kiz_duplicate=ps.auto_print_kiz_duplicate == "true" if ps.auto_print_kiz_duplicate else None,
-        ozon_labels=_ozon_labels_from_ps(ps) or {"width_mm": 58, "height_mm": 40},
-        wb_labels=_wb_labels_from_ps(ps) or {"width_mm": 58, "height_mm": 40},
+        ozon_labels=_ozon_labels_from_ps(ps),
+        wb_labels=_wb_labels_from_ps(ps),
+        kiz_labels=_kiz_labels_from_ps(ps),
+        barcode_labels=_barcode_labels_from_ps(ps),
     )
 
 

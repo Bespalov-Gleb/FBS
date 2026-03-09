@@ -3,7 +3,7 @@
 """
 import enum
 
-from sqlalchemy import Boolean, Column, Enum, String
+from sqlalchemy import Boolean, Column, Enum, ForeignKey, Integer, String
 from sqlalchemy.orm import relationship
 
 from app.models.base import BaseModel
@@ -30,7 +30,14 @@ class User(BaseModel):
         index=True,
     )
     is_active = Column(Boolean, default=True, nullable=False)
-    
+
+    # Для упаковщиков: ID администратора, который их пригласил
+    owner_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
     # Relationships
     marketplaces = relationship(
         "Marketplace",

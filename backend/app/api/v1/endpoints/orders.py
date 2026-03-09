@@ -16,7 +16,8 @@ from app.models.marketplace import Marketplace, MarketplaceType
 from app.models.order import Order, OrderStatus
 from app.models.scanned_kiz import ScannedKiz
 from app.models.print_settings import PrintSettings
-from app.models.user import User
+from app.models.user import User, UserRole
+from app.models.user_marketplace_access import UserMarketplaceAccess
 from app.repositories.order_repository import OrderRepository
 from app.schemas.order import OrderProductItem, OrderResponse, OrdersListResponse
 from app.services.marketplace.wildberries import WildberriesClient
@@ -24,6 +25,26 @@ from app.services.order_complete_service import OrderCompleteService
 from app.services.order_sync_service import OrderSyncService
 
 router = APIRouter(prefix="/orders", tags=["Orders"])
+
+
+def _get_effective_user_and_access(
+    current_user: User, db: Session
+) -> tuple[int, Optional[List[int]]]:
+    """
+    Для упаковщика (packer) с owner_id возвращает ID владельца-администратора
+    и список разрешённых marketplace_id (None = все).
+    Для администратора возвращает его собственный ID и None (без ограничений).
+    """
+    if current_user.role == UserRole.PACKER and current_user.owner_id:
+        effective_user_id = current_user.owner_id
+        rows = (
+            db.query(UserMarketplaceAccess)
+            .filter(UserMarketplaceAccess.user_id == current_user.id)
+            .all()
+        )
+        allowed = [r.marketplace_id for r in rows] if rows else None
+        return effective_user_id, allowed
+    return current_user.id, None
 
 
 def _product_image_url_for_order(o: Order) -> Optional[str]:
@@ -94,17 +115,19 @@ def list_orders(
             status_enum = OrderStatus(status)
         except ValueError:
             pass
+    effective_user_id, packer_allowed_mp_ids = _get_effective_user_and_access(current_user, db)
     order_repo = OrderRepository(db)
     total = order_repo.get_list_count(
-        user_id=current_user.id,
+        user_id=effective_user_id,
         marketplace_ids=marketplace_ids,
         marketplace_types=marketplace_types,
         warehouse_ids=warehouse_ids,
         status=status_enum,
         search=search,
+        packer_allowed_marketplace_ids=packer_allowed_mp_ids,
     )
     orders = order_repo.get_list(
-        user_id=current_user.id,
+        user_id=effective_user_id,
         skip=skip,
         limit=limit,
         marketplace_ids=marketplace_ids,
@@ -114,6 +137,7 @@ def list_orders(
         search=search,
         sort_by=sort_by,
         sort_desc=sort_desc,
+        packer_allowed_marketplace_ids=packer_allowed_mp_ids,
     )
     items = [
         OrderResponse(
@@ -163,16 +187,17 @@ def list_completed_orders(
     Список собранных заказов (отмечены «Собрано» в приложении).
     Для секции «Собрано» на странице сборки.
     """
+    effective_user_id, packer_allowed_mp_ids = _get_effective_user_and_access(current_user, db)
     order_repo = OrderRepository(db)
     total = order_repo.get_completed_count(
-        user_id=current_user.id,
+        user_id=effective_user_id,
         marketplace_ids=marketplace_ids,
         marketplace_types=marketplace_types,
         warehouse_ids=warehouse_ids,
         search=search,
     )
     orders = order_repo.get_completed_list(
-        user_id=current_user.id,
+        user_id=effective_user_id,
         skip=skip,
         limit=limit,
         marketplace_ids=marketplace_ids,
@@ -358,22 +383,25 @@ def kiz_export(
 
     if mp_type == MarketplaceType.WILDBERRIES:
         ws.title = "Сборочные задания"
-        ws.append(["№ задания", "Стикер", "КИЗ"])
+        ws.append(["Магазин", "№ задания", "Стикер", "КИЗ"])
         for r in rows:
-            ws.append([r.external_id or "", r.posting_number or "", (r.kiz_code or "")[:31]])
+            shop = r.marketplace.name if r.marketplace else ""
+            ws.append([shop, r.external_id or "", r.posting_number or "", (r.kiz_code or "")[:31]])
         filename = f"kiz-export-WB-{datetime.utcnow().strftime('%Y%m%d-%H%M')}.xlsx"
     elif mp_type == MarketplaceType.OZON:
         ws.title = "КИЗ Ozon"
-        ws.append(["Номер отправления", "КИЗ"])
+        ws.append(["Магазин", "Номер отправления", "КИЗ"])
         for r in rows:
-            ws.append([r.posting_number or "", (r.kiz_code or "")[:31]])
+            shop = r.marketplace.name if r.marketplace else ""
+            ws.append([shop, r.posting_number or "", (r.kiz_code or "")[:31]])
         filename = f"kiz-export-Ozon-{datetime.utcnow().strftime('%Y%m%d-%H%M')}.xlsx"
     else:
         ws.title = "КИЗ"
-        ws.append(["КИЗ", "№ задания", "Стикер", "Маркетплейс"])
+        ws.append(["Магазин", "КИЗ", "№ задания", "Стикер", "Маркетплейс"])
         for r in rows:
+            shop = r.marketplace.name if r.marketplace else ""
             mp_val = r.marketplace.type.value if r.marketplace else ""
-            ws.append([(r.kiz_code or "")[:31], r.external_id or "", r.posting_number or "", mp_val])
+            ws.append([shop, (r.kiz_code or "")[:31], r.external_id or "", r.posting_number or "", mp_val])
         filename = f"kiz-export-{datetime.utcnow().strftime('%Y%m%d-%H%M')}.xlsx"
 
     buf = BytesIO()
@@ -388,7 +416,25 @@ def kiz_export(
     )
 
 
-def _generate_kiz_label_pdf(kiz_full: str, kiz_31: str) -> bytes:
+def _rotate_pdf(pdf_bytes: bytes, degrees: int) -> bytes:
+    """Повернуть все страницы PDF на degrees градусов (0/90/180/270)."""
+    if not degrees or degrees % 90 != 0:
+        return pdf_bytes
+    import io
+    from pypdf import PdfReader, PdfWriter
+
+    reader = PdfReader(io.BytesIO(pdf_bytes))
+    writer = PdfWriter()
+    for page in reader.pages:
+        page.rotate(degrees)
+        writer.add_page(page)
+    buf = io.BytesIO()
+    writer.write(buf)
+    buf.seek(0)
+    return buf.getvalue()
+
+
+def _generate_kiz_label_pdf(kiz_full: str, kiz_31: str, width_mm: int = 40, height_mm: int = 35) -> bytes:
     """
     PDF этикетки-дубля КИЗ: DataMatrix (полный код) + 31 символ текстом снизу.
     Размер DataMatrix ~22×22 мм по инструкции WB.
@@ -408,27 +454,19 @@ def _generate_kiz_label_pdf(kiz_full: str, kiz_31: str) -> bytes:
 
     dm = createBarcodeDrawing("ECC200DataMatrix", value=data_for_dm)
 
-    dm_size_mm = 22
-    label_w = 40 * mm
-    label_h = 35 * mm
+    dm_size_mm = min(width_mm - 4, height_mm - 12, 22)  # DataMatrix вписывается в этикетку
+    label_w = width_mm * mm
+    label_h = height_mm * mm
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=(label_w, label_h))
     margin = 2 * mm
-    x0 = margin
-    y0 = label_h - margin
 
-    # DataMatrix 22×22 мм
+    # DataMatrix размер
     scale = (dm_size_mm * mm) / max(dm.width, dm.height)
     dm_w = dm.width * scale
     dm_h = dm.height * scale
-    c.saveState()
-    c.translate(x0 + (label_w - 2 * margin - dm_w) / 2, y0 - dm_h)
-    c.scale(scale, scale)
-    renderPDF.draw(dm, c, 0, 0)
-    c.restoreState()
 
-    # 31 символ текстом снизу — уменьшенный шрифт, чтобы влезал в 40 мм
-    ty = y0 - dm_h - 4 * mm
+    # 31 символ: подбираем размер шрифта
     text = kiz_31[:31]
     from reportlab.pdfbase.pdfmetrics import stringWidth
     max_w = label_w - 2 * margin
@@ -437,6 +475,21 @@ def _generate_kiz_label_pdf(kiz_full: str, kiz_31: str) -> bytes:
         if stringWidth(text, "Helvetica", fs) <= max_w:
             font_size = fs
             break
+
+    # Вертикальное центрирование: DataMatrix + 2mm зазор + текст
+    gap = 2 * mm
+    total_h = dm_h + gap + font_size  # font_size в pt ≈ высота строки
+    y_dm_bottom = (label_h - total_h) / 2 + font_size + gap  # нижняя граница DM
+    ty = (label_h - total_h) / 2  # базовая линия текста
+
+    # DataMatrix (центрирован горизонтально)
+    c.saveState()
+    c.translate((label_w - dm_w) / 2, y_dm_bottom)
+    c.scale(scale, scale)
+    renderPDF.draw(dm, c, 0, 0)
+    c.restoreState()
+
+    # 31 символ текстом (центрирован горизонтально)
     c.setFont("Helvetica", font_size)
     c.drawCentredString(label_w / 2, ty, text)
 
@@ -448,6 +501,7 @@ def _generate_kiz_label_pdf(kiz_full: str, kiz_31: str) -> bytes:
 @router.get("/kiz-label")
 def get_kiz_label(
     kiz_code: str = Query(..., min_length=1, description="Код КИЗ (маркировка, полный или 31 символ)"),
+    db: Session = Depends(get_db),
     current_user: User = CurrentUser,
 ):
     """
@@ -455,10 +509,15 @@ def get_kiz_label(
     DataMatrix с полным КИЗ + 31 символ текстом снизу (для ручного ввода).
     Возвращает PDF.
     """
+    ps = db.query(PrintSettings).filter(PrintSettings.user_id == current_user.id).first()
+    kiz_w = (ps.kiz_width_mm or 40) if ps else 40
+    kiz_h = (ps.kiz_height_mm or 35) if ps else 35
+    kiz_rot = (ps.kiz_rotate or 0) if ps else 0
+
     kiz = kiz_code.strip()
     kiz_31 = kiz[:31]
     try:
-        pdf_bytes = _generate_kiz_label_pdf(kiz, kiz_31)
+        pdf_bytes = _generate_kiz_label_pdf(kiz, kiz_31, width_mm=kiz_w, height_mm=kiz_h)
     except Exception as e:
         logger.warning("DataMatrix failed, fallback to QR: %s", e)
         import io
@@ -475,6 +534,11 @@ def get_kiz_label(
             media_type="image/png",
             headers={"Content-Disposition": f"inline; filename=kiz-{kiz_31[:20]}.png"},
         )
+    if kiz_rot:
+        try:
+            pdf_bytes = _rotate_pdf(pdf_bytes, kiz_rot)
+        except Exception as _re:
+            logger.warning(f"KIZ PDF rotate failed: {_re}")
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
@@ -1089,64 +1153,79 @@ async def get_order_barcodes_pdf(
     mp = order.marketplace
     if not mp or mp.user_id != current_user.id:
         raise HTTPException(404, detail="Order not found")
-    if mp.type != MarketplaceType.OZON:
-        raise HTTPException(400, detail="Barcodes PDF only for Ozon")
-    if not mp.client_id:
-        raise HTTPException(400, detail="Ozon client_id missing")
 
-    api_key = decrypt_api_key(mp.api_key)
-    try:
-        async with OzonClient(api_key=api_key, client_id=mp.client_id) as client:
-            details = await client.get_posting_details(order.posting_number, with_barcodes=True)
-    except MarketplaceAPIException as e:
-        err_str = str(e).lower()
-        detail = getattr(e, "detail", None)
-        detail_str = str(detail).lower() if detail else ""
-        if isinstance(detail, dict):
-            for d in (detail.get("details") or []):
-                if isinstance(d, dict) and d.get("message"):
-                    detail_str += " " + str(d.get("message", "")).lower()
-        is_delivered_error = (
-            "delivered" in err_str or "delivered" in detail_str
-            or "label not allowed" in detail_str
-            or "not allowed for" in detail_str
-        )
-        if is_delivered_error:
-            if order.status != OrderStatus.DELIVERED:
-                order.status = OrderStatus.DELIVERED
-                order.marketplace_status = "delivered"
-                db.commit()
-            raise HTTPException(
-                400,
-                detail="Заказ уже отгружен в Ozon. Печать недоступна. Обновите список заказов.",
-            )
-        raise
-
-    barcodes = details.get("barcodes") or {}
-    products = details.get("products") or []
-    upper = (barcodes.get("upper_barcode") or "").strip() if isinstance(barcodes, dict) else ""
-
-    # По одному штрихкоду на каждую единицу товара (для двойных заказов Ozon)
     items: list[tuple[str, str]] = []
-    for p in products:
-        sku = p.get("sku")
-        qty = max(1, int(p.get("quantity", 1)))
-        ozn_code = f"OZN{sku}" if sku is not None else (upper if upper else None)
-        if not ozn_code:
-            continue
-        # Штрихкод: OZN+SKU (Code128) для каждого товара
-        barcode_value = ozn_code
-        for _ in range(qty):
-            items.append((barcode_value, ozn_code))
 
-    if not items:
-        raise HTTPException(404, detail="Product barcode not found")
+    if mp.type == MarketplaceType.WILDBERRIES:
+        # WB: товарный баркод хранится в extra_data["skus"] (EAN13 или Code128)
+        extra = order.extra_data or {}
+        skus: list = extra.get("skus") or []
+        for sku_val in skus:
+            code = str(sku_val).strip()
+            if code:
+                items.append((code, code))
+        if not items:
+            raise HTTPException(404, detail="Товарный баркод не найден в заказе WB (skus пустой)")
+    elif mp.type == MarketplaceType.OZON:
+        if not mp.client_id:
+            raise HTTPException(400, detail="Ozon client_id missing")
+        api_key = decrypt_api_key(mp.api_key)
+        try:
+            async with OzonClient(api_key=api_key, client_id=mp.client_id) as client:
+                details = await client.get_posting_details(order.posting_number, with_barcodes=True)
+        except MarketplaceAPIException as e:
+            err_str = str(e).lower()
+            detail = getattr(e, "detail", None)
+            detail_str = str(detail).lower() if detail else ""
+            if isinstance(detail, dict):
+                for d in (detail.get("details") or []):
+                    if isinstance(d, dict) and d.get("message"):
+                        detail_str += " " + str(d.get("message", "")).lower()
+            is_delivered_error = (
+                "delivered" in err_str or "delivered" in detail_str
+                or "label not allowed" in detail_str
+                or "not allowed for" in detail_str
+            )
+            if is_delivered_error:
+                if order.status != OrderStatus.DELIVERED:
+                    order.status = OrderStatus.DELIVERED
+                    order.marketplace_status = "delivered"
+                    db.commit()
+                raise HTTPException(
+                    400,
+                    detail="Заказ уже отгружен в Ozon. Печать недоступна. Обновите список заказов.",
+                )
+            raise
 
-    # Ширина этикетки: из query или из настроек пользователя
+        barcodes = details.get("barcodes") or {}
+        products = details.get("products") or []
+        upper = (barcodes.get("upper_barcode") or "").strip() if isinstance(barcodes, dict) else ""
+
+        for p in products:
+            sku = p.get("sku")
+            qty = max(1, int(p.get("quantity", 1)))
+            ozn_code = f"OZN{sku}" if sku is not None else (upper if upper else None)
+            if not ozn_code:
+                continue
+            for _ in range(qty):
+                items.append((ozn_code, ozn_code))
+
+        if not items:
+            raise HTTPException(404, detail="Product barcode not found")
+    else:
+        raise HTTPException(400, detail="Unknown marketplace type")
+
+    # Ширина и поворот штрихкодов: из query или из настроек пользователя
+    ps_barcode = db.query(PrintSettings).filter(PrintSettings.user_id == current_user.id).first()
     if label_width is None:
-        ps = db.query(PrintSettings).filter(PrintSettings.user_id == current_user.id).first()
-        label_width = (ps.ozon_width_mm or 58) if ps else 58
+        label_width = (ps_barcode.ozon_width_mm or 58) if ps_barcode else 58
     pdf_bytes = _generate_multi_product_barcode_pdf(items, label_width_mm=label_width)
+    barcode_rotate = (ps_barcode.barcode_rotate or 0) if ps_barcode else 0
+    if barcode_rotate:
+        try:
+            pdf_bytes = _rotate_pdf(pdf_bytes, barcode_rotate)
+        except Exception as _re:
+            logger.warning(f"Barcode PDF rotate failed: {_re}")
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
@@ -1220,6 +1299,18 @@ async def get_order_label(
                     detail="Заказ уже отгружен в Ozon. Этикетка недоступна. Обновите список заказов.",
                 )
             raise
+        # Поворот Ozon FBS этикетки (из настроек диспетчера)
+        rotate = 0
+        try:
+            _ps = db.query(PrintSettings).filter(PrintSettings.user_id == current_user.id).first()
+            rotate = (_ps.ozon_label_rotate or 0) if _ps else 0
+        except Exception:
+            pass
+        if rotate:
+            try:
+                content = _rotate_pdf(content, rotate)
+            except Exception as _re:
+                logger.warning(f"PDF rotate failed: {_re}")
         return Response(
             content=content,
             media_type="application/pdf",
@@ -1243,6 +1334,19 @@ async def get_order_label(
             )
         order_num = order.posting_number or order.external_id or ""
         content = _wb_sticker_to_pdf(content, label_width_mm=w, label_height_mm=h, order_number=order_num)
+        # Поворот WB стикера (из настроек диспетчера)
+        wb_rotate = 0
+        try:
+            if ps is None:
+                ps = db.query(PrintSettings).filter(PrintSettings.user_id == current_user.id).first()
+            wb_rotate = (ps.wb_label_rotate or 0) if ps else 0
+        except Exception:
+            pass
+        if wb_rotate:
+            try:
+                content = _rotate_pdf(content, wb_rotate)
+            except Exception as _re:
+                logger.warning(f"WB PDF rotate failed: {_re}")
         return Response(
             content=content,
             media_type="application/pdf",

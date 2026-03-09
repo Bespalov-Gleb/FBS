@@ -106,7 +106,7 @@ export default function AddMarketplaceModal({ type, onClose, onSuccess }: AddMar
           )}
           <FormControlLabel
             control={<Checkbox {...register('is_kiz_enabled')} />}
-            label="Режим КИЗ (WB + Ozon)"
+            label={`Режим КИЗ (${isOzon ? 'Ozon' : 'WB'})`}
             sx={{ mt: 1, display: 'block' }}
           />
           <FormControlLabel

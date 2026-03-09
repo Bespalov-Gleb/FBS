@@ -30,6 +30,7 @@ pendulum = "^3.0.0"
 openpyxl = "^3.1.2"
 reportlab = "^4.0.0"
 pylibdmtx = "^0.1.10"
+pypdf = "^4.0.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.4.4"

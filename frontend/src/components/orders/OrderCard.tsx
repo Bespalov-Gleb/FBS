@@ -14,18 +14,18 @@ function ProductRow({ product, highlightQuantity }: { product: OrderProduct; hig
   const imgUrl = getProductImageUrl(product.image_url);
   const glow = highlightQuantity ?? (product.quantity >= 2);
   return (
-    <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'flex-start', py: 1 }}>
+    <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start', py: 0.5 }}>
       {imgUrl && !imgErr && (
         <Box
           component="img"
           src={imgUrl}
           alt={product.name}
           onError={() => setImgErr(true)}
-          sx={{ width: 88, height: 88, objectFit: 'cover', borderRadius: 1, flexShrink: 0 }}
+          sx={{ width: 56, height: 56, objectFit: 'cover', borderRadius: 1, flexShrink: 0 }}
         />
       )}
       <Box sx={{ flex: 1, minWidth: 0 }}>
-        <Typography variant="body2" color="text.primary" sx={{ lineHeight: 1.3 }}>
+        <Typography variant="caption" color="text.primary" sx={{ lineHeight: 1.3, display: 'block' }}>
           {product.name || product.offer_id}
           {product.size && ` • ${product.size}`}
         </Typography>
@@ -68,11 +68,11 @@ export default function OrderCard({ order, onClick }: OrderCardProps) {
         '&:hover': isLockedByOther ? {} : { boxShadow: 2 },
       }}
     >
-      <CardContent sx={{ '&:last-child': { pb: 2 } }}>
+      <CardContent sx={{ p: '10px !important', '&:last-child': { pb: '10px !important' } }}>
         {isOzonMulti ? (
           <>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 1 }}>
-              <Typography variant="subtitle1" fontWeight={600} noWrap>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 0.5 }}>
+              <Typography variant="body2" fontWeight={600} noWrap sx={{ fontSize: '0.75rem' }}>
                 {displayId}
               </Typography>
               <Chip
@@ -80,17 +80,18 @@ export default function OrderCard({ order, onClick }: OrderCardProps) {
                 size="small"
                 color={isCompleted ? 'success' : 'default'}
                 variant={isCompleted ? 'filled' : 'outlined'}
+                sx={{ fontSize: '0.6rem', height: 18, '& .MuiChip-label': { px: 0.75 } }}
               />
             </Box>
             {order.products!.map((p, i) => (
               <Box key={p.offer_id + i}>
-                {i > 0 && <Divider sx={{ my: 0.5 }} />}
+                {i > 0 && <Divider sx={{ my: 0.25 }} />}
                 <ProductRow product={p} highlightQuantity={order.quantity >= 2} />
               </Box>
             ))}
-            <Box sx={{ display: 'flex', gap: 1, mt: 1, flexWrap: 'wrap', alignItems: 'center' }}>
+            <Box sx={{ display: 'flex', gap: 0.5, mt: 0.5, flexWrap: 'wrap', alignItems: 'center' }}>
               <Typography
-                variant="body2"
+                variant="caption"
                 component="span"
                 sx={{
                   color: order.quantity >= 2 ? palette.accent.red : 'inherit',
@@ -103,14 +104,14 @@ export default function OrderCard({ order, onClick }: OrderCardProps) {
                 <Chip
                   label={order.warehouse_name}
                   size="small"
-                  sx={{ bgcolor: order.warehouse_color || palette.sidebar.lighter, color: '#fff', fontSize: '0.75rem' }}
+                  sx={{ bgcolor: order.warehouse_color || palette.sidebar.lighter, color: '#fff', fontSize: '0.65rem', height: 18, '& .MuiChip-label': { px: 0.75 } }}
                 />
               )}
-              <Typography variant="caption" color="text.secondary">Ozon</Typography>
+              <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.65rem' }}>Ozon</Typography>
             </Box>
           </>
         ) : (
-          <Box sx={{ display: 'flex', gap: 1.5, mb: 1 }}>
+          <Box sx={{ display: 'flex', gap: 1, mb: 0.5 }}>
             {imageUrl && !imageError && (
               <Box
                 component="img"
@@ -118,8 +119,8 @@ export default function OrderCard({ order, onClick }: OrderCardProps) {
                 alt={order.product_name}
                 onError={() => setImageError(true)}
                 sx={{
-                  width: 100,
-                  height: 100,
+                  width: 64,
+                  height: 64,
                   objectFit: 'cover',
                   borderRadius: 1,
                   flexShrink: 0,
@@ -128,7 +129,7 @@ export default function OrderCard({ order, onClick }: OrderCardProps) {
             )}
             <Box sx={{ flex: 1, minWidth: 0 }}>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                <Typography variant="subtitle1" fontWeight={600} noWrap>
+                <Typography variant="body2" fontWeight={600} noWrap sx={{ fontSize: '0.75rem' }}>
                   {displayId}
                 </Typography>
                 <Chip
@@ -136,18 +137,19 @@ export default function OrderCard({ order, onClick }: OrderCardProps) {
                   size="small"
                   color={isCompleted ? 'success' : 'default'}
                   variant={isCompleted ? 'filled' : 'outlined'}
+                  sx={{ fontSize: '0.6rem', height: 18, '& .MuiChip-label': { px: 0.75 } }}
                 />
               </Box>
-              <Typography variant="body1" color="text.primary">
+              <Typography variant="caption" color="text.primary" sx={{ fontWeight: 500, display: 'block' }}>
                 {order.article}
               </Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
                 {order.product_name}
                 {order.size && ` • ${order.size}`}
               </Typography>
-              <Box sx={{ display: 'flex', gap: 1, mt: 1, flexWrap: 'wrap', alignItems: 'center' }}>
+              <Box sx={{ display: 'flex', gap: 0.5, mt: 0.5, flexWrap: 'wrap', alignItems: 'center' }}>
               <Typography
-                variant="body2"
+                variant="caption"
                 component="span"
                 sx={{
                   color: order.quantity >= 2 ? palette.accent.red : 'inherit',
@@ -163,12 +165,14 @@ export default function OrderCard({ order, onClick }: OrderCardProps) {
                     sx={{
                       bgcolor: order.warehouse_color || palette.sidebar.lighter,
                       color: '#fff',
-                      fontSize: '0.75rem',
+                      fontSize: '0.65rem',
+                      height: 18,
+                      '& .MuiChip-label': { px: 0.75 },
                     }}
                   />
                 )}
                 {order.marketplace_type && (
-                  <Typography variant="caption" color="text.secondary">
+                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.65rem' }}>
                     {order.marketplace_type === 'ozon' ? 'Ozon' : order.marketplace_type === 'wildberries' ? 'WB' : order.marketplace_type}
                   </Typography>
                 )}

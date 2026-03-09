@@ -43,6 +43,7 @@ const schema = z
     password: z.string().min(6, 'Минимум 6 символов'),
     confirm_password: z.string().min(1, 'Подтвердите пароль'),
     full_name: z.string().min(1, 'Введите имя'),
+    invite_code: z.string().optional(),
   })
   .refine((data) => data.password === data.confirm_password, {
     message: 'Пароли не совпадают',
@@ -69,7 +70,7 @@ export default function RegisterPage() {
     formState: { errors, isSubmitting },
   } = useForm<FormData>({
     resolver: zodResolver(schema),
-    defaultValues: { email: '', password: '', confirm_password: '', full_name: '' },
+    defaultValues: { email: '', password: '', confirm_password: '', full_name: '', invite_code: '' },
   });
 
   const onSubmit = async (data: FormData) => {
@@ -79,6 +80,7 @@ export default function RegisterPage() {
         email: data.email,
         password: data.password,
         full_name: data.full_name,
+        invite_code: data.invite_code || undefined,
       });
       dispatch(setCredentials(tokens));
       navigate('/assembly', { replace: true });
@@ -145,6 +147,14 @@ export default function RegisterPage() {
               error={!!errors.confirm_password}
               helperText={errors.confirm_password?.message}
               autoComplete="new-password"
+            />
+            <TextField
+              {...register('invite_code')}
+              label="Код приглашения (от администратора)"
+              fullWidth
+              margin="normal"
+              helperText="Если вас пригласил администратор — введите код"
+              autoComplete="off"
             />
             {error && (
               <Alert severity="error" sx={{ mt: 2 }}>

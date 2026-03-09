@@ -325,7 +325,12 @@ class BaseMarketplaceClient(ABC):
                 status_code=response.status_code,
             )
         
-        return response.json()
+        if not response.content:
+            return {}
+        try:
+            return response.json()
+        except Exception:
+            return {}
     
     async def _request_content(
         self,

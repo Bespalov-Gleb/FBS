@@ -10,6 +10,7 @@ export interface RegisterCredentials {
   email: string;
   password: string;
   full_name: string;
+  invite_code?: string;
 }
 
 export const authApi = {

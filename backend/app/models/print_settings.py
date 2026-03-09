@@ -29,8 +29,18 @@ class PrintSettings(BaseModel):
     auto_print_on_click = Column(String(10), nullable=True)  # "true" | "false"
     auto_print_kiz_duplicate = Column(String(10), nullable=True)  # "true" | "false" — дубль КИЗ после скана
 
-    # Размеры этикеток (мм) — для Ozon и WB
+    # Размеры и поворот ФБС этикеток
     ozon_width_mm = Column(Integer, nullable=True, default=58)
     ozon_height_mm = Column(Integer, nullable=True, default=40)
+    ozon_label_rotate = Column(Integer, nullable=False, default=0)  # 0/90/180/270
     wb_width_mm = Column(Integer, nullable=True, default=58)
     wb_height_mm = Column(Integer, nullable=True, default=40)
+    wb_label_rotate = Column(Integer, nullable=False, default=0)    # 0/90/180/270
+
+    # Поворот штрихкодов товаров (Ozon OZN+SKU и WB EAN)
+    barcode_rotate = Column(Integer, nullable=False, default=0)     # 0/90/180/270
+
+    # Размер и поворот этикетки КИЗ
+    kiz_width_mm = Column(Integer, nullable=True)    # default 40
+    kiz_height_mm = Column(Integer, nullable=True)   # default 35
+    kiz_rotate = Column(Integer, nullable=False, default=0)         # 0/90/180/270

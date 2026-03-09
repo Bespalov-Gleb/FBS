@@ -75,11 +75,23 @@ export interface LabelSize {
   height_mm?: number;
 }
 
+export interface LabelSizeWithRotate extends LabelSize {
+  rotate?: number;  // 0 / 90 / 180 / 270
+}
+
+export interface OzonLabelSize extends LabelSizeWithRotate {}
+
+export interface BarcodeLabels {
+  rotate?: number;  // 0 / 90 / 180 / 270
+}
+
 export interface PrintSettings {
   default_printer?: string;
   label_format?: '58mm' | '80mm';
   auto_print_on_click?: boolean;
   auto_print_kiz_duplicate?: boolean;
-  ozon_labels?: LabelSize;
-  wb_labels?: LabelSize;
+  ozon_labels?: LabelSizeWithRotate;
+  wb_labels?: LabelSizeWithRotate;
+  kiz_labels?: LabelSizeWithRotate;
+  barcode_labels?: BarcodeLabels;
 }

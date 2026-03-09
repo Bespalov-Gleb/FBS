@@ -13,6 +13,7 @@ from app.core.security import (
     get_password_hash,
     verify_password,
 )
+from app.models.invite_code import InviteCode
 from app.models.user import User, UserRole
 from app.repositories.user_repository import UserRepository
 from app.schemas.auth import (
@@ -31,7 +32,8 @@ router = APIRouter(prefix="/auth", tags=["Auth"])
 def register(data: RegisterRequest, db: Session = Depends(get_db)):
     """
     Регистрация нового пользователя.
-    Создаёт пользователя с ролью packer и возвращает токены.
+    Если передан invite_code — упаковщик привязывается к администратору,
+    выпустившему код. Без кода создаётся самостоятельный аккаунт (admin по умолчанию).
     """
     user_repo = UserRepository(db)
     if user_repo.get_by_email(data.email):
@@ -39,12 +41,48 @@ def register(data: RegisterRequest, db: Session = Depends(get_db)):
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Пользователь с таким email уже зарегистрирован",
         )
+
+    owner_id: int | None = None
+    invite: InviteCode | None = None
+
+    if data.invite_code and data.invite_code.strip():
+        invite = (
+            db.query(InviteCode)
+            .filter(InviteCode.code == data.invite_code.strip())
+            .first()
+        )
+        if not invite:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Инвайт-код не найден",
+            )
+        if not invite.is_valid:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Инвайт-код истёк или уже использован",
+            )
+        owner_id = invite.created_by_id
+
+    # Без инвайта — первый пользователь или самостоятельный admin;
+    # с инвайтом — упаковщик под владельцем
+    role = UserRole.PACKER if owner_id else UserRole.ADMIN
     user = user_repo.create(
         email=data.email,
         hashed_password=get_password_hash(data.password),
         full_name=data.full_name,
-        role=UserRole.PACKER,
+        role=role,
     )
+
+    if owner_id:
+        user.owner_id = owner_id
+
+    if invite:
+        from datetime import datetime
+        invite.used_by_id = user.id
+        invite.used_at = datetime.utcnow()
+
+    db.commit()
+
     return TokenResponse(
         access_token=create_access_token(subject=str(user.id)),
         refresh_token=create_refresh_token(subject=str(user.id)),

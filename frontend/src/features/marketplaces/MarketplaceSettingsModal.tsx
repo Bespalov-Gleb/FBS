@@ -117,7 +117,7 @@ export default function MarketplaceSettingsModal({
               control={
                 <Switch checked={isKizEnabled} onChange={(e) => setIsKizEnabled(e.target.checked)} />
               }
-              label="Режим КИЗ"
+              label={`Режим КИЗ (${marketplace?.type === 'ozon' ? 'Ozon' : 'WB'})`}
             />
             <FormControlLabel
               control={

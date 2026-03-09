@@ -101,8 +101,10 @@ class OrderRepository:
         search: Optional[str] = None,
         sort_by: str = "marketplace_created_at",
         sort_desc: bool = True,
+        packer_allowed_marketplace_ids: Optional[List[int]] = None,
     ) -> list[Order]:
-        """Список заказов пользователя с фильтрами. Поиск: артикул, название, номер заказа."""
+        """Список заказов пользователя с фильтрами. Поиск: артикул, название, номер заказа.
+        packer_allowed_marketplace_ids — если задан, ограничивает выдачу только этими магазинами."""
         from app.models.marketplace import Marketplace, MarketplaceType
 
         # Показывать только заказы в сборке. Скрыть: отмеченные у нас «Собрано», доставлен, отменён.
@@ -116,6 +118,9 @@ class OrderRepository:
             .filter(Order.status != OrderStatus.COMPLETED)
             .filter(Order.collected_in_app != True)
         )
+        # Ограничение доступа упаковщика к конкретным магазинам
+        if packer_allowed_marketplace_ids is not None:
+            query = query.filter(Order.marketplace_id.in_(packer_allowed_marketplace_ids))
         mp_conds = []
         if marketplace_ids:
             mp_conds.append(Order.marketplace_id.in_(marketplace_ids))
@@ -182,6 +187,7 @@ class OrderRepository:
         warehouse_ids: Optional[List[int]] = None,
         status: Optional[OrderStatus] = None,
         search: Optional[str] = None,
+        packer_allowed_marketplace_ids: Optional[List[int]] = None,
     ) -> int:
         """Количество заказов по тем же фильтрам, что и get_list"""
         from app.models.marketplace import Marketplace, MarketplaceType
@@ -195,6 +201,8 @@ class OrderRepository:
             .filter(Order.status != OrderStatus.COMPLETED)
             .filter(Order.collected_in_app != True)
         )
+        if packer_allowed_marketplace_ids is not None:
+            query = query.filter(Order.marketplace_id.in_(packer_allowed_marketplace_ids))
         mp_conds = []
         if marketplace_ids:
             mp_conds.append(Order.marketplace_id.in_(marketplace_ids))

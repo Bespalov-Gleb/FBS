@@ -6,13 +6,25 @@ export interface LabelSizeUpdate {
   height_mm?: number;
 }
 
+export interface LabelSizeWithRotateUpdate extends LabelSizeUpdate {
+  rotate?: number;  // 0 / 90 / 180 / 270
+}
+
+export interface OzonLabelSizeUpdate extends LabelSizeWithRotateUpdate {}
+
+export interface BarcodeLabelsUpdate {
+  rotate?: number;  // 0 / 90 / 180 / 270
+}
+
 export interface PrintSettingsUpdate {
   default_printer?: string;
   label_format?: string;
   auto_print_on_click?: boolean;
   auto_print_kiz_duplicate?: boolean;
-  ozon_labels?: LabelSizeUpdate;
-  wb_labels?: LabelSizeUpdate;
+  ozon_labels?: LabelSizeWithRotateUpdate;
+  wb_labels?: LabelSizeWithRotateUpdate;
+  kiz_labels?: LabelSizeWithRotateUpdate;
+  barcode_labels?: BarcodeLabelsUpdate;
 }
 
 export const printSettingsApi = {

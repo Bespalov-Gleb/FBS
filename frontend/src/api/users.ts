@@ -14,6 +14,25 @@ export interface UserUpdate {
   is_active?: boolean;
 }
 
+export interface InviteCode {
+  code: string;
+  expires_at: string;
+  used: boolean;
+  used_by_name?: string;
+}
+
+export interface MarketplaceAccess {
+  marketplace_id: number;
+  marketplace_name: string;
+}
+
+export interface UserStats {
+  orders_last_hour: number;
+  orders_today: number;
+  orders_total: number;
+  avg_minutes_per_order: number | null;
+}
+
 export const usersApi = {
   list: async (params?: { skip?: number; limit?: number }): Promise<User[]> => {
     const { data } = await apiClient.get<User[]>('/users', { params });
@@ -37,5 +56,29 @@ export const usersApi = {
 
   deactivate: async (id: number): Promise<void> => {
     await apiClient.delete(`/users/${id}`);
+  },
+
+  createInviteCode: async (): Promise<InviteCode> => {
+    const { data } = await apiClient.post<InviteCode>('/users/invite-code');
+    return data;
+  },
+
+  listInviteCodes: async (): Promise<InviteCode[]> => {
+    const { data } = await apiClient.get<InviteCode[]>('/users/invite-codes');
+    return data;
+  },
+
+  getMarketplaceAccess: async (userId: number): Promise<MarketplaceAccess[]> => {
+    const { data } = await apiClient.get<MarketplaceAccess[]>(`/users/${userId}/marketplace-access`);
+    return data;
+  },
+
+  setMarketplaceAccess: async (userId: number, marketplaceIds: number[]): Promise<void> => {
+    await apiClient.put(`/users/${userId}/marketplace-access`, { marketplace_ids: marketplaceIds });
+  },
+
+  getStats: async (userId: number): Promise<UserStats> => {
+    const { data } = await apiClient.get<UserStats>(`/users/${userId}/stats`);
+    return data;
   },
 };

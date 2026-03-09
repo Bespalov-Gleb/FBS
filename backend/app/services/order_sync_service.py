@@ -58,67 +58,10 @@ class OrderSyncService:
                     if not has_next or len(batch) < 1000:
                         break
                     offset += 1000
-                # Конкретный размер заказа: posting/fbs/get возвращает dimensions в products
-                posting_numbers = [mo.posting_number for mo in orders if getattr(mo, "posting_number", None)]
-                if posting_numbers and os.environ.get("FBS_OZON_FETCH_POSTING_DETAILS", "1") != "0":
-                    try:
-                        details_map = await client.get_postings_details_for_sizes(posting_numbers)
-                        sizes_from_get = 0
-                        for mo in orders:
-                            pn = getattr(mo, "posting_number", None)
-                            if not pn or pn not in details_map:
-                                continue
-                            details_products = (details_map.get(pn) or {}).get("products") or []
-                            our_prods = (mo.metadata or {}).get("products") or []
-                            for i, dp in enumerate(details_products):
-                                if i >= len(our_prods):
-                                    break
-                                size_val = None
-                                dims = dp.get("dimensions") or {}
-                                if isinstance(dims, dict):
-                                    size_val = dims.get("size_name") or dims.get("size")
-                                if not size_val:
-                                    for attrs_key in ("optional_product_attributes", "required_product_attributes"):
-                                        attrs = dp.get(attrs_key) or []
-                                        for a in attrs if isinstance(attrs, list) else []:
-                                            if not isinstance(a, dict):
-                                                continue
-                                            name = (a.get("attribute_name") or a.get("name") or "").lower()
-                                            if "размер" in name or "size" in name:
-                                                v = a.get("attribute_value") or a.get("value")
-                                                if v:
-                                                    size_val = v
-                                                    break
-                                        if size_val:
-                                            break
-                                if size_val and str(size_val).strip():
-                                    our_prods[i]["size"] = str(size_val).strip()
-                                    sizes_from_get += 1
-                        if sizes_from_get:
-                            logger.info(f"Ozon: got {sizes_from_get} sizes from posting/fbs/get")
-                        elif details_map:
-                            # Debug: структура первого product для поиска размера
-                            first_pn = next(iter(details_map), None)
-                            if first_pn:
-                                prods = (details_map[first_pn] or {}).get("products") or []
-                                if prods:
-                                    dp = prods[0]
-                                    logger.debug(
-                                        "Ozon posting/fbs/get product structure (first product keys)",
-                                        extra={
-                                            "posting": first_pn,
-                                            "keys": list(dp.keys()),
-                                            "dimensions": dp.get("dimensions"),
-                                            "optional_product_attributes": dp.get("optional_product_attributes"),
-                                            "required_product_attributes": dp.get("required_product_attributes"),
-                                        },
-                                    )
-                    except Exception as e:
-                        logger.warning(f"Could not fetch posting details for sizes: {e}")
-                # Получаем фото товаров (POST /v3/product/info/list) — для всех товаров в posting
+                # Собираем уникальные offer_id и sku для батч-запросов
                 offer_ids = []
                 sku_list = []
-                sku_to_article = {}  # {sku: offer_id} для маппинга при запросе по sku
+                sku_to_article: dict[int, str] = {}
                 for mo in orders:
                     prods = (mo.metadata or {}).get("products", [])
                     for p in prods:
@@ -135,57 +78,133 @@ class OrderSyncService:
                                 pass
                 offer_ids = list(dict.fromkeys(offer_ids))
                 sku_list = list(dict.fromkeys(sku_list))
+
+                # Шаг 1: фото + «Размер продавца» — параллельно одним gather
+                images: dict[str, str] = {}
+                sizes: dict[str, str] = {}
                 if offer_ids or sku_list:
-                    try:
-                        images = await client.get_product_images(
-                            offer_ids=offer_ids or None,
-                            sku_list=sku_list or None,
-                            sku_to_article=sku_to_article or None,
+                    fetch_sizes = (
+                        bool(offer_ids)
+                        and os.environ.get("FBS_OZON_FETCH_SIZES", "1") != "0"
+                    )
+                    if fetch_sizes:
+                        # Параллельный запрос фото и размеров — экономим 1 последовательный round-trip
+                        _res = await asyncio.gather(
+                            client.get_product_images(
+                                offer_ids=offer_ids or None,
+                                sku_list=sku_list or None,
+                                sku_to_article=sku_to_article or None,
+                            ),
+                            client.get_product_sizes(offer_ids=offer_ids),
+                            return_exceptions=True,
                         )
-                        # Размер: Ozon posting не содержит size — получаем через /v4/products/info/attributes
-                        # Отключить: FBS_OZON_FETCH_SIZES=0 (при 404 от Ozon API)
-                        sizes = {}
-                        if offer_ids and os.environ.get("FBS_OZON_FETCH_SIZES", "1") != "0":
-                            try:
-                                sizes = await client.get_product_sizes(offer_ids=offer_ids)
-                            except Exception as e:
-                                logger.warning(f"Could not fetch product sizes: {e}")
-                        for mo in orders:
-                            prods = (mo.metadata or {}).get("products", [])
-                            if mo.metadata is None:
-                                mo.metadata = {}
-                            mo.metadata["product_image_url"] = ""
-                            for i, p in enumerate(prods):
-                                oid = p.get("offer_id")
-                                url = images.get(oid) if oid else ""
-                                if not url and p.get("sku") is not None:
-                                    url = images.get(str(p["sku"])) or images.get(int(p["sku"])) or ""
-                                p["image_url"] = url or ""
-                                # Первое фото — для карточки заказа (если первый товар без фото — берём любой)
-                                if url and not mo.metadata.get("product_image_url"):
-                                    mo.metadata["product_image_url"] = url
-                                # Размер: приоритет dimensions (posting/fbs/get или unfulfilled),
-                                # fallback get_product_sizes — даже «Размерная сетка: 44-46, 46-48, ...» лучше чем пусто
-                                if oid and not p.get("size"):
-                                    dims = p.get("dimensions") or {}
-                                    size_from_dims = dims.get("size_name") or dims.get("size") if isinstance(dims, dict) else None
-                                    if size_from_dims:
-                                        p["size"] = str(size_from_dims).strip()
-                                    else:
-                                        fallback = sizes.get(oid) or ""
-                                        if fallback and str(fallback).strip():
-                                            p["size"] = str(fallback).strip()
-                            # Размер первого товара — в extra_data для карточки заказа
-                            first_size = next(
-                                (p.get("size") for p in (mo.metadata or {}).get("products", []) if p.get("size")),
-                                None,
+                        images = _res[0] if isinstance(_res[0], dict) else {}
+                        sizes = _res[1] if isinstance(_res[1], dict) else {}
+                        if isinstance(_res[0], Exception):
+                            logger.warning(f"Ozon: images fetch failed: {_res[0]}")
+                        if isinstance(_res[1], Exception):
+                            logger.warning(f"Ozon: sizes fetch failed: {_res[1]}")
+                    else:
+                        try:
+                            images = await client.get_product_images(
+                                offer_ids=offer_ids or None,
+                                sku_list=sku_list or None,
+                                sku_to_article=sku_to_article or None,
                             )
-                            if first_size and mo.metadata:
-                                mo.metadata["size"] = first_size
-                        with_images = sum(1 for mo in orders if (mo.metadata or {}).get("product_image_url"))
-                        logger.info(f"Product images: {with_images}/{len(orders)} orders got photo")
-                    except Exception as e:
-                        logger.warning(f"Could not fetch product images: {e}")
+                        except Exception as e:
+                            logger.warning(f"Ozon: could not fetch images: {e}")
+
+                # Шаг 2: применяем фото и «Размер продавца» ко всем заказам
+                for mo in orders:
+                    prods = (mo.metadata or {}).get("products", [])
+                    if mo.metadata is None:
+                        mo.metadata = {}
+                    mo.metadata["product_image_url"] = ""
+                    for p in prods:
+                        oid = p.get("offer_id")
+                        url = images.get(oid) if oid else ""
+                        if not url and p.get("sku") is not None:
+                            url = images.get(str(p["sku"])) or images.get(int(p["sku"])) or ""  # type: ignore[call-overload]
+                        p["image_url"] = url or ""
+                        if url and not mo.metadata.get("product_image_url"):
+                            mo.metadata["product_image_url"] = url
+                        if oid:
+                            seller_size = sizes.get(oid) or ""
+                            if seller_size and str(seller_size).strip():
+                                p["size"] = str(seller_size).strip()
+                    first_size = next(
+                        (p.get("size") for p in (mo.metadata or {}).get("products", []) if p.get("size")),
+                        None,
+                    )
+                    if first_size and mo.metadata:
+                        mo.metadata["size"] = first_size
+                with_images = sum(1 for mo in orders if (mo.metadata or {}).get("product_image_url"))
+                logger.info(f"Product images: {with_images}/{len(orders)} orders got photo")
+
+                # Шаг 3 (fallback): posting/fbs/get только для заказов БЕЗ размера
+                # Таких обычно 0 — экономим N отдельных запросов
+                if os.environ.get("FBS_OZON_FETCH_POSTING_DETAILS", "1") != "0":
+                    orders_without_size = [
+                        mo for mo in orders
+                        if not any(p.get("size") for p in (mo.metadata or {}).get("products", []))
+                    ]
+                    if orders_without_size:
+                        pns_missing = [
+                            mo.posting_number
+                            for mo in orders_without_size
+                            if getattr(mo, "posting_number", None)
+                        ]
+                        logger.info(
+                            f"Ozon: {len(orders_without_size)} orders without size, "
+                            f"fetching posting details as fallback"
+                        )
+                        try:
+                            details_map = await client.get_postings_details_for_sizes(pns_missing)
+                            sizes_from_get = 0
+                            for mo in orders_without_size:
+                                pn = getattr(mo, "posting_number", None)
+                                if not pn or pn not in details_map:
+                                    continue
+                                details_products = (details_map.get(pn) or {}).get("products") or []
+                                our_prods = (mo.metadata or {}).get("products") or []
+                                for i, dp in enumerate(details_products):
+                                    if i >= len(our_prods) or our_prods[i].get("size"):
+                                        continue
+                                    size_val = None
+                                    dims = dp.get("dimensions") or {}
+                                    if isinstance(dims, dict):
+                                        size_val = dims.get("size_name") or dims.get("size")
+                                    if not size_val:
+                                        for attrs_key in ("optional_product_attributes", "required_product_attributes"):
+                                            attrs = dp.get(attrs_key) or []
+                                            for a in attrs if isinstance(attrs, list) else []:
+                                                if not isinstance(a, dict):
+                                                    continue
+                                                name = (a.get("attribute_name") or a.get("name") or "").lower()
+                                                if "размер" in name or "size" in name:
+                                                    v = a.get("attribute_value") or a.get("value")
+                                                    if v:
+                                                        size_val = v
+                                                        break
+                                            if size_val:
+                                                break
+                                    if size_val and str(size_val).strip():
+                                        our_prods[i]["size"] = str(size_val).strip()
+                                        sizes_from_get += 1
+                                # Обновляем первый размер для карточки
+                                first_size = next(
+                                    (p.get("size") for p in our_prods if p.get("size")),
+                                    None,
+                                )
+                                if first_size and mo.metadata:
+                                    mo.metadata["size"] = first_size
+                            if sizes_from_get:
+                                logger.info(
+                                    f"Ozon: {sizes_from_get} sizes from posting/fbs/get "
+                                    f"(fallback, {len(orders_without_size)} orders)"
+                                )
+                        except Exception as e:
+                            logger.warning(f"Ozon: posting details fallback failed: {e}")
                 api_external_ids = {mo.external_id for mo in orders}
                 for mo in orders:
                     count += OrderSyncService._upsert_order(
@@ -246,20 +265,28 @@ class OrderSyncService:
                         if order_repo.mark_cancelled_by_marketplace(marketplace.id, ext_id):
                             count += 1
                 # URL фото и размер: Content API (официально), fallback — CDN
+                # Лимит Content API: 100 req/min → батчи по 10 с паузой 6 сек между ними
+                # Это даёт 10 запросов за ~6 сек = ~100 req/min при соблюдении лимита.
+                # Внутри батча запросы идут параллельно — экономим N×0.7 сек sequential sleep.
                 unique_nm_ids = list({
                     (mo.metadata or {}).get("nm_id")
                     for mo in orders_new
                     if (mo.metadata or {}).get("nm_id") is not None
                 })
+                _WB_CONTENT_BATCH = 10
+                _WB_CONTENT_SLEEP = 6.0  # 10 req / 6 s = 100 req/min
+
                 nm_to_card: dict[int | str, dict | None] = {}
-                for nm_id in unique_nm_ids:
-                    try:
-                        card = await client.get_product_card_content_api(nm_id)
-                        nm_to_card[nm_id] = card
-                    except Exception as e:
-                        logger.debug(f"WB Content API card for nm_id={nm_id}: {e}")
-                        nm_to_card[nm_id] = None
-                    await asyncio.sleep(0.7)  # ~100 req/min лимит Content API
+                for _i in range(0, len(unique_nm_ids), _WB_CONTENT_BATCH):
+                    _batch = unique_nm_ids[_i : _i + _WB_CONTENT_BATCH]
+                    _results = await asyncio.gather(
+                        *[client.get_product_card_content_api(nm_id) for nm_id in _batch],
+                        return_exceptions=True,
+                    )
+                    for nm_id, _res in zip(_batch, _results):
+                        nm_to_card[nm_id] = None if isinstance(_res, Exception) else _res
+                    if _i + _WB_CONTENT_BATCH < len(unique_nm_ids):
+                        await asyncio.sleep(_WB_CONTENT_SLEEP)
                 for mo in orders_new:
                     nm_id = (mo.metadata or {}).get("nm_id")
                     chrt_id = (mo.metadata or {}).get("chrt_id")
