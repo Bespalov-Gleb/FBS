@@ -15,10 +15,14 @@ import {
   Chip,
   Snackbar,
   Alert,
+  Tooltip,
+  CircularProgress,
 } from '@mui/material';
 import Add from '@mui/icons-material/Add';
 import Edit from '@mui/icons-material/Edit';
 import Block from '@mui/icons-material/Block';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
+import RefreshIcon from '@mui/icons-material/Refresh';
 import { usersApi, type UserCreate, type UserUpdate } from '../api/users';
 import AddUserModal from '../features/users/AddUserModal';
 import EditUserModal from '../features/users/EditUserModal';
@@ -37,6 +41,28 @@ export default function UsersPage() {
     queryKey: ['users'],
     queryFn: () => usersApi.list(),
   });
+
+  const { data: inviteCodeData, isLoading: inviteLoading } = useQuery({
+    queryKey: ['my-invite-code'],
+    queryFn: () => usersApi.getMyInviteCode(),
+  });
+
+  const regenerateMutation = useMutation({
+    mutationFn: () => usersApi.regenerateMyInviteCode(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['my-invite-code'] });
+      setSnackbar({ message: 'Код обновлён', severity: 'success' });
+    },
+    onError: () => setSnackbar({ message: 'Ошибка обновления кода', severity: 'error' }),
+  });
+
+  const handleCopyInviteCode = () => {
+    if (inviteCodeData?.code) {
+      navigator.clipboard.writeText(inviteCodeData.code).then(() => {
+        setSnackbar({ message: 'Код скопирован', severity: 'success' });
+      });
+    }
+  };
 
   const createMutation = useMutation({
     mutationFn: (payload: UserCreate) => usersApi.create(payload),
@@ -79,6 +105,47 @@ export default function UsersPage() {
           Администрирование / Пользователи
         </Typography>
       </Box>
+      {/* ── Инвайт-код администратора ── */}
+      <Paper variant="outlined" sx={{ p: 2, mb: 2, display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
+        <Box sx={{ flexGrow: 1 }}>
+          <Typography variant="subtitle2" color="text.secondary" gutterBottom sx={{ mb: 0.5 }}>
+            Ваш инвайт-код для регистрации упаковщиков
+          </Typography>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            {inviteLoading ? (
+              <CircularProgress size={16} />
+            ) : (
+              <Typography variant="body1" fontFamily="monospace" fontWeight={700} fontSize="1.1rem" letterSpacing={2}>
+                {inviteCodeData?.code ?? '—'}
+              </Typography>
+            )}
+            {inviteCodeData?.code && (
+              <Tooltip title="Скопировать">
+                <IconButton size="small" onClick={handleCopyInviteCode}>
+                  <ContentCopyIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+            )}
+          </Box>
+          <Typography variant="caption" color="text.secondary">
+            Упаковщик вводит этот код при регистрации. Код постоянный и многоразовый.
+          </Typography>
+        </Box>
+        <Tooltip title="Сгенерировать новый код (старый перестанет работать)">
+          <span>
+            <Button
+              variant="outlined"
+              size="small"
+              startIcon={regenerateMutation.isPending ? <CircularProgress size={14} /> : <RefreshIcon />}
+              onClick={() => regenerateMutation.mutate()}
+              disabled={regenerateMutation.isPending}
+            >
+              Обновить код
+            </Button>
+          </span>
+        </Tooltip>
+      </Paper>
+
       <Button
         variant="contained"
         startIcon={<Add />}

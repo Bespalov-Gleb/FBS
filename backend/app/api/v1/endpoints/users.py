@@ -1,8 +1,6 @@
 """
 API endpoints для пользователей (админ)
 """
-import secrets
-from datetime import datetime, timedelta
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -12,7 +10,6 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.dependencies import CurrentAdminUser
 from app.core.security import get_password_hash
-from app.models.invite_code import InviteCode
 from app.models.marketplace import Marketplace
 from app.models.order import Order
 from app.models.user import User, UserRole
@@ -22,19 +19,10 @@ from app.schemas.user import UserCreate, UserResponse, UserUpdate
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
-INVITE_TTL_HOURS = 24
-
 
 # ─────────────────────────────────────────
 # Схемы ответов
 # ─────────────────────────────────────────
-
-class InviteCodeResponse(BaseModel):
-    code: str
-    expires_at: datetime
-    used: bool
-    used_by_name: Optional[str] = None
-
 
 class MarketplaceAccessResponse(BaseModel):
     marketplace_id: int
@@ -53,59 +41,36 @@ class UserStatsResponse(BaseModel):
 
 
 # ─────────────────────────────────────────
-# Инвайт-коды (должны быть до /{user_id})
+# Статичный инвайт-код администратора
 # ─────────────────────────────────────────
 
-@router.post("/invite-code", response_model=InviteCodeResponse)
-def create_invite_code(
+class StaticInviteCodeResponse(BaseModel):
+    code: str
+
+
+@router.get("/my-invite-code", response_model=StaticInviteCodeResponse)
+def get_my_invite_code(
     db: Session = Depends(get_db),
     current_user: User = CurrentAdminUser,
 ):
-    """
-    Сгенерировать инвайт-код для регистрации упаковщика.
-    Код действует 24 часа и может быть использован один раз.
-    """
-    code = secrets.token_hex(8)  # 16 символов hex
-    expires_at = datetime.utcnow() + timedelta(hours=INVITE_TTL_HOURS)
-    invite = InviteCode(
-        code=code,
-        created_by_id=current_user.id,
-        expires_at=expires_at,
-    )
-    db.add(invite)
+    """Получить статичный инвайт-код администратора. Если отсутствует — сгенерировать."""
+    if not current_user.static_invite_code:
+        current_user.static_invite_code = User.generate_invite_code()
+        db.commit()
+        db.refresh(current_user)
+    return StaticInviteCodeResponse(code=current_user.static_invite_code)
+
+
+@router.post("/my-invite-code/regenerate", response_model=StaticInviteCodeResponse)
+def regenerate_my_invite_code(
+    db: Session = Depends(get_db),
+    current_user: User = CurrentAdminUser,
+):
+    """Перегенерировать статичный инвайт-код. Старый код становится недействительным."""
+    current_user.static_invite_code = User.generate_invite_code()
     db.commit()
-    db.refresh(invite)
-    return InviteCodeResponse(code=invite.code, expires_at=invite.expires_at, used=False)
-
-
-@router.get("/invite-codes", response_model=list[InviteCodeResponse])
-def list_invite_codes(
-    db: Session = Depends(get_db),
-    current_user: User = CurrentAdminUser,
-):
-    """Список инвайт-кодов текущего администратора (последние 50)."""
-    invites = (
-        db.query(InviteCode)
-        .filter(InviteCode.created_by_id == current_user.id)
-        .order_by(InviteCode.created_at.desc())
-        .limit(50)
-        .all()
-    )
-    result = []
-    for inv in invites:
-        used_by_name: Optional[str] = None
-        if inv.used_by_id:
-            used_by = db.query(User).filter(User.id == inv.used_by_id).first()
-            used_by_name = used_by.full_name if used_by else None
-        result.append(
-            InviteCodeResponse(
-                code=inv.code,
-                expires_at=inv.expires_at,
-                used=inv.is_used,
-                used_by_name=used_by_name,
-            )
-        )
-    return result
+    db.refresh(current_user)
+    return StaticInviteCodeResponse(code=current_user.static_invite_code)
 
 
 # ─────────────────────────────────────────
@@ -164,7 +129,9 @@ def create_user(
     )
     if role == UserRole.PACKER:
         user.owner_id = current_user.id
-        db.commit()
+    elif role == UserRole.ADMIN and not user.static_invite_code:
+        user.static_invite_code = User.generate_invite_code()
+    db.commit()
     return UserResponse(
         id=user.id,
         email=user.email,

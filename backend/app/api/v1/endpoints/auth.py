@@ -46,25 +46,36 @@ def register(data: RegisterRequest, db: Session = Depends(get_db)):
     invite: InviteCode | None = None
 
     if data.invite_code and data.invite_code.strip():
-        invite = (
-            db.query(InviteCode)
-            .filter(InviteCode.code == data.invite_code.strip())
+        code = data.invite_code.strip()
+
+        # Сначала проверяем статичный код администратора (постоянный, многоразовый)
+        admin_with_code = (
+            db.query(User)
+            .filter(User.static_invite_code == code, User.role == UserRole.ADMIN)
             .first()
         )
-        if not invite:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Инвайт-код не найден",
+        if admin_with_code:
+            owner_id = admin_with_code.id
+        else:
+            # Fallback: временный одноразовый инвайт-код
+            invite = (
+                db.query(InviteCode)
+                .filter(InviteCode.code == code)
+                .first()
             )
-        if not invite.is_valid:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Инвайт-код истёк или уже использован",
-            )
-        owner_id = invite.created_by_id
+            if not invite:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Инвайт-код не найден",
+                )
+            if not invite.is_valid:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Инвайт-код истёк или уже использован",
+                )
+            owner_id = invite.created_by_id
 
-    # Без инвайта — первый пользователь или самостоятельный admin;
-    # с инвайтом — упаковщик под владельцем
+    # Без инвайта — самостоятельный admin; с инвайтом — упаковщик под владельцем
     role = UserRole.PACKER if owner_id else UserRole.ADMIN
     user = user_repo.create(
         email=data.email,
@@ -75,6 +86,10 @@ def register(data: RegisterRequest, db: Session = Depends(get_db)):
 
     if owner_id:
         user.owner_id = owner_id
+
+    if not owner_id:
+        # Новый администратор — генерируем статичный инвайт-код
+        user.static_invite_code = User.generate_invite_code()
 
     if invite:
         from datetime import datetime

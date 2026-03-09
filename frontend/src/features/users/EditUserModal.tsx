@@ -19,15 +19,10 @@ import {
   Typography,
   Box,
   Chip,
-  CircularProgress,
   Alert,
   Snackbar,
-  Tooltip,
-  IconButton,
 } from '@mui/material';
-import ContentCopyIcon from '@mui/icons-material/ContentCopy';
-import RefreshIcon from '@mui/icons-material/Refresh';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation } from '@tanstack/react-query';
 import { usersApi } from '../../api/users';
 import type { UserUpdate } from '../../api/users';
 import { marketplacesApi } from '../../api/marketplaces';
@@ -54,9 +49,7 @@ export default function EditUserModal({
   onSubmit,
   isSubmitting,
 }: EditUserModalProps) {
-  const queryClient = useQueryClient();
   const [snackbar, setSnackbar] = useState<{ message: string; severity: 'success' | 'error' } | null>(null);
-  const [generatedCode, setGeneratedCode] = useState<string | null>(null);
 
   const { data: user, isLoading } = useQuery({
     queryKey: ['user', userId],
@@ -85,15 +78,6 @@ export default function EditUserModal({
       setSnackbar({ message: 'Доступ обновлён', severity: 'success' });
     },
     onError: () => setSnackbar({ message: 'Ошибка сохранения доступа', severity: 'error' }),
-  });
-
-  const createInviteMutation = useMutation({
-    mutationFn: () => usersApi.createInviteCode(),
-    onSuccess: (data) => {
-      setGeneratedCode(data.code);
-      queryClient.invalidateQueries({ queryKey: ['invite-codes'] });
-    },
-    onError: () => setSnackbar({ message: 'Ошибка генерации кода', severity: 'error' }),
   });
 
   const {
@@ -127,12 +111,6 @@ export default function EditUserModal({
       next.add(mpId);
     }
     setAccessMutation.mutate([...next]);
-  };
-
-  const handleCopyCode = (code: string) => {
-    navigator.clipboard.writeText(code).then(() => {
-      setSnackbar({ message: 'Код скопирован', severity: 'success' });
-    });
   };
 
   const isPacker = user?.role === 'packer';
@@ -262,47 +240,6 @@ export default function EditUserModal({
               </>
             )}
 
-            {/* ── Инвайт-код ── */}
-            <Divider sx={{ my: 1.5 }} />
-            <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-              Инвайт-код
-            </Typography>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <Button
-                variant="outlined"
-                size="small"
-                startIcon={createInviteMutation.isPending ? <CircularProgress size={14} /> : <RefreshIcon />}
-                onClick={() => createInviteMutation.mutate()}
-                disabled={createInviteMutation.isPending}
-              >
-                Создать код
-              </Button>
-              {generatedCode && (
-                <Box
-                  sx={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 0.5,
-                    bgcolor: 'action.hover',
-                    borderRadius: 1,
-                    px: 1,
-                    py: 0.5,
-                  }}
-                >
-                  <Typography variant="body2" fontFamily="monospace" fontWeight={600}>
-                    {generatedCode}
-                  </Typography>
-                  <Tooltip title="Скопировать">
-                    <IconButton size="small" onClick={() => handleCopyCode(generatedCode)}>
-                      <ContentCopyIcon fontSize="inherit" />
-                    </IconButton>
-                  </Tooltip>
-                </Box>
-              )}
-            </Box>
-            <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5 }}>
-              Код действует 24 часа. Упаковщик вводит его при регистрации.
-            </Typography>
           </DialogContent>
 
           <DialogActions>

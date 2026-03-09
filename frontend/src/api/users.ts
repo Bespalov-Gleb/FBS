@@ -14,11 +14,8 @@ export interface UserUpdate {
   is_active?: boolean;
 }
 
-export interface InviteCode {
+export interface StaticInviteCode {
   code: string;
-  expires_at: string;
-  used: boolean;
-  used_by_name?: string;
 }
 
 export interface MarketplaceAccess {
@@ -58,13 +55,13 @@ export const usersApi = {
     await apiClient.delete(`/users/${id}`);
   },
 
-  createInviteCode: async (): Promise<InviteCode> => {
-    const { data } = await apiClient.post<InviteCode>('/users/invite-code');
+  getMyInviteCode: async (): Promise<StaticInviteCode> => {
+    const { data } = await apiClient.get<StaticInviteCode>('/users/my-invite-code');
     return data;
   },
 
-  listInviteCodes: async (): Promise<InviteCode[]> => {
-    const { data } = await apiClient.get<InviteCode[]>('/users/invite-codes');
+  regenerateMyInviteCode: async (): Promise<StaticInviteCode> => {
+    const { data } = await apiClient.post<StaticInviteCode>('/users/my-invite-code/regenerate');
     return data;
   },
 

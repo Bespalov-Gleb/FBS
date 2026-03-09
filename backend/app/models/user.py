@@ -2,6 +2,7 @@
 Модель пользователя
 """
 import enum
+import secrets
 
 from sqlalchemy import Boolean, Column, Enum, ForeignKey, Integer, String
 from sqlalchemy.orm import relationship
@@ -37,6 +38,13 @@ class User(BaseModel):
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
+
+    # Статичный инвайт-код администратора (постоянный, многоразовый)
+    static_invite_code = Column(String(16), unique=True, nullable=True, index=True)
+
+    @staticmethod
+    def generate_invite_code() -> str:
+        return secrets.token_hex(8)
 
     # Relationships
     marketplaces = relationship(
