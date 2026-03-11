@@ -76,7 +76,7 @@ def _wb_labels_from_ps(ps: PrintSettings) -> dict:
     return {
         "width_mm": ps.wb_width_mm or 58,
         "height_mm": ps.wb_height_mm or 40,
-        "rotate": ps.wb_label_rotate or 0,
+        "rotate": ps.wb_label_rotate if ps.wb_label_rotate is not None else 90,
     }
 
 
@@ -106,7 +106,7 @@ def get_print_settings(
     if not ps:
         return PrintSettingsResponse(
             ozon_labels={"width_mm": 58, "height_mm": 40, "rotate": 90},
-            wb_labels={"width_mm": 58, "height_mm": 40, "rotate": 0},
+            wb_labels={"width_mm": 58, "height_mm": 40, "rotate": 90},
             kiz_labels={"width_mm": 40, "height_mm": 35, "rotate": 0},
             barcode_labels={"rotate": 0},
         )

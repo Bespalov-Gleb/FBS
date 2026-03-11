@@ -35,7 +35,7 @@ class PrintSettings(BaseModel):
     ozon_label_rotate = Column(Integer, nullable=False, default=90)  # 0/90/180/270 — 90 для широких 58×40
     wb_width_mm = Column(Integer, nullable=True, default=58)
     wb_height_mm = Column(Integer, nullable=True, default=40)
-    wb_label_rotate = Column(Integer, nullable=False, default=0)    # 0/90/180/270
+    wb_label_rotate = Column(Integer, nullable=False, default=90)   # 0/90/180/270 — 90 для широкой 58×40
 
     # Поворот штрихкодов товаров (Ozon OZN+SKU и WB EAN)
     barcode_rotate = Column(Integer, nullable=False, default=0)     # 0/90/180/270 — штрихкод уже горизонтальный

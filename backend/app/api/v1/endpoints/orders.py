@@ -1075,8 +1075,13 @@ def _wb_sticker_to_pdf(
     label_width_mm: int = 58,
     label_height_mm: int = 40,
     order_number: str | None = None,
+    rotate: int = 90,
 ) -> bytes:
-    """Конвертировать PNG-стикер WB в PDF для печати (размер этикетки 58×40 мм)."""
+    """
+    Конвертировать PNG-стикер WB в PDF для печати (размер 58×40 мм).
+    WB присылает «высокую» этикетку — поворачиваем на 90° для широкой 58×40.
+    rotate: 0/90/180/270 — поворот изображения ДО вставки в PDF.
+    """
     import io
 
     from PIL import Image
@@ -1088,6 +1093,9 @@ def _wb_sticker_to_pdf(
     iw, ih = img.size
     if iw <= 0 or ih <= 0:
         raise ValueError("Invalid image dimensions")
+    if rotate and rotate % 90 == 0:
+        img = img.rotate(rotate, expand=True)
+        iw, ih = img.size
     label_w = label_width_mm * mm
     label_h = label_height_mm * mm
     scale = min(label_w / iw, label_h / ih, 1.0)
@@ -1095,10 +1103,13 @@ def _wb_sticker_to_pdf(
     draw_h = ih * scale
     x0 = (label_w - draw_w) / 2
     y0 = (label_h - draw_h) / 2
+    img_buf = io.BytesIO()
+    img.save(img_buf, format="PNG")
+    img_buf.seek(0)
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=(label_w, label_h))
     c.drawImage(
-        ImageReader(io.BytesIO(image_bytes)),
+        ImageReader(img_buf),
         x0, y0, width=draw_w, height=draw_h,
         preserveAspectRatio=True,
     )
@@ -1433,13 +1444,14 @@ async def get_order_label(
             },
         )
     elif mp.type == MarketplaceType.WILDBERRIES:
-        # WB API возвращает PNG. При наложении цифр на штрихкод — попробуйте размеры 40×30 в настройках.
+        # WB API возвращает PNG. Поворот 90° — широкая этикетка для 58×40 мм.
         ps = db.query(PrintSettings).filter(PrintSettings.user_id == current_user.id).first()
         if width is None or height is None:
             w = (ps.wb_width_mm if ps else 58) or 58
             h = (ps.wb_height_mm if ps else 40) or 40
         else:
             w, h = width, height
+        wb_rotate = ps.wb_label_rotate if ps is not None else 90
         async with WildberriesClient(api_key=api_key) as client:
             content = await client.get_order_label(
                 order.external_id,
@@ -1448,14 +1460,10 @@ async def get_order_label(
                 height=h,
             )
         order_num = order.posting_number or order.external_id or ""
-        content = _wb_sticker_to_pdf(content, label_width_mm=w, label_height_mm=h, order_number=order_num)
-        # Поворот WB стикера (из настроек диспетчера)
-        wb_rotate = (ps.wb_label_rotate or 0) if ps else 0
-        if wb_rotate:
-            try:
-                content = _rotate_pdf(content, wb_rotate)
-            except Exception as _re:
-                logger.warning(f"WB PDF rotate failed: {_re}")
+        content = _wb_sticker_to_pdf(
+            content, label_width_mm=w, label_height_mm=h,
+            order_number=order_num, rotate=wb_rotate,
+        )
         return Response(
             content=content,
             media_type="application/pdf",
