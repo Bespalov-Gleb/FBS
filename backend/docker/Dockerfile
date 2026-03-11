@@ -7,8 +7,14 @@ FROM python:3.11-slim AS builder
 ARG PIP_INDEX_URL
 RUN if [ -n "${PIP_INDEX_URL}" ]; then pip config set global.index-url "${PIP_INDEX_URL}"; fi
 
-# Без gcc/g++/libpq-dev — все пакеты (psycopg2-binary, cryptography и т.д.) имеют wheels.
-# Это снижает потребление RAM при сборке на слабых серверах (избегаем OOM 137).
+# Системные пакеты для сборки пакетов без wheels (pycairo и т.д.).
+# CC/CXX сбрасываем: иногда в окружении прописан icx, которого нет.
+ENV CC=gcc CXX=g++
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libcairo2-dev \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
 
 # Увеличенный таймаут для медленных сетей (pypi.org)
 ENV PIP_DEFAULT_TIMEOUT=120

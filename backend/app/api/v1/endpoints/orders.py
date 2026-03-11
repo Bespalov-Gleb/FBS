@@ -1059,45 +1059,6 @@ def _generate_barcodes_pdf(
     return buf.getvalue()
 
 
-def _wb_svg_sticker_to_pdf(
-    svg_bytes: bytes,
-    label_width_mm: int = 58,
-    label_height_mm: int = 40,
-    order_number: str | None = None,
-) -> bytes:
-    """Конвертировать SVG-стикер WB в PDF (альтернатива PNG, иногда рендер без наложения)."""
-    import io
-
-    from reportlab.graphics import renderPDF
-    from reportlab.lib.units import mm
-    from reportlab.pdfgen import canvas
-    from svglib.svglib import svg2rlg
-
-    drawing = svg2rlg(io.BytesIO(svg_bytes))
-    if drawing is None:
-        raise ValueError("Failed to parse WB SVG sticker")
-    dw, dh = drawing.width or 100, drawing.height or 100
-    label_w = label_width_mm * mm
-    label_h = label_height_mm * mm
-    scale = min(label_w / dw, label_h / dh, 1.0)
-    scaled_w, scaled_h = dw * scale, dh * scale
-    x0 = (label_w - scaled_w) / 2
-    y0 = (label_h - scaled_h) / 2
-    buf = io.BytesIO()
-    c = canvas.Canvas(buf, pagesize=(label_w, label_h))
-    c.saveState()
-    c.translate(x0, y0)
-    c.scale(scale, scale)
-    renderPDF.draw(drawing, c, 0, 0)
-    c.restoreState()
-    if order_number and str(order_number).strip():
-        c.setFont("Helvetica-Bold", 8)
-        c.drawCentredString(label_w / 2, 2 * mm, str(order_number).strip()[:25])
-    c.save()
-    buf.seek(0)
-    return buf.getvalue()
-
-
 def _wb_sticker_to_pdf(
     image_bytes: bytes,
     label_width_mm: int = 58,
@@ -1372,7 +1333,7 @@ async def get_order_barcodes_pdf(
 @router.get("/{order_id}/label")
 async def get_order_label(
     order_id: int,
-    format: str = Query("pdf", description="Ozon: pdf. WB: png (по умолчанию), svg. При наложении цифр на ШК — попробуйте svg или размер 40×30."),
+    format: str = Query("pdf", description="Ozon: pdf. WB: всегда PNG."),
     width: Optional[int] = Query(None, description="WB: ширина этикетки в мм. Если не указано — из настроек пользователя."),
     height: Optional[int] = Query(None, description="WB: высота этикетки в мм. Если не указано — из настроек пользователя."),
     db: Session = Depends(get_db),
@@ -1452,9 +1413,7 @@ async def get_order_label(
             headers={"Content-Disposition": f"inline; filename=label-{order.posting_number}.pdf"},
         )
     elif mp.type == MarketplaceType.WILDBERRIES:
-        # WB API возвращает SVG/PNG. PNG по умолчанию. При наложении цифр на штрихкод — попробуйте
-        # format=svg или размеры 40×30 в настройках печати (wb_width_mm, wb_height_mm).
-        sticker_type = format if format in ("svg", "png") else "png"
+        # WB API возвращает PNG. При наложении цифр на штрихкод — попробуйте размеры 40×30 в настройках.
         ps = db.query(PrintSettings).filter(PrintSettings.user_id == current_user.id).first()
         if width is None or height is None:
             w = (ps.wb_width_mm if ps else 58) or 58
@@ -1464,21 +1423,12 @@ async def get_order_label(
         async with WildberriesClient(api_key=api_key) as client:
             content = await client.get_order_label(
                 order.external_id,
-                sticker_type=sticker_type,
+                sticker_type="png",
                 width=w,
                 height=h,
             )
         order_num = order.posting_number or order.external_id or ""
-        if sticker_type == "svg":
-            try:
-                content = _wb_svg_sticker_to_pdf(content, label_width_mm=w, label_height_mm=h, order_number=order_num)
-            except Exception as svg_err:
-                logger.warning(f"WB SVG to PDF failed, fallback to PNG: {svg_err}")
-                async with WildberriesClient(api_key=api_key) as client:
-                    content = await client.get_order_label(order.external_id, sticker_type="png", width=w, height=h)
-                content = _wb_sticker_to_pdf(content, label_width_mm=w, label_height_mm=h, order_number=order_num)
-        else:
-            content = _wb_sticker_to_pdf(content, label_width_mm=w, label_height_mm=h, order_number=order_num)
+        content = _wb_sticker_to_pdf(content, label_width_mm=w, label_height_mm=h, order_number=order_num)
         # Поворот WB стикера (из настроек диспетчера)
         wb_rotate = (ps.wb_label_rotate or 0) if ps else 0
         if wb_rotate:
