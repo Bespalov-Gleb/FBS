@@ -486,8 +486,7 @@ def _ozon_fbs_to_standard_label(
             img = img.rotate(deg, expand=True)
             iw, ih = img.size
 
-        # Обрезаем: 1) белые поля; 2) правый край — там огромный номер от Ozon, он доминирует
-        # и делает основной код мелким. Оставляем центральную зону с QR/штрихкодом.
+        # Обрезаем только белые поля по краям. НЕ режем правый край — там 9234, ПВЗ.
         from PIL import Image as PILImage, ImageChops
         try:
             bg = PILImage.new(img.mode, img.size, img.getpixel((0, 0)))
@@ -496,21 +495,17 @@ def _ozon_fbs_to_standard_label(
             if bbox and (bbox[2] - bbox[0]) > 10 and (bbox[3] - bbox[1]) > 10:
                 img = img.crop(bbox)
                 iw, ih = img.size
-            # Отрезаем правый край (~15%) — огромный номер, обрезается при печати
-            trim_right = int(iw * 0.15)
-            if trim_right > 20:
-                img = img.crop((0, 0, iw - trim_right, ih))
-                iw, ih = img.size
         except Exception:
             pass
-        # Масштаб: вписать в страницу. Небольшой отступ сверху — принтер может обрезать.
-        _ozon_top_offset_mm = 2.0
-        usable_h = page_h - _ozon_top_offset_mm * mm
-        scale = min(page_w / iw, usable_h / ih)
+        # Масштаб: вписать с запасом 96% — чтобы верх (9234, ПВЗ) и низ (Упак:...) не обрезало
+        _ozon_margin = 0.04  # 4% запас со всех сторон
+        usable_w = page_w * (1 - _ozon_margin)
+        usable_h = page_h * (1 - _ozon_margin)
+        scale = min(usable_w / iw, usable_h / ih)
         draw_w = iw * scale
         draw_h = ih * scale
         x0 = (page_w - draw_w) / 2
-        y0 = _ozon_top_offset_mm * mm + max(0, (usable_h - draw_h) / 2)
+        y0 = (page_h - draw_h) / 2
 
         img_buf = io.BytesIO()
         img.save(img_buf, format="PNG")
