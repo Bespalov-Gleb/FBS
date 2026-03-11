@@ -795,34 +795,41 @@ class OzonClient(BaseMarketplaceClient):
     def _parse_tctable_size(raw_val: Any) -> Optional[str]:
         """
         Парсит значение атрибута «Размер» от Ozon.
-        tcTable = размерная сетка (все доступные размеры товара) — НЕ размер конкретного заказа.
-        Для заказа нужен размер из posting/fbs/get (dimensions.size_name).
-        Возвращает None для tcTable, чтобы сработал fallback на posting details.
-        Для простой строки — возвращает как есть.
+        tcTable / IcTable = размерная сетка (JSON-таблица) — НЕ размер заказа.
+        Возвращает None для таблиц, чтобы fallback брал размер из posting/fbs/get.
+        Простую строку ("48-50", "M") — возвращает как есть.
+        Сырой JSON/объект — никогда не возвращаем, только None.
         """
         if not raw_val:
             return None
         obj = raw_val
         if isinstance(raw_val, str):
             raw_val = raw_val.strip()
-            if not raw_val or "tcTable" not in raw_val:
-                return raw_val if raw_val and not raw_val.startswith("{") else None
-            try:
-                obj = json.loads(raw_val)
-            except json.JSONDecodeError:
+            # Сырой JSON или объект — не использовать как размер
+            if raw_val.startswith("{") or raw_val.startswith("["):
                 return None
+            if "tcTable" in raw_val or "IcTable" in raw_val or "table" in raw_val:
+                return None
+            return raw_val if raw_val else None
         if not isinstance(obj, dict):
-            return str(obj) if obj else None
+            return None
         content = obj.get("content")
-        if not isinstance(content, list) or not content:
+        if isinstance(content, list):
+            for item in content:
+                if not isinstance(item, dict):
+                    continue
+                wname = (item.get("widgetName") or "").lower()
+                # tcTable, IcTable — размерная сетка, не выбранный размер
+                if wname in ("tctable", "ictable"):
+                    return None
+                if "table" in item and isinstance(item.get("table"), dict):
+                    return None
+        if "table" in obj or "body" in obj or "Размерная сетка" in str(obj):
             return None
-        for item in content:
-            if not isinstance(item, dict) or item.get("widgetName") != "tcTable":
-                continue
-            # tcTable — это размерная сетка, а не выбранный размер заказа.
-            # Возвращаем None, чтобы get_product_sizes не подставил её,
-            # и сработал fallback на posting/fbs/get (dimensions.size_name).
-            return None
+        # Простое значение в обёртке
+        simple = obj.get("value") or obj.get("text")
+        if isinstance(simple, str) and simple.strip() and "{" not in simple:
+            return simple.strip()
         return None
 
     async def _get_category_size_attribute_id(
