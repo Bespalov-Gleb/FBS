@@ -441,59 +441,51 @@ def _ozon_fbs_to_standard_label(
     height_mm: int = 40,
 ) -> bytes:
     """
-    Привести PDF этикетки Ozon FBS к стандартному размеру и расположению,
-    как у штрихкода товара (58×40 мм). Уменьшает и центрирует на одной этикетке.
-    - Отступы по краям (как у ШК товара) — чтобы не обрезало при печати
-    - Масштабирование вписать в область этикетки
-    - При портретной ориентации источника — поворот в альбомную
+    Привести PDF этикетки Ozon FBS к стандартному размеру (58×40 мм).
+    Рендерим PDF в изображение (pdf2image), затем рисуем на целевой этикетке —
+    так избегаем проблем с pypdf merge и обрезанием.
     """
     import io
 
-    from pypdf import PdfReader, PdfWriter, Transformation
+    from pdf2image import convert_from_bytes
+    from reportlab.lib.units import mm
+    from reportlab.lib.utils import ImageReader
+    from reportlab.pdfgen import canvas
 
-    # Отступы как у штрихкода товара (margin 2 мм) — контент не прижат к краям
-    margin_mm = 2
-    inner_w_pt = (width_mm - 2 * margin_mm) * MM_TO_PT
-    inner_h_pt = (height_mm - 2 * margin_mm) * MM_TO_PT
-    target_w_pt = width_mm * MM_TO_PT
-    target_h_pt = height_mm * MM_TO_PT
+    images = convert_from_bytes(pdf_bytes, dpi=150, first_page=1, last_page=1)
+    if not images:
+        raise ValueError("Ozon FBS PDF produced no pages")
+    img = images[0]
+    iw, ih = img.size
+    if iw <= 0 or ih <= 0:
+        raise ValueError("Invalid Ozon FBS image dimensions")
 
-    reader = PdfReader(io.BytesIO(pdf_bytes))
-    writer = PdfWriter()
+    # Портрет → альбом (если этикетка 58×40 альбомная)
+    label_w = width_mm * mm
+    label_h = height_mm * mm
+    if ih > iw and label_w > label_h:
+        img = img.rotate(90, expand=True)
+        iw, ih = img.size
 
-    for page in reader.pages:
-        try:
-            page.transfer_rotation_to_content()
-        except Exception:
-            pass
-        mb = page.mediabox
-        src_w = float(mb.width)
-        src_h = float(mb.height)
-        if src_w <= 0 or src_h <= 0:
-            continue
+    margin = 2 * mm
+    inner_w = label_w - 2 * margin
+    inner_h = label_h - 2 * margin
 
-        # Если источник в портрете, а целевой формат альбомный — поворачиваем 90°
-        if src_h > src_w and target_w_pt > target_h_pt:
-            page = page.rotate(90)
-            src_w, src_h = src_h, src_w
-        elif src_w > src_h and target_h_pt > target_w_pt:
-            page = page.rotate(90)
-            src_w, src_h = src_h, src_w
+    # Масштаб: вписать в область с отступами
+    scale = min(inner_w / iw, inner_h / ih)
+    draw_w = iw * scale
+    draw_h = ih * scale
+    x0 = (label_w - draw_w) / 2
+    y0 = (label_h - draw_h) / 2
 
-        # Масштаб: вписать в внутреннюю область (с отступами), уменьшая при необходимости
-        scale = min(inner_w_pt / src_w, inner_h_pt / src_h)
-        scaled_w = src_w * scale
-        scaled_h = src_h * scale
-        # Центрирование по всей этикетке (как ШК товара)
-        tx = (target_w_pt - scaled_w) / 2
-        ty = (target_h_pt - scaled_h) / 2
-
-        blank = writer.add_blank_page(width=target_w_pt, height=target_h_pt)
-        op = Transformation().scale(sx=scale, sy=scale).translate(tx=tx, ty=ty)
-        blank.merge_transformed_page(page, op)
+    img_buf = io.BytesIO()
+    img.save(img_buf, format="PNG")
+    img_buf.seek(0)
 
     buf = io.BytesIO()
-    writer.write(buf)
+    c = canvas.Canvas(buf, pagesize=(label_w, label_h))
+    c.drawImage(ImageReader(img_buf), x0, y0, width=draw_w, height=draw_h, preserveAspectRatio=True)
+    c.save()
     buf.seek(0)
     return buf.getvalue()
 

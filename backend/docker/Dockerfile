@@ -36,9 +36,10 @@ RUN poetry install --no-dev --no-interaction --no-ansi
 # Stage 2: Runtime
 FROM python:3.11-slim
 
-# Установка runtime зависимостей
-RUN apt-get update && apt-get install -y \
+# Установка runtime зависимостей (libpq5, poppler для pdf2image — рендер Ozon FBS)
+RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
+    poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # Создание пользователя для запуска приложения
