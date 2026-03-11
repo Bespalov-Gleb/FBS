@@ -78,7 +78,7 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
   const [imageError, setImageError] = useState(false);
   const kizPrintedRef = useRef<Set<string>>(new Set());
   const kizInputRefs = useRef<(HTMLInputElement | null)[]>([]);
-  const kizDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const kizDebounceByCodeRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   const marketplace = order ? marketplaces.find((m) => m.id === order.marketplace_id) : null;
   const isKizRequired = order?.is_kiz_enabled ?? marketplace?.is_kiz_enabled ?? false;
@@ -91,6 +91,8 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
       setError(null);
       setImageError(false);
       kizPrintedRef.current = new Set();
+      kizDebounceByCodeRef.current.forEach((t) => clearTimeout(t));
+      kizDebounceByCodeRef.current.clear();
     }
   }, [order?.id]);
 
@@ -103,31 +105,38 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
   }, [order?.id, isKizRequired, isCompleted, kizCount]);
 
   // Автопечать дубля КИЗ после завершения ввода (debounce 500ms).
-  // Для каждого введённого кода — печатаем дубль, если ещё не печатали.
+  // order?.id вместо order — иначе при каждом ре-рендере родителя effect перезапускается и cleanup сбрасывает таймеры.
   useEffect(() => {
     if (!order || !isKizRequired || isCompleted || !autoPrintKizDuplicate) return;
+
     const trimmed = kizCodes.map((k) => k.trim()).filter(Boolean);
     if (!trimmed.length) return;
 
-    if (kizDebounceRef.current) clearTimeout(kizDebounceRef.current);
-    kizDebounceRef.current = setTimeout(() => {
-      trimmed.forEach((kizFull) => {
-        if (kizPrintedRef.current.has(kizFull)) return;
-        kizPrintedRef.current.add(kizFull);
-        ordersApi.getKizLabelBlob(kizFull).then(async (blob) => {
-          if (agentAvailable) {
-            await printViaAgent(blob, undefined, 'noscale');
-          } else {
-            openBlobInNewWindow(blob);
-          }
-        }).catch(() => {});
-      });
-    }, 500);
+    trimmed.forEach((kizFull) => {
+      const prev = kizDebounceByCodeRef.current.get(kizFull);
+      if (prev) clearTimeout(prev);
+      kizDebounceByCodeRef.current.set(
+        kizFull,
+        setTimeout(() => {
+          kizDebounceByCodeRef.current.delete(kizFull);
+          if (kizPrintedRef.current.has(kizFull)) return;
+          kizPrintedRef.current.add(kizFull);
+          ordersApi.getKizLabelBlob(kizFull).then(async (blob) => {
+            if (agentAvailable) {
+              await printViaAgent(blob, undefined, 'noscale');
+            } else {
+              openBlobInNewWindow(blob);
+            }
+          }).catch(() => {});
+        }, 500),
+      );
+    });
 
     return () => {
-      if (kizDebounceRef.current) clearTimeout(kizDebounceRef.current);
+      kizDebounceByCodeRef.current.forEach((t) => clearTimeout(t));
+      kizDebounceByCodeRef.current.clear();
     };
-  }, [order, kizCodes, isKizRequired, isCompleted, autoPrintKizDuplicate, agentAvailable]);
+  }, [order?.id, kizCodes, isKizRequired, isCompleted, autoPrintKizDuplicate, agentAvailable]);
 
   if (!order) return null;
 
