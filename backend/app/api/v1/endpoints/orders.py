@@ -1413,11 +1413,16 @@ async def get_order_label(
         try:
             content = _ozon_fbs_to_standard_label(content, width_mm=w_mm, height_mm=h_mm)
         except Exception as _re:
-            logger.warning(f"Ozon FBS to standard label failed: {_re}")
+            logger.warning("Ozon FBS to standard label failed: %s", _re, exc_info=True)
+            # При ошибке отдаём исходный PDF — layout не меняется
         return Response(
             content=content,
             media_type="application/pdf",
-            headers={"Content-Disposition": f"inline; filename=label-{order.posting_number}.pdf"},
+            headers={
+                "Content-Disposition": f"inline; filename=label-{order.posting_number}.pdf",
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+            },
         )
     elif mp.type == MarketplaceType.WILDBERRIES:
         # WB API возвращает PNG. При наложении цифр на штрихкод — попробуйте размеры 40×30 в настройках.

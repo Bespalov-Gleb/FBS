@@ -114,7 +114,7 @@ export const ordersApi = {
   },
 
   getLabelBlob: async (id: number, format = 'pdf', labelWidth?: number, labelHeight?: number): Promise<Blob> => {
-    const params: Record<string, string | number> = { format };
+    const params: Record<string, string | number> = { format, _: Date.now() };
     if (labelWidth) params.width = labelWidth;
     if (labelHeight) params.height = labelHeight;
     const { data } = await apiClient.get(`/orders/${id}/label`, {
