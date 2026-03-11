@@ -1082,11 +1082,13 @@ def _wb_sticker_to_pdf(
     label_height_mm: int = 40,
     order_number: str | None = None,
     rotate: int = 90,
+    top_margin_mm: float = 4.0,
 ) -> bytes:
     """
     Конвертировать PNG-стикер WB в PDF для печати (размер 58×40 мм).
     WB присылает «высокую» этикетку — поворачиваем на 90° для широкой 58×40.
     rotate: 0/90/180/270 — поворот изображения ДО вставки в PDF.
+    top_margin_mm: отступ сверху (мм), чтобы верх не обрезался при печати.
     """
     import io
 
@@ -1112,7 +1114,8 @@ def _wb_sticker_to_pdf(
     draw_w = iw * scale
     draw_h = ih * scale
     x0 = (label_w - draw_w) / 2
-    y0 = (label_h - draw_h) / 2
+    # Сдвиг вниз на top_margin_mm — избегаем обрезки верха при печати
+    y0 = max(2 * mm, (label_h - draw_h) / 2 - top_margin_mm * mm)
     img_buf = io.BytesIO()
     img.save(img_buf, format="PNG")
     img_buf.seek(0)
