@@ -445,54 +445,52 @@ def _ozon_fbs_to_standard_label(
     pdf_bytes: bytes,
     width_mm: int = 58,
     height_mm: int = 40,
-    rotate: int = 90,
 ) -> bytes:
     """
     Привести PDF этикетки Ozon FBS к стандартному размеру (58×40 мм).
     Ozon возвращает этикетку «высокой» — поворачиваем на 90° для широкой 58×40.
-    rotate: 0/90/180/270 — поворот изображения ДО вставки в PDF (сохраняет страницу 58×40).
+    Использует pypdf (без poppler) — как в оригинальной рабочей реализации.
     """
     import io
 
-    from pdf2image import convert_from_bytes
-    from reportlab.lib.units import mm
-    from reportlab.lib.utils import ImageReader
-    from reportlab.pdfgen import canvas
+    from pypdf import PdfReader, PdfWriter, Transformation
 
-    images = convert_from_bytes(pdf_bytes, dpi=150, first_page=1, last_page=1)
-    if not images:
-        raise ValueError("Ozon FBS PDF produced no pages")
-    img = images[0]
-    iw, ih = img.size
-    if iw <= 0 or ih <= 0:
-        raise ValueError("Invalid Ozon FBS image dimensions")
+    reader = PdfReader(io.BytesIO(pdf_bytes))
+    writer = PdfWriter()
+    target_w_pt = width_mm * MM_TO_PT
+    target_h_pt = height_mm * MM_TO_PT
 
-    # Поворот: Ozon присылает «высокую» этикетку, нужна «широкая» 58×40. PIL: -90 = по часовой.
-    label_w = width_mm * mm
-    label_h = height_mm * mm
-    if rotate and rotate % 90 == 0:
-        img = img.rotate(-int(rotate), expand=True)  # по часовой для термоэтикетки
-        iw, ih = img.size
+    for page in reader.pages:
+        try:
+            page.transfer_rotation_to_content()
+        except Exception:
+            pass
+        mb = page.mediabox
+        src_w = float(mb.width)
+        src_h = float(mb.height)
+        if src_w <= 0 or src_h <= 0:
+            continue
 
-    margin = 2 * mm
-    inner_w = label_w - 2 * margin
-    inner_h = label_h - 2 * margin
+        # Если источник в портрете (высота > ширины), а целевой формат альбомный — поворачиваем 90°
+        if src_h > src_w and target_w_pt > target_h_pt:
+            page = page.rotate(90)
+            src_w, src_h = src_h, src_w
+        elif src_w > src_h and target_h_pt > target_w_pt:
+            page = page.rotate(90)
+            src_w, src_h = src_h, src_w
 
-    # Масштаб: вписать в область с отступами
-    scale = min(inner_w / iw, inner_h / ih)
-    draw_w = iw * scale
-    draw_h = ih * scale
-    x0 = (label_w - draw_w) / 2
-    y0 = (label_h - draw_h) / 2
+        scale = min(target_w_pt / src_w, target_h_pt / src_h)
+        scaled_w = src_w * scale
+        scaled_h = src_h * scale
+        tx = (target_w_pt - scaled_w) / 2
+        ty = (target_h_pt - scaled_h) / 2
 
-    img_buf = io.BytesIO()
-    img.save(img_buf, format="PNG")
-    img_buf.seek(0)
+        blank = writer.add_blank_page(width=target_w_pt, height=target_h_pt)
+        op = Transformation().scale(sx=scale, sy=scale).translate(tx=tx, ty=ty)
+        blank.merge_transformed_page(page, op)
 
     buf = io.BytesIO()
-    c = canvas.Canvas(buf, pagesize=(label_w, label_h))
-    c.drawImage(ImageReader(img_buf), x0, y0, width=draw_w, height=draw_h, preserveAspectRatio=True)
-    c.save()
+    writer.write(buf)
     buf.seek(0)
     return buf.getvalue()
 
@@ -1431,35 +1429,17 @@ async def get_order_label(
                     detail="Заказ уже отгружен в Ozon. Этикетка недоступна. Обновите список заказов.",
                 )
             raise
-        # Привести Ozon FBS к формату ШК товара: размер и поворот из настроек (90° = широкий вид для 58×40)
+        # Привести Ozon FBS к формату 58×40 мм (оригинальная логика pypdf: авто-поворот по размеру)
         try:
             _ps = db.query(PrintSettings).filter(PrintSettings.user_id == current_user.id).first()
             w_mm = (_ps.ozon_width_mm or 58) if _ps else 58
             h_mm = (_ps.ozon_height_mm or 40) if _ps else 40
-            raw_rotate = _ps.ozon_label_rotate if _ps else None
-            try:
-                ozon_rotate = int(raw_rotate) if raw_rotate is not None else 90
-            except (TypeError, ValueError):
-                ozon_rotate = 90
-            if ozon_rotate not in (0, 90, 180, 270):
-                ozon_rotate = 90
         except Exception:
             w_mm, h_mm = 58, 40
-            ozon_rotate = 90
-        rotate_deg = ozon_rotate or 90
         try:
-            content = _ozon_fbs_to_standard_label(
-                content, width_mm=w_mm, height_mm=h_mm, rotate=rotate_deg
-            )
-            logger.info("Ozon label: rotated via pdf2image, rotate=%s", rotate_deg)
+            content = _ozon_fbs_to_standard_label(content, width_mm=w_mm, height_mm=h_mm)
         except Exception as _re:
             logger.warning("Ozon FBS to standard label failed: %s", _re, exc_info=True)
-            # Fallback: повернуть PDF через pypdf (без poppler) — хотя бы ориентация будет правильной
-            try:
-                content = _rotate_pdf(content, rotate_deg)
-                logger.info("Ozon label: fallback rotate via pypdf, rotate=%s", rotate_deg)
-            except Exception as _re2:
-                logger.warning("Ozon PDF rotate fallback also failed: %s", _re2)
         return Response(
             content=content,
             media_type="application/pdf",
