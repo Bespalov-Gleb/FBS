@@ -1436,17 +1436,30 @@ async def get_order_label(
             _ps = db.query(PrintSettings).filter(PrintSettings.user_id == current_user.id).first()
             w_mm = (_ps.ozon_width_mm or 58) if _ps else 58
             h_mm = (_ps.ozon_height_mm or 40) if _ps else 40
-            ozon_rotate = _ps.ozon_label_rotate if _ps else 0
+            raw_rotate = _ps.ozon_label_rotate if _ps else None
+            try:
+                ozon_rotate = int(raw_rotate) if raw_rotate is not None else 90
+            except (TypeError, ValueError):
+                ozon_rotate = 90
+            if ozon_rotate not in (0, 90, 180, 270):
+                ozon_rotate = 90
         except Exception:
             w_mm, h_mm = 58, 40
             ozon_rotate = 90
+        rotate_deg = ozon_rotate or 90
         try:
             content = _ozon_fbs_to_standard_label(
-                content, width_mm=w_mm, height_mm=h_mm, rotate=ozon_rotate or 90
+                content, width_mm=w_mm, height_mm=h_mm, rotate=rotate_deg
             )
+            logger.info("Ozon label: rotated via pdf2image, rotate=%s", rotate_deg)
         except Exception as _re:
             logger.warning("Ozon FBS to standard label failed: %s", _re, exc_info=True)
-            # При ошибке отдаём исходный PDF — layout не меняется
+            # Fallback: повернуть PDF через pypdf (без poppler) — хотя бы ориентация будет правильной
+            try:
+                content = _rotate_pdf(content, rotate_deg)
+                logger.info("Ozon label: fallback rotate via pypdf, rotate=%s", rotate_deg)
+            except Exception as _re2:
+                logger.warning("Ozon PDF rotate fallback also failed: %s", _re2)
         return Response(
             content=content,
             media_type="application/pdf",
