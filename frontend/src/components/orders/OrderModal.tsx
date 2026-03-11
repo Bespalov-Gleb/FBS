@@ -78,7 +78,8 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
   const [imageError, setImageError] = useState(false);
   const kizPrintedRef = useRef<Set<string>>(new Set());
   const kizInputRefs = useRef<(HTMLInputElement | null)[]>([]);
-  const kizDebounceByCodeRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const kizDebounceByIndexRef = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
+  const prevKizValuesRef = useRef<string[]>([]);
 
   const marketplace = order ? marketplaces.find((m) => m.id === order.marketplace_id) : null;
   const isKizRequired = order?.is_kiz_enabled ?? marketplace?.is_kiz_enabled ?? false;
@@ -91,8 +92,9 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
       setError(null);
       setImageError(false);
       kizPrintedRef.current = new Set();
-      kizDebounceByCodeRef.current.forEach((t) => clearTimeout(t));
-      kizDebounceByCodeRef.current.clear();
+      kizDebounceByIndexRef.current.forEach((t) => clearTimeout(t));
+      kizDebounceByIndexRef.current.clear();
+      prevKizValuesRef.current = [];
     }
   }, [order?.id]);
 
@@ -104,21 +106,37 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
     }
   }, [order?.id, isKizRequired, isCompleted, kizCount]);
 
-  // Автопечать дубля КИЗ после завершения ввода (debounce 500ms).
-  // order?.id вместо order — иначе при каждом ре-рендере родителя effect перезапускается и cleanup сбрасывает таймеры.
+  // Очистка таймеров только при размонтировании
+  useEffect(
+    () => () => {
+      kizDebounceByIndexRef.current.forEach((t) => clearTimeout(t));
+      kizDebounceByIndexRef.current.clear();
+    },
+    [],
+  );
+
+  // Автопечать дубля КИЗ (debounce 500ms). Таймер по индексу поля — ввод во 2-е не сбрасывает 1-е.
   useEffect(() => {
     if (!order || !isKizRequired || isCompleted || !autoPrintKizDuplicate) return;
 
-    const trimmed = kizCodes.map((k) => k.trim()).filter(Boolean);
-    if (!trimmed.length) return;
-
-    trimmed.forEach((kizFull) => {
-      const prev = kizDebounceByCodeRef.current.get(kizFull);
-      if (prev) clearTimeout(prev);
-      kizDebounceByCodeRef.current.set(
-        kizFull,
+    const prev = prevKizValuesRef.current;
+    kizCodes.forEach((raw, i) => {
+      const kizFull = raw.trim();
+      if (!kizFull) {
+        const t = kizDebounceByIndexRef.current.get(i);
+        if (t) {
+          clearTimeout(t);
+          kizDebounceByIndexRef.current.delete(i);
+        }
+        return;
+      }
+      if (prev[i] === kizFull) return;
+      const t = kizDebounceByIndexRef.current.get(i);
+      if (t) clearTimeout(t);
+      kizDebounceByIndexRef.current.set(
+        i,
         setTimeout(() => {
-          kizDebounceByCodeRef.current.delete(kizFull);
+          kizDebounceByIndexRef.current.delete(i);
           if (kizPrintedRef.current.has(kizFull)) return;
           kizPrintedRef.current.add(kizFull);
           ordersApi.getKizLabelBlob(kizFull).then(async (blob) => {
@@ -131,11 +149,7 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
         }, 500),
       );
     });
-
-    return () => {
-      kizDebounceByCodeRef.current.forEach((t) => clearTimeout(t));
-      kizDebounceByCodeRef.current.clear();
-    };
+    prevKizValuesRef.current = [...kizCodes];
   }, [order?.id, kizCodes, isKizRequired, isCompleted, autoPrintKizDuplicate, agentAvailable]);
 
   if (!order) return null;
