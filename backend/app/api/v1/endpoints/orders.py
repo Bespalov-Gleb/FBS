@@ -458,13 +458,15 @@ def _ozon_fbs_to_standard_label(
     from reportlab.lib.utils import ImageReader
     from reportlab.pdfgen import canvas
 
-    images = convert_from_bytes(pdf_bytes, dpi=150)
+    images = convert_from_bytes(pdf_bytes, dpi=200)
     if not images:
         raise ValueError("PDF returned no pages")
 
-    # Книжная ориентация: 40 ширина × 58 высота (как стикер в принтере)
-    page_w = min(width_mm, height_mm) * mm
-    page_h = max(width_mm, height_mm) * mm
+    # Книжная ориентация: 40×58 мм. Страницу делаем ~88% — при "fit" принтер масштабирует
+    # вверх на стикер, печать получается крупнее (в PDF выглядит ок, на принтере было мелко).
+    _print_scale = 0.88
+    page_w = min(width_mm, height_mm) * _print_scale * mm
+    page_h = max(width_mm, height_mm) * _print_scale * mm
 
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=(page_w, page_h))
@@ -484,7 +486,8 @@ def _ozon_fbs_to_standard_label(
             img = img.rotate(deg, expand=True)
             iw, ih = img.size
 
-        # Обрезаем белые поля — контент займёт больше места, будет крупнее
+        # Обрезаем: 1) белые поля; 2) правый край — там огромный номер от Ozon, он доминирует
+        # и делает основной код мелким. Оставляем центральную зону с QR/штрихкодом.
         from PIL import Image as PILImage, ImageChops
         try:
             bg = PILImage.new(img.mode, img.size, img.getpixel((0, 0)))
@@ -493,14 +496,21 @@ def _ozon_fbs_to_standard_label(
             if bbox and (bbox[2] - bbox[0]) > 10 and (bbox[3] - bbox[1]) > 10:
                 img = img.crop(bbox)
                 iw, ih = img.size
+            # Отрезаем правый край (~15%) — огромный номер, обрезается при печати
+            trim_right = int(iw * 0.15)
+            if trim_right > 20:
+                img = img.crop((0, 0, iw - trim_right, ih))
+                iw, ih = img.size
         except Exception:
             pass
-        # Масштаб: максимум вписать в страницу (крупнее, без выхода за границы)
-        scale = min(page_w / iw, page_h / ih)
+        # Масштаб: вписать в страницу. Небольшой отступ сверху — принтер может обрезать.
+        _ozon_top_offset_mm = 2.0
+        usable_h = page_h - _ozon_top_offset_mm * mm
+        scale = min(page_w / iw, usable_h / ih)
         draw_w = iw * scale
         draw_h = ih * scale
         x0 = (page_w - draw_w) / 2
-        y0 = (page_h - draw_h) / 2
+        y0 = _ozon_top_offset_mm * mm + max(0, (usable_h - draw_h) / 2)
 
         img_buf = io.BytesIO()
         img.save(img_buf, format="PNG")
