@@ -205,12 +205,12 @@ export default function AssemblyPage() {
         const wbWidth = printSettings?.wb_labels?.width_mm ?? (printSettings?.label_format === '80mm' ? 80 : 58);
         const wbHeight = printSettings?.wb_labels?.height_mm ?? 40;
         try {
-          // Ozon: PDF с обоими штрихкодами (товар + ШК ФБС) — качественная печать
-          // WB: без отдельного штрихкода товара
-          const barcodesBlob =
-            order.marketplace_type === 'ozon'
-              ? await ordersApi.getBarcodesPdfBlob(order.id, ozonWidth)
-              : null;
+          // Штрихкод товара: Ozon и WB (если skus есть в заказе)
+          const labelWidthForBarcode =
+            order.marketplace_type === 'ozon' ? ozonWidth : wbWidth;
+          const barcodesBlob = await ordersApi
+            .getBarcodesPdfBlob(order.id, labelWidthForBarcode)
+            .catch(() => null);
           const labelBlob = await ordersApi.getLabelBlob(
             order.id,
             labelFormat,

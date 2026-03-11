@@ -416,18 +416,71 @@ def kiz_export(
     )
 
 
+MM_TO_PT = 2.834645669  # 1 мм = 2.834645669 pt (PDF points)
+
+
+def _ozon_fbs_to_standard_label(
+    pdf_bytes: bytes,
+    width_mm: int = 58,
+    height_mm: int = 40,
+) -> bytes:
+    """
+    Привести PDF этикетки Ozon FBS к стандартному размеру и расположению,
+    как у штрихкода товара (58×40 или заданные мм).
+    Масштабирует и центрирует контент, при портретной ориентации — поворачивает в альбомную.
+    """
+    import io
+
+    from pypdf import PdfReader, PdfWriter, Transformation
+
+    reader = PdfReader(io.BytesIO(pdf_bytes))
+    writer = PdfWriter()
+    target_w_pt = width_mm * MM_TO_PT
+    target_h_pt = height_mm * MM_TO_PT
+
+    for page in reader.pages:
+        mb = page.mediabox
+        src_w = float(mb.width)
+        src_h = float(mb.height)
+        if src_w <= 0 or src_h <= 0:
+            continue
+
+        # Если источник в портрете (высота > ширины), а целевой формат альбомный — поворачиваем 90°
+        if src_h > src_w and target_w_pt > target_h_pt:
+            page = page.rotate(90)
+            src_w, src_h = src_h, src_w
+        elif src_w > src_h and target_h_pt > target_w_pt:
+            page = page.rotate(90)
+            src_w, src_h = src_h, src_w
+
+        scale = min(target_w_pt / src_w, target_h_pt / src_h, 1.0)
+        scaled_w = src_w * scale
+        scaled_h = src_h * scale
+        tx = (target_w_pt - scaled_w) / 2
+        ty = (target_h_pt - scaled_h) / 2
+
+        blank = writer.add_blank_page(width=target_w_pt, height=target_h_pt)
+        op = Transformation().scale(sx=scale, sy=scale).translate(tx=tx, ty=ty)
+        blank.merge_transformed_page(page, op)
+
+    buf = io.BytesIO()
+    writer.write(buf)
+    buf.seek(0)
+    return buf.getvalue()
+
+
 def _rotate_pdf(pdf_bytes: bytes, degrees: int) -> bytes:
     """Повернуть все страницы PDF на degrees градусов (0/90/180/270)."""
     if not degrees or degrees % 90 != 0:
         return pdf_bytes
     import io
+
     from pypdf import PdfReader, PdfWriter
 
     reader = PdfReader(io.BytesIO(pdf_bytes))
     writer = PdfWriter()
     for page in reader.pages:
-        page.rotate(degrees)
-        writer.add_page(page)
+        writer.add_page(page.rotate(degrees))  # rotate() возвращает новую страницу
     buf = io.BytesIO()
     writer.write(buf)
     buf.seek(0)
@@ -1299,18 +1352,17 @@ async def get_order_label(
                     detail="Заказ уже отгружен в Ozon. Этикетка недоступна. Обновите список заказов.",
                 )
             raise
-        # Поворот Ozon FBS этикетки (из настроек диспетчера)
-        rotate = 0
+        # Привести Ozon FBS к формату ШК товара: размер и ориентация из настроек
         try:
             _ps = db.query(PrintSettings).filter(PrintSettings.user_id == current_user.id).first()
-            rotate = (_ps.ozon_label_rotate or 0) if _ps else 0
+            w_mm = (_ps.ozon_width_mm or 58) if _ps else 58
+            h_mm = (_ps.ozon_height_mm or 40) if _ps else 40
         except Exception:
-            pass
-        if rotate:
-            try:
-                content = _rotate_pdf(content, rotate)
-            except Exception as _re:
-                logger.warning(f"PDF rotate failed: {_re}")
+            w_mm, h_mm = 58, 40
+        try:
+            content = _ozon_fbs_to_standard_label(content, width_mm=w_mm, height_mm=h_mm)
+        except Exception as _re:
+            logger.warning(f"Ozon FBS to standard label failed: {_re}")
         return Response(
             content=content,
             media_type="application/pdf",

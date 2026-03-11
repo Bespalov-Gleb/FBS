@@ -794,8 +794,11 @@ class OzonClient(BaseMarketplaceClient):
     @staticmethod
     def _parse_tctable_size(raw_val: Any) -> Optional[str]:
         """
-        Парсит значение атрибута «Размер» от Ozon, когда оно приходит как tcTable (размерная сетка).
-        Возвращает читаемую строку вместо сырого JSON.
+        Парсит значение атрибута «Размер» от Ozon.
+        tcTable = размерная сетка (все доступные размеры товара) — НЕ размер конкретного заказа.
+        Для заказа нужен размер из posting/fbs/get (dimensions.size_name).
+        Возвращает None для tcTable, чтобы сработал fallback на posting details.
+        Для простой строки — возвращает как есть.
         """
         if not raw_val:
             return None
@@ -816,23 +819,10 @@ class OzonClient(BaseMarketplaceClient):
         for item in content:
             if not isinstance(item, dict) or item.get("widgetName") != "tcTable":
                 continue
-            table = item.get("table")
-            if not isinstance(table, dict):
-                continue
-            title = table.get("title") or "Размерная сетка"
-            body = table.get("body") or []
-            for row in body:
-                if not isinstance(row, dict):
-                    continue
-                data = row.get("data")
-                if isinstance(data, list) and len(data) >= 2:
-                    label = str(data[0] or "").lower()
-                    vals = [str(v) for v in data[1:7] if v]
-                    if "международный" in label and vals:
-                        return f"{title}: {', '.join(vals)}"
-                    if "российский" in label and vals:
-                        return f"{title}: {', '.join(vals)}"
-            return title
+            # tcTable — это размерная сетка, а не выбранный размер заказа.
+            # Возвращаем None, чтобы get_product_sizes не подставил её,
+            # и сработал fallback на posting/fbs/get (dimensions.size_name).
+            return None
         return None
 
     async def _get_category_size_attribute_id(
