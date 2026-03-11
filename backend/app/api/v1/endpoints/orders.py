@@ -448,7 +448,8 @@ def _ozon_fbs_to_standard_label(
     rotate: int = 90,
 ) -> bytes:
     """
-    Этикетка Ozon FBS: как WB — PDF в изображение, ориентируем, страница 58×40 мм.
+    Этикетка Ozon FBS: как ШК товаров — страница 40×58 мм (книжная), контент повёрнут и вписан.
+    Логика как у WB: изображение → поворот → масштаб → один стикер.
     """
     import io
 
@@ -461,8 +462,9 @@ def _ozon_fbs_to_standard_label(
     if not images:
         raise ValueError("PDF returned no pages")
 
-    page_w = width_mm * mm
-    page_h = height_mm * mm
+    # Книжная ориентация: 40 ширина × 58 высота (как стикер в принтере)
+    page_w = min(width_mm, height_mm) * mm
+    page_h = max(width_mm, height_mm) * mm
 
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=(page_w, page_h))
@@ -475,19 +477,14 @@ def _ozon_fbs_to_standard_label(
         if iw <= 0 or ih <= 0:
             continue
 
-        # Ориентируем: широкая этикетка (58×40), как WB
-        target_landscape = width_mm > height_mm
+        # Ozon присылает портрет (высокий) — крутим 90° чтобы вписать в книжную 40×58
         img_portrait = ih > iw
-        if target_landscape and img_portrait:
+        if img_portrait:
             deg = rotate if (rotate and rotate % 90 == 0) else 90
             img = img.rotate(deg, expand=True)
             iw, ih = img.size
-        elif not target_landscape and not img_portrait:
-            if rotate and rotate % 90 == 0:
-                img = img.rotate(rotate, expand=True)
-                iw, ih = img.size
 
-        # Масштаб: вписать в 58×40
+        # Масштаб: вписать в страницу, не обрезая
         scale = min(page_w / iw, page_h / ih, 1.0)
         draw_w = iw * scale
         draw_h = ih * scale
