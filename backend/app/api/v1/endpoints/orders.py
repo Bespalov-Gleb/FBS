@@ -841,14 +841,30 @@ def _wrap_text(text: str, max_chars: int = 28) -> list[str]:
     return lines
 
 
-def _create_barcode_drawing(code: str, bar_width: float = 0.25):
-    """Создать Drawing со штрихкодом (reportlab). EAN13 для 13 цифр, иначе Code128."""
+def _create_barcode_drawing(code: str, bar_width: float = 0.25, hide_text: bool = False):
+    """
+    Создать Drawing со штрихкодом (reportlab). EAN13 для 13 цифр, иначе Code128.
+    hide_text: для EAN13 убрать встроенные цифры (чтобы рисовать свои с нужным отступом).
+    """
     from reportlab.graphics.barcode import createBarcodeDrawing
 
     code = str(code).strip()
     if len(code) == 13 and code.isdigit():
-        return createBarcodeDrawing("EAN13", value=code[:12], barWidth=bar_width)
+        kwargs: dict = {"value": code[:12], "barWidth": bar_width}
+        if hide_text:
+            kwargs["humanReadable"] = 0
+        try:
+            return createBarcodeDrawing("EAN13", **kwargs)
+        except TypeError:
+            kwargs.pop("humanReadable", None)
+            return createBarcodeDrawing("EAN13", **kwargs)
     return createBarcodeDrawing("Code128", value=code, barWidth=bar_width)
+
+
+def _is_ean13(code: str) -> bool:
+    """EAN13: 13 цифр (WB). OZN — не EAN13."""
+    s = str(code).strip()
+    return len(s) == 13 and s.isdigit()
 
 
 def _generate_product_barcode_pdf(
@@ -857,7 +873,8 @@ def _generate_product_barcode_pdf(
     label_width_mm: int = 58,
 ) -> bytes:
     """
-    Штрихкод товара (Ozon): большой штрихкод + OZN-код. Без названия.
+    Штрихкод товара: Ozon (OZN+SKU) или WB (EAN13).
+    EAN13: без встроенных цифр — рисуем свой текст с отступом (избегаем наложения).
     """
     import io
 
@@ -866,8 +883,13 @@ def _generate_product_barcode_pdf(
     from reportlab.pdfgen import canvas
 
     display_code = ozn_code or barcode_value
+    is_ean = _is_ean13(barcode_value)
+    # EAN13: скрываем встроенные цифры, рисуем свои с отступом
+    bc_product = _create_barcode_drawing(barcode_value, bar_width=0.4, hide_text=is_ean)
+    bw1, bh1 = bc_product.width, bc_product.height
+
     label_w = label_width_mm * mm
-    label_h = 45 * mm  # чуть выше для отступа между штрихкодом и кодом
+    label_h = 45 * mm
     pagesize = (label_w, label_h)
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=pagesize)
@@ -876,9 +898,6 @@ def _generate_product_barcode_pdf(
     x0 = margin
     y0 = h - margin
 
-    # Большой штрихкод — занимает почти всю ширину, чуть больше
-    bc_product = _create_barcode_drawing(barcode_value, bar_width=0.4)
-    bw1, bh1 = bc_product.width, bc_product.height
     scale1 = min((label_w - 2 * margin) / bw1, 25 * mm / bh1, 2.2)
     c.saveState()
     c.translate(x0 + (label_w - bw1 * scale1) / 2, y0 - bh1 * scale1 - 2 * mm)
@@ -886,8 +905,8 @@ def _generate_product_barcode_pdf(
     renderPDF.draw(bc_product, c, 0, 0)
     c.restoreState()
 
-    # Отступ 6 мм между штрихкодом и OZN-кодом, чтобы не налезал
-    ty = y0 - bh1 * scale1 - 8 * mm
+    # Отступ 10 мм между штрихкодом и цифрами (для EAN13 важнее — избежать наложения)
+    ty = y0 - bh1 * scale1 - 10 * mm
     c.setFont("Helvetica-Bold", 10)
     c.drawCentredString(x0 + label_w / 2, ty, str(display_code)[:20])
 
@@ -927,19 +946,19 @@ def _generate_multi_product_barcode_pdf(
         if i > 0:
             c.showPage()
         display_code = ozn_code or barcode_value
-        h = label_h
-        y0 = h - margin
-
-        bc_product = _create_barcode_drawing(barcode_value, bar_width=0.4)
+        is_ean = _is_ean13(barcode_value)
+        bc_product = _create_barcode_drawing(barcode_value, bar_width=0.4, hide_text=is_ean)
         bw1, bh1 = bc_product.width, bc_product.height
         scale1 = min((label_w - 2 * margin) / bw1, 25 * mm / bh1, 2.2)
+        h = label_h
+        y0 = h - margin
         c.saveState()
         c.translate(x0 + (label_w - bw1 * scale1) / 2, y0 - bh1 * scale1 - 2 * mm)
         c.scale(scale1, scale1)
         renderPDF.draw(bc_product, c, 0, 0)
         c.restoreState()
 
-        ty = y0 - bh1 * scale1 - 8 * mm
+        ty = y0 - bh1 * scale1 - 10 * mm
         c.setFont("Helvetica-Bold", 10)
         c.drawCentredString(x0 + label_w / 2, ty, str(display_code)[:20])
 
@@ -1273,7 +1292,10 @@ async def get_order_barcodes_pdf(
     if label_width is None:
         label_width = (ps_barcode.ozon_width_mm or 58) if ps_barcode else 58
     pdf_bytes = _generate_multi_product_barcode_pdf(items, label_width_mm=label_width)
-    barcode_rotate = (ps_barcode.barcode_rotate or 0) if ps_barcode else 0
+    # Поворот только для Ozon (OZN-штрихкоды). WB EAN13 — стандартная ориентация для термоэтикеток
+    barcode_rotate = 0
+    if mp.type == MarketplaceType.OZON and ps_barcode:
+        barcode_rotate = ps_barcode.barcode_rotate or 0
     if barcode_rotate:
         try:
             pdf_bytes = _rotate_pdf(pdf_bytes, barcode_rotate)
