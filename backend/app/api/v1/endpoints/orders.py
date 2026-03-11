@@ -477,18 +477,18 @@ def _ozon_fbs_to_standard_label(
         if iw <= 0 or ih <= 0:
             continue
 
-        # Поворот: этикетка должна быть ШИРОКАЯ (58) × НИЗКАЯ (40). rotate из настроек или авто по соотношению.
-        if rotate and rotate % 90 == 0:
-            img = img.rotate(rotate, expand=True)
-            iw, ih = img.size
-        else:
-            target_landscape = width_mm > height_mm
-            img_portrait = ih > iw
-            if img_portrait and target_landscape:
-                img = img.rotate(90, expand=True)
+        # Цель: ШИРОКАЯ (58) × НИЗКАЯ (40). Для целевого альбома — всегда rotate° (по умолч. 90).
+        target_landscape = width_mm > height_mm
+        img_portrait = ih > iw
+        if target_landscape:
+            # Нужен альбом: портрет → крутим; если уже альбом — крутим по настройке (0 = не крутить)
+            if img_portrait:
+                deg = rotate if (rotate and rotate % 90 == 0) else 90
+                img = img.rotate(deg, expand=True)
                 iw, ih = img.size
-            elif not img_portrait and not target_landscape:
-                img = img.rotate(90, expand=True)
+        elif not target_landscape and not img_portrait:
+            if rotate and rotate % 90 == 0:
+                img = img.rotate(rotate, expand=True)
                 iw, ih = img.size
 
         scale = min(target_w / iw, target_h / ih, 1.0)
@@ -1446,11 +1446,13 @@ async def get_order_label(
                     detail="Заказ уже отгружен в Ozon. Этикетка недоступна. Обновите список заказов.",
                 )
             raise
-        # Привести Ozon FBS к формату 58×40 мм (широкая × низкая). Поворот из настроек.
+        # Привести Ozon FBS к формату 58×40 мм (широкая × низкая). Ориентация: большая сторона = ширина.
         try:
             _ps = db.query(PrintSettings).filter(PrintSettings.user_id == current_user.id).first()
             w_mm = (_ps.ozon_width_mm or 58) if _ps else 58
             h_mm = (_ps.ozon_height_mm or 40) if _ps else 40
+            if h_mm > w_mm:
+                w_mm, h_mm = h_mm, w_mm  # 40×58 → 58×40 (широкая этикетка)
             ozon_rot = (_ps.ozon_label_rotate or 90) if _ps else 90
         except Exception:
             w_mm, h_mm, ozon_rot = 58, 40, 90
