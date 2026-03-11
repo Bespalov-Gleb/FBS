@@ -447,9 +447,8 @@ def _ozon_fbs_to_standard_label(
     height_mm: int = 40,
 ) -> bytes:
     """
-    Привести PDF этикетки Ozon FBS к стандартному размеру (58×40 мм).
-    Ozon возвращает этикетку «высокой» — поворачиваем на 90° для широкой 58×40.
-    Использует pypdf (без poppler) — как в оригинальной рабочей реализации.
+    Привести PDF этикетки Ozon FBS к формату 58×40 мм.
+    Лист = этикетка: страница PDF ровно width_mm × height_mm.
     """
     import io
 
@@ -471,7 +470,7 @@ def _ozon_fbs_to_standard_label(
         if src_w <= 0 or src_h <= 0:
             continue
 
-        # Если источник в портрете (высота > ширины), а целевой формат альбомный — поворачиваем 90°
+        # Повернуть, если портрет при целевом альбоме
         if src_h > src_w and target_w_pt > target_h_pt:
             page = page.rotate(90)
             src_w, src_h = src_h, src_w
@@ -479,12 +478,14 @@ def _ozon_fbs_to_standard_label(
             page = page.rotate(90)
             src_w, src_h = src_h, src_w
 
+        # Масштаб: вписать в целевой размер
         scale = min(target_w_pt / src_w, target_h_pt / src_h)
         scaled_w = src_w * scale
         scaled_h = src_h * scale
         tx = (target_w_pt - scaled_w) / 2
         ty = (target_h_pt - scaled_h) / 2
 
+        # Лист ровно 58×40 — контент вписан и центрирован
         blank = writer.add_blank_page(width=target_w_pt, height=target_h_pt)
         op = Transformation().scale(sx=scale, sy=scale).translate(tx=tx, ty=ty)
         blank.merge_transformed_page(page, op)
