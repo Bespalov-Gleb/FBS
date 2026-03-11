@@ -462,11 +462,9 @@ def _ozon_fbs_to_standard_label(
     if not images:
         raise ValueError("PDF returned no pages")
 
-    # Книжная ориентация: 40×58 мм. Страницу делаем ~88% — при "fit" принтер масштабирует
-    # вверх на стикер, печать получается крупнее (в PDF выглядит ок, на принтере было мелко).
-    _print_scale = 0.88
-    page_w = min(width_mm, height_mm) * _print_scale * mm
-    page_h = max(width_mm, height_mm) * _print_scale * mm
+    # Книжная ориентация: 40 ширина × 58 высота (стикер 58×40 мм)
+    page_w = min(width_mm, height_mm) * mm
+    page_h = max(width_mm, height_mm) * mm
 
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=(page_w, page_h))
@@ -1113,13 +1111,11 @@ def _wb_sticker_to_pdf(
     label_height_mm: int = 40,
     order_number: str | None = None,
     rotate: int = 90,
-    top_margin_mm: float = 10.0,
-    left_margin_mm: float = 4.0,
+    top_margin_mm: float = 6.0,
 ) -> bytes:
     """
     Конвертировать PNG-стикер WB в PDF для печати (размер 58×40 мм).
     WB присылает «высокую» этикетку — поворачиваем на 90° для широкой 58×40.
-    top_margin_mm, left_margin_mm: сдвиг вниз и вправо, чтобы не обрезало принтером.
     """
     import io
 
@@ -1141,17 +1137,11 @@ def _wb_sticker_to_pdf(
         iw, ih = img.size
     label_w = label_width_mm * mm
     label_h = label_height_mm * mm
-    left_m = left_margin_mm * mm
-    top_m = top_margin_mm * mm
-    # Масштаб с учётом отступов — контент в зоне, которая не обрезается
-    usable_w = label_w - 2 * left_m
-    usable_h = label_h - 2 * top_m
-    scale = min(max(0.1, usable_w / iw), max(0.1, usable_h / ih), 1.0)
+    scale = min(label_w / iw, label_h / ih, 1.0)
     draw_w = iw * scale
     draw_h = ih * scale
-    # Позиция: сдвиг вправо и вниз от краёв
-    x0 = left_m + (usable_w - draw_w) / 2
-    y0 = top_m + max(0, (usable_h - draw_h) / 2)
+    x0 = (label_w - draw_w) / 2
+    y0 = max(2 * mm, (label_h - draw_h) / 2 - top_margin_mm * mm)
     img_buf = io.BytesIO()
     img.save(img_buf, format="PNG")
     img_buf.seek(0)
