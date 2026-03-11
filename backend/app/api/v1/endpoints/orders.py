@@ -445,6 +445,7 @@ def _ozon_fbs_to_standard_label(
     pdf_bytes: bytes,
     width_mm: int = 58,
     height_mm: int = 40,
+    rotate: int = 90,
 ) -> bytes:
     """
     Привести PDF этикетки Ozon FBS к формату 58×40 мм.
@@ -476,13 +477,19 @@ def _ozon_fbs_to_standard_label(
         if iw <= 0 or ih <= 0:
             continue
 
-        # Поворот изображения ДО вставки в PDF (не внутри PDF — без обрезки)
-        if ih > iw and width_mm > height_mm:
-            img = img.rotate(90, expand=True)
+        # Поворот: этикетка должна быть ШИРОКАЯ (58) × НИЗКАЯ (40). rotate из настроек или авто по соотношению.
+        if rotate and rotate % 90 == 0:
+            img = img.rotate(rotate, expand=True)
             iw, ih = img.size
-        elif iw > ih and height_mm > width_mm:
-            img = img.rotate(90, expand=True)
-            iw, ih = img.size
+        else:
+            target_landscape = width_mm > height_mm
+            img_portrait = ih > iw
+            if img_portrait and target_landscape:
+                img = img.rotate(90, expand=True)
+                iw, ih = img.size
+            elif not img_portrait and not target_landscape:
+                img = img.rotate(90, expand=True)
+                iw, ih = img.size
 
         scale = min(target_w / iw, target_h / ih, 1.0)
         draw_w = iw * scale
@@ -1439,15 +1446,16 @@ async def get_order_label(
                     detail="Заказ уже отгружен в Ozon. Этикетка недоступна. Обновите список заказов.",
                 )
             raise
-        # Привести Ozon FBS к формату 58×40 мм (оригинальная логика pypdf: авто-поворот по размеру)
+        # Привести Ozon FBS к формату 58×40 мм (широкая × низкая). Поворот из настроек.
         try:
             _ps = db.query(PrintSettings).filter(PrintSettings.user_id == current_user.id).first()
             w_mm = (_ps.ozon_width_mm or 58) if _ps else 58
             h_mm = (_ps.ozon_height_mm or 40) if _ps else 40
+            ozon_rot = (_ps.ozon_label_rotate or 90) if _ps else 90
         except Exception:
-            w_mm, h_mm = 58, 40
+            w_mm, h_mm, ozon_rot = 58, 40, 90
         try:
-            content = _ozon_fbs_to_standard_label(content, width_mm=w_mm, height_mm=h_mm)
+            content = _ozon_fbs_to_standard_label(content, width_mm=w_mm, height_mm=h_mm, rotate=ozon_rot)
         except Exception as _re:
             logger.warning("Ozon FBS to standard label failed: %s", _re, exc_info=True)
         return Response(
