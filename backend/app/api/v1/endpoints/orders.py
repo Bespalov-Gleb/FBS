@@ -1082,7 +1082,7 @@ def _wb_sticker_to_pdf(
     label_height_mm: int = 40,
     order_number: str | None = None,
     rotate: int = 90,
-    top_margin_mm: float = 4.0,
+    top_margin_mm: float = 6.0,
 ) -> bytes:
     """
     Конвертировать PNG-стикер WB в PDF для печати (размер 58×40 мм).
