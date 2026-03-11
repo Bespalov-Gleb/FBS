@@ -18,15 +18,9 @@ def upgrade() -> None:
     op.execute(
         "UPDATE print_settings SET ozon_label_rotate = 90 WHERE ozon_label_rotate = 0"
     )
-    op.execute(
-        "UPDATE print_settings SET barcode_rotate = 90 WHERE barcode_rotate = 0"
-    )
 
 
 def downgrade() -> None:
     op.execute(
         "UPDATE print_settings SET ozon_label_rotate = 0 WHERE ozon_label_rotate = 90"
-    )
-    op.execute(
-        "UPDATE print_settings SET barcode_rotate = 0 WHERE barcode_rotate = 90"
     )

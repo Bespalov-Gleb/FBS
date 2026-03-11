@@ -439,11 +439,12 @@ def _ozon_fbs_to_standard_label(
     pdf_bytes: bytes,
     width_mm: int = 58,
     height_mm: int = 40,
+    rotate: int = 90,
 ) -> bytes:
     """
     Привести PDF этикетки Ozon FBS к стандартному размеру (58×40 мм).
-    Рендерим PDF в изображение (pdf2image), затем рисуем на целевой этикетке —
-    так избегаем проблем с pypdf merge и обрезанием.
+    Ozon возвращает этикетку «высокой» — поворачиваем на 90° для широкой 58×40.
+    rotate: 0/90/180/270 — поворот изображения ДО вставки в PDF (сохраняет страницу 58×40).
     """
     import io
 
@@ -460,11 +461,11 @@ def _ozon_fbs_to_standard_label(
     if iw <= 0 or ih <= 0:
         raise ValueError("Invalid Ozon FBS image dimensions")
 
-    # Портрет → альбом (если этикетка 58×40 альбомная)
+    # Поворот: Ozon присылает «высокую» этикетку, нужна «широкая». PIL: положительный = против часовой.
     label_w = width_mm * mm
     label_h = height_mm * mm
-    if ih > iw and label_w > label_h:
-        img = img.rotate(90, expand=True)
+    if rotate and rotate % 90 == 0:
+        img = img.rotate(rotate, expand=True)
         iw, ih = img.size
 
     margin = 2 * mm
@@ -906,6 +907,7 @@ def _generate_product_barcode_pdf(
     """
     Штрихкод товара: Ozon (OZN+SKU) или WB (EAN13).
     EAN13: без встроенных цифр — рисуем свой текст с отступом (избегаем наложения).
+    Размер этикетки 58×40 мм.
     """
     import io
 
@@ -920,7 +922,7 @@ def _generate_product_barcode_pdf(
     bw1, bh1 = bc_product.width, bc_product.height
 
     label_w = label_width_mm * mm
-    label_h = 45 * mm
+    label_h = 40 * mm
     pagesize = (label_w, label_h)
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=pagesize)
@@ -952,7 +954,7 @@ def _generate_multi_product_barcode_pdf(
 ) -> bytes:
     """
     PDF с несколькими страницами — по одному штрихкоду на каждый товар (Ozon двойные заказы).
-    items: [(barcode_value, ozn_code), ...]
+    Размер этикетки 58×40 мм.
     """
     import io
 
@@ -966,7 +968,7 @@ def _generate_multi_product_barcode_pdf(
         return _generate_product_barcode_pdf(items[0][0], items[0][1], label_width_mm)
 
     label_w = label_width_mm * mm
-    label_h = 45 * mm
+    label_h = 40 * mm
     pagesize = (label_w, label_h)
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=pagesize)
@@ -1413,18 +1415,14 @@ async def get_order_label(
             ozon_rotate = _ps.ozon_label_rotate if _ps else 0
         except Exception:
             w_mm, h_mm = 58, 40
-            ozon_rotate = 0
+            ozon_rotate = 90
         try:
-            content = _ozon_fbs_to_standard_label(content, width_mm=w_mm, height_mm=h_mm)
+            content = _ozon_fbs_to_standard_label(
+                content, width_mm=w_mm, height_mm=h_mm, rotate=ozon_rotate or 90
+            )
         except Exception as _re:
             logger.warning("Ozon FBS to standard label failed: %s", _re, exc_info=True)
             # При ошибке отдаём исходный PDF — layout не меняется
-        # Поворот на 90° — этикетка широкой (для 58×40 мм)
-        if ozon_rotate:
-            try:
-                content = _rotate_pdf(content, ozon_rotate)
-            except Exception as _re:
-                logger.warning("Ozon FBS PDF rotate failed: %s", _re)
         return Response(
             content=content,
             media_type="application/pdf",
