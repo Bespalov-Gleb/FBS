@@ -484,8 +484,19 @@ def _ozon_fbs_to_standard_label(
             img = img.rotate(deg, expand=True)
             iw, ih = img.size
 
-        # Масштаб: вписать в страницу, не обрезая
-        scale = min(page_w / iw, page_h / ih, 1.0)
+        # Обрезаем белые поля — контент займёт больше места, будет крупнее
+        from PIL import Image as PILImage, ImageChops
+        try:
+            bg = PILImage.new(img.mode, img.size, img.getpixel((0, 0)))
+            diff = ImageChops.difference(img, bg)
+            bbox = diff.getbbox()
+            if bbox and (bbox[2] - bbox[0]) > 10 and (bbox[3] - bbox[1]) > 10:
+                img = img.crop(bbox)
+                iw, ih = img.size
+        except Exception:
+            pass
+        # Масштаб: максимум вписать в страницу (крупнее, без выхода за границы)
+        scale = min(page_w / iw, page_h / ih)
         draw_w = iw * scale
         draw_h = ih * scale
         x0 = (page_w - draw_w) / 2
@@ -914,6 +925,10 @@ def _is_ean13(code: str) -> bool:
     return len(s) == 13 and s.isdigit()
 
 
+# Отступ сверху для ШК товара — чтобы не обрезало принтером (сместить ниже)
+_BARCODE_TOP_OFFSET_MM = 5.0
+
+
 def _generate_product_barcode_pdf(
     barcode_value: str,
     ozn_code: str = "",
@@ -943,8 +958,9 @@ def _generate_product_barcode_pdf(
     c = canvas.Canvas(buf, pagesize=pagesize)
     h = label_h
     margin = 2 * mm
+    top_offset = _BARCODE_TOP_OFFSET_MM * mm  # Сместить ниже, чтобы не обрезало сверху
     x0 = margin
-    y0 = h - margin
+    y0 = h - margin - top_offset
 
     scale1 = min((label_w - 2 * margin) / bw1, 25 * mm / bh1, 2.2)
     c.saveState()
@@ -988,6 +1004,7 @@ def _generate_multi_product_barcode_pdf(
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=pagesize)
     margin = 2 * mm
+    top_offset = _BARCODE_TOP_OFFSET_MM * mm
     x0 = margin
 
     for i, (barcode_value, ozn_code) in enumerate(items):
@@ -999,7 +1016,7 @@ def _generate_multi_product_barcode_pdf(
         bw1, bh1 = bc_product.width, bc_product.height
         scale1 = min((label_w - 2 * margin) / bw1, 25 * mm / bh1, 2.2)
         h = label_h
-        y0 = h - margin
+        y0 = h - margin - top_offset
         c.saveState()
         c.translate(x0 + (label_w - bw1 * scale1) / 2, y0 - bh1 * scale1 - 2 * mm)
         c.scale(scale1, scale1)
@@ -1091,13 +1108,13 @@ def _wb_sticker_to_pdf(
     label_height_mm: int = 40,
     order_number: str | None = None,
     rotate: int = 90,
-    top_margin_mm: float = 6.0,
+    top_margin_mm: float = 10.0,
+    left_margin_mm: float = 4.0,
 ) -> bytes:
     """
     Конвертировать PNG-стикер WB в PDF для печати (размер 58×40 мм).
     WB присылает «высокую» этикетку — поворачиваем на 90° для широкой 58×40.
-    rotate: 0/90/180/270 — поворот изображения ДО вставки в PDF.
-    top_margin_mm: отступ сверху (мм), чтобы верх не обрезался при печати.
+    top_margin_mm, left_margin_mm: сдвиг вниз и вправо, чтобы не обрезало принтером.
     """
     import io
 
@@ -1119,12 +1136,17 @@ def _wb_sticker_to_pdf(
         iw, ih = img.size
     label_w = label_width_mm * mm
     label_h = label_height_mm * mm
-    scale = min(label_w / iw, label_h / ih, 1.0)
+    left_m = left_margin_mm * mm
+    top_m = top_margin_mm * mm
+    # Масштаб с учётом отступов — контент в зоне, которая не обрезается
+    usable_w = label_w - 2 * left_m
+    usable_h = label_h - 2 * top_m
+    scale = min(max(0.1, usable_w / iw), max(0.1, usable_h / ih), 1.0)
     draw_w = iw * scale
     draw_h = ih * scale
-    x0 = (label_w - draw_w) / 2
-    # Сдвиг вниз на top_margin_mm — избегаем обрезки верха при печати
-    y0 = max(2 * mm, (label_h - draw_h) / 2 - top_margin_mm * mm)
+    # Позиция: сдвиг вправо и вниз от краёв
+    x0 = left_m + (usable_w - draw_w) / 2
+    y0 = top_m + max(0, (usable_h - draw_h) / 2)
     img_buf = io.BytesIO()
     img.save(img_buf, format="PNG")
     img_buf.seek(0)
