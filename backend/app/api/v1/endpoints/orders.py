@@ -1405,18 +1405,26 @@ async def get_order_label(
                     detail="Заказ уже отгружен в Ozon. Этикетка недоступна. Обновите список заказов.",
                 )
             raise
-        # Привести Ozon FBS к формату ШК товара: размер и ориентация из настроек
+        # Привести Ozon FBS к формату ШК товара: размер и поворот из настроек (90° = широкий вид для 58×40)
         try:
             _ps = db.query(PrintSettings).filter(PrintSettings.user_id == current_user.id).first()
             w_mm = (_ps.ozon_width_mm or 58) if _ps else 58
             h_mm = (_ps.ozon_height_mm or 40) if _ps else 40
+            ozon_rotate = _ps.ozon_label_rotate if _ps else 0
         except Exception:
             w_mm, h_mm = 58, 40
+            ozon_rotate = 0
         try:
             content = _ozon_fbs_to_standard_label(content, width_mm=w_mm, height_mm=h_mm)
         except Exception as _re:
             logger.warning("Ozon FBS to standard label failed: %s", _re, exc_info=True)
             # При ошибке отдаём исходный PDF — layout не меняется
+        # Поворот на 90° — этикетка широкой (для 58×40 мм)
+        if ozon_rotate:
+            try:
+                content = _rotate_pdf(content, ozon_rotate)
+            except Exception as _re:
+                logger.warning("Ozon FBS PDF rotate failed: %s", _re)
         return Response(
             content=content,
             media_type="application/pdf",

@@ -68,7 +68,7 @@ def _ozon_labels_from_ps(ps: PrintSettings) -> dict:
     return {
         "width_mm": ps.ozon_width_mm or 58,
         "height_mm": ps.ozon_height_mm or 40,
-        "rotate": ps.ozon_label_rotate or 0,
+        "rotate": ps.ozon_label_rotate if ps.ozon_label_rotate is not None else 90,
     }
 
 
@@ -90,7 +90,7 @@ def _kiz_labels_from_ps(ps: PrintSettings) -> dict:
 
 def _barcode_labels_from_ps(ps: PrintSettings) -> dict:
     return {
-        "rotate": ps.barcode_rotate or 0,
+        "rotate": ps.barcode_rotate if ps.barcode_rotate is not None else 90,
     }
 
 
@@ -105,10 +105,10 @@ def get_print_settings(
     ).first()
     if not ps:
         return PrintSettingsResponse(
-            ozon_labels={"width_mm": 58, "height_mm": 40, "rotate": 0},
+            ozon_labels={"width_mm": 58, "height_mm": 40, "rotate": 90},
             wb_labels={"width_mm": 58, "height_mm": 40, "rotate": 0},
             kiz_labels={"width_mm": 40, "height_mm": 35, "rotate": 0},
-            barcode_labels={"rotate": 0},
+            barcode_labels={"rotate": 90},
         )
     return PrintSettingsResponse(
         default_printer=ps.default_printer,
