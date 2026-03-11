@@ -74,7 +74,7 @@ def _sanitize_size(s: Optional[str]) -> Optional[str]:
     return s if s else None
 
 
-def _ozon_product_size(p: dict) -> Optional[str]:
+def _ozon_product_size(p: dict, order_id: Optional[int] = None, offer_id: str = "") -> Optional[str]:
     """
     Размер товара Ozon из product dict.
     Приоритет: p.size (Размер продавца из Attributes API) → dimensions → size_name.
@@ -87,7 +87,15 @@ def _ozon_product_size(p: dict) -> Optional[str]:
         raw = dims.get("size_name") or dims.get("size")
     else:
         raw = p.get("size_name")
-    return _sanitize_size(raw)
+    result = _sanitize_size(raw)
+    if not result:
+        logger.debug(
+            "Ozon size MISSING: order_id=%s offer_id=%s tried: p.size=%r dims=%r p.size_name=%r product_keys=%s",
+            order_id, offer_id or p.get("offer_id"),
+            p.get("size"), p.get("dimensions"), p.get("size_name"),
+            list(p.keys()),
+        )
+    return result
 
 
 def _order_products(o: Order) -> list[OrderProductItem]:
@@ -101,7 +109,7 @@ def _order_products(o: Order) -> list[OrderProductItem]:
             name=str(p.get("name", "")),
             quantity=int(p.get("quantity", 1)),
             image_url=str(p.get("image_url", "")),
-            size=_ozon_product_size(p),
+            size=_ozon_product_size(p, order_id=o.id, offer_id=str(p.get("offer_id", ""))),
         )
         for p in prods
     ]

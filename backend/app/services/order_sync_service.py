@@ -133,6 +133,15 @@ class OrderSyncService:
                             seller_size = sizes.get(oid) or ""
                             if seller_size and str(seller_size).strip():
                                 p["size"] = str(seller_size).strip()
+                                logger.debug(
+                                    "Ozon size [get_product_sizes]: posting=%s offer_id=%s size=%r",
+                                    getattr(mo, "posting_number", ""), oid, seller_size,
+                                )
+                            elif not p.get("size"):
+                                logger.debug(
+                                    "Ozon size [get_product_sizes]: posting=%s offer_id=%s NO_SIZE (sizes keys sample=%s)",
+                                    getattr(mo, "posting_number", ""), oid, list(sizes.keys())[:5] if sizes else [],
+                                )
                     first_size = next(
                         (p.get("size") for p in (mo.metadata or {}).get("products", []) if p.get("size")),
                         None,
@@ -172,6 +181,7 @@ class OrderSyncService:
                                     if i >= len(our_prods) or our_prods[i].get("size"):
                                         continue
                                     size_val = None
+                                    size_source = None
                                     # Сначала атрибуты — там чаще буквенный размер (M, L, XL)
                                     for attrs_key in ("optional_product_attributes", "required_product_attributes"):
                                         attrs = dp.get(attrs_key) or []
@@ -183,6 +193,7 @@ class OrderSyncService:
                                                 v = a.get("attribute_value") or a.get("value")
                                                 if v:
                                                     size_val = v
+                                                    size_source = f"{attrs_key}.{name}"
                                                     break
                                         if size_val:
                                             break
@@ -190,9 +201,27 @@ class OrderSyncService:
                                         dims = dp.get("dimensions") or {}
                                         if isinstance(dims, dict):
                                             size_val = dims.get("size_name") or dims.get("size")
+                                            size_source = "dimensions.size_name|size" if size_val else None
                                     if size_val and str(size_val).strip():
                                         our_prods[i]["size"] = str(size_val).strip()
                                         sizes_from_get += 1
+                                        logger.debug(
+                                            "Ozon size [posting/fbs/get fallback]: posting=%s product_idx=%s source=%s size=%r",
+                                            pn, i, size_source or "unknown", size_val,
+                                        )
+                                    elif not our_prods[i].get("size"):
+                                        opt_attrs = dp.get("optional_product_attributes") or []
+                                        req_attrs = dp.get("required_product_attributes") or []
+                                        dims = dp.get("dimensions")
+                                        attr_names = [
+                                            (a.get("attribute_name") or a.get("name") or "")
+                                            for a in (opt_attrs + req_attrs)
+                                            if isinstance(a, dict)
+                                        ]
+                                        logger.debug(
+                                            "Ozon size [posting/fbs/get fallback]: posting=%s product_idx=%s NO_SIZE attr_names=%r dims=%r",
+                                            pn, i, attr_names, dims,
+                                        )
                                 # Обновляем первый размер для карточки
                                 first_size = next(
                                     (p.get("size") for p in our_prods if p.get("size")),
@@ -202,11 +231,29 @@ class OrderSyncService:
                                     mo.metadata["size"] = first_size
                             if sizes_from_get:
                                 logger.info(
-                                    f"Ozon: {sizes_from_get} sizes from posting/fbs/get "
-                                    f"(fallback, {len(orders_without_size)} orders)"
+                                    "Ozon: %s sizes from posting/fbs/get (fallback, %s orders)",
+                                    sizes_from_get, len(orders_without_size),
                                 )
+                            still_missing = [
+                                mo for mo in orders_without_size
+                                if not any(p.get("size") for p in (mo.metadata or {}).get("products", []))
+                            ]
+                            if still_missing:
+                                for mo in still_missing[:3]:  # первые 3 для лога
+                                    prods = (mo.metadata or {}).get("products", [])
+                                    p0 = prods[0] if prods else {}
+                                    logger.info(
+                                        "Ozon size MISSING: posting=%s offer_ids=%s first_product: size=%r dims=%r keys=%s",
+                                        getattr(mo, "posting_number", ""),
+                                        [p.get("offer_id") for p in prods],
+                                        p0.get("size"),
+                                        p0.get("dimensions"),
+                                        list(p0.keys()) if p0 else [],
+                                    )
+                                if len(still_missing) > 3:
+                                    logger.info("Ozon size MISSING: ... and %s more orders", len(still_missing) - 3)
                         except Exception as e:
-                            logger.warning(f"Ozon: posting details fallback failed: {e}")
+                            logger.warning("Ozon: posting details fallback failed: %s", e)
                 api_external_ids = {mo.external_id for mo in orders}
                 for mo in orders:
                     count += OrderSyncService._upsert_order(
