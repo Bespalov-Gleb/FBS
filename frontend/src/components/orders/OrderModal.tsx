@@ -160,7 +160,8 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
     order.marketplace_type === 'ozon'
       ? (order.posting_number || order.external_id || `#${order.id}`)
       : (order.external_id || order.posting_number || `#${order.id}`);
-  const labelFormat = order.marketplace_type === 'ozon' ? 'pdf' : agentAvailable ? 'png' : 'svg';
+  // PDF при агенте — точный размер 58×40 мм, печать 100% (noscale)
+  const labelFormat = agentAvailable ? 'pdf' : (order.marketplace_type === 'ozon' ? 'pdf' : 'svg');
   const labelWidth = labelFormatProp === '80mm' ? 80 : 58;
 
   const handlePrint = async () => {

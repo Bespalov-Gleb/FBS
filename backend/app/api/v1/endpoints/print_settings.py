@@ -45,6 +45,7 @@ class PrintSettingsResponse(BaseModel):
     label_template: Optional[str] = None
     auto_print_on_click: Optional[bool] = None
     auto_print_kiz_duplicate: Optional[bool] = None
+    printer_dpi: Optional[int] = None  # 203 или 300 — DPI принтера
     ozon_labels: Optional[dict] = None     # {width_mm, height_mm, rotate}
     wb_labels: Optional[dict] = None       # {width_mm, height_mm, rotate}
     kiz_labels: Optional[dict] = None      # {width_mm, height_mm, rotate}
@@ -58,6 +59,7 @@ class PrintSettingsUpdate(BaseModel):
     label_template: Optional[str] = None
     auto_print_on_click: Optional[bool] = None
     auto_print_kiz_duplicate: Optional[bool] = None
+    printer_dpi: Optional[int] = None  # 203 или 300
     ozon_labels: Optional[OzonLabelsSchema] = None
     wb_labels: Optional[WbLabelsSchema] = None
     kiz_labels: Optional[KizLabelsSchema] = None
@@ -105,6 +107,7 @@ def get_print_settings(
     ).first()
     if not ps:
         return PrintSettingsResponse(
+            printer_dpi=203,
             ozon_labels={"width_mm": 58, "height_mm": 40, "rotate": 90},
             wb_labels={"width_mm": 58, "height_mm": 40, "rotate": 90},
             kiz_labels={"width_mm": 40, "height_mm": 35, "rotate": 0},
@@ -116,6 +119,7 @@ def get_print_settings(
         label_template=ps.label_template,
         auto_print_on_click=ps.auto_print_on_click == "true" if ps.auto_print_on_click else None,
         auto_print_kiz_duplicate=ps.auto_print_kiz_duplicate == "true" if ps.auto_print_kiz_duplicate else None,
+        printer_dpi=ps.printer_dpi or 203,
         ozon_labels=_ozon_labels_from_ps(ps),
         wb_labels=_wb_labels_from_ps(ps),
         kiz_labels=_kiz_labels_from_ps(ps),
@@ -171,6 +175,9 @@ def update_print_settings(
     if data.barcode_labels is not None:
         if data.barcode_labels.rotate is not None:
             ps.barcode_rotate = data.barcode_labels.rotate if data.barcode_labels.rotate in (0, 90, 180, 270) else 0
+    if data.printer_dpi is not None:
+        if data.printer_dpi in (203, 300):
+            ps.printer_dpi = data.printer_dpi
     db.commit()
     db.refresh(ps)
     return PrintSettingsResponse(
@@ -179,6 +186,7 @@ def update_print_settings(
         label_template=ps.label_template,
         auto_print_on_click=ps.auto_print_on_click == "true" if ps.auto_print_on_click else None,
         auto_print_kiz_duplicate=ps.auto_print_kiz_duplicate == "true" if ps.auto_print_kiz_duplicate else None,
+        printer_dpi=ps.printer_dpi or 203,
         ozon_labels=_ozon_labels_from_ps(ps),
         wb_labels=_wb_labels_from_ps(ps),
         kiz_labels=_kiz_labels_from_ps(ps),
@@ -188,24 +196,48 @@ def update_print_settings(
 
 @router.get("/test-label")
 def get_test_label(
+    db: Session = Depends(get_db),
     current_user: User = CurrentUser,
 ):
     """
-    Тестовая этикетка для проверки печати.
-    Возвращает PNG с QR-кодом «ТЕСТ».
+    Тестовая этикетка 58×40 мм для калибровки печати.
+    PDF: рамка по периметру, подписи «верх/низ/лево/право», текст ТЕСТ.
     """
     import io
-    import qrcode
 
-    qr = qrcode.QRCode(version=1, box_size=6, border=2)
-    qr.add_data("ТЕСТ")
-    qr.make(fit=True)
-    img = qr.make_image(fill_color="black", back_color="white")
+    from reportlab.lib.units import mm
+    from reportlab.pdfgen import canvas
+
+    ps = db.query(PrintSettings).filter(PrintSettings.user_id == current_user.id).first()
+    w_mm = (ps.wb_width_mm or 58) if ps else 58
+    h_mm = (ps.wb_height_mm or 40) if ps else 40
+
+    label_w = w_mm * mm
+    label_h = h_mm * mm
     buf = io.BytesIO()
-    img.save(buf, format="PNG")
+    c = canvas.Canvas(buf, pagesize=(label_w, label_h))
+
+    # Рамка 1 мм от краёв
+    margin = 1 * mm
+    c.rect(margin, margin, label_w - 2 * margin, label_h - 2 * margin)
+
+    # Подписи сторон
+    c.setFont("Helvetica", 6)
+    c.drawCentredString(label_w / 2, label_h - margin - 2 * mm, "ВЕРХ")
+    c.drawCentredString(label_w / 2, margin + 2 * mm, "НИЗ")
+    c.drawString(margin + 1 * mm, label_h / 2 - 2 * mm, "Л")
+    c.drawRightString(label_w - margin - 1 * mm, label_h / 2 - 2 * mm, "П")
+
+    # Центральный текст
+    c.setFont("Helvetica-Bold", 14)
+    c.drawCentredString(label_w / 2, label_h / 2 - 4 * mm, "ТЕСТ")
+    c.setFont("Helvetica", 8)
+    c.drawCentredString(label_w / 2, label_h / 2 - 8 * mm, f"{w_mm}×{h_mm} мм")
+
+    c.save()
     buf.seek(0)
     return Response(
         content=buf.getvalue(),
-        media_type="image/png",
-        headers={"Content-Disposition": "inline; filename=test-label.png"},
+        media_type="application/pdf",
+        headers={"Content-Disposition": "inline; filename=test-label.pdf"},
     )

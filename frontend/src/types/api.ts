@@ -90,6 +90,7 @@ export interface PrintSettings {
   label_format?: '58mm' | '80mm';
   auto_print_on_click?: boolean;
   auto_print_kiz_duplicate?: boolean;
+  printer_dpi?: number;  // 203 или 300 — DPI принтера
   ozon_labels?: LabelSizeWithRotate;
   wb_labels?: LabelSizeWithRotate;
   kiz_labels?: LabelSizeWithRotate;

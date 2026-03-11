@@ -34,6 +34,7 @@ export default function PrintSettingsPage() {
   const queryClient = useQueryClient();
   const [defaultPrinter, setDefaultPrinter] = useState('');
   const [labelFormat, setLabelFormat] = useState<'58mm' | '80mm'>('58mm');
+  const [printerDpi, setPrinterDpi] = useState<203 | 300>(203);
 
   // Ozon ФБС этикетка
   const [ozonWidth, setOzonWidth] = useState(58);
@@ -69,6 +70,7 @@ export default function PrintSettingsPage() {
     if (settings) {
       setDefaultPrinter(settings.default_printer ?? '');
       setLabelFormat((settings.label_format as '58mm' | '80mm') ?? '58mm');
+      setPrinterDpi((settings.printer_dpi === 300 ? 300 : 203) as 203 | 300);
       setOzonWidth(settings.ozon_labels?.width_mm ?? 58);
       setOzonHeight(settings.ozon_labels?.height_mm ?? 40);
       setOzonRotate(settings.ozon_labels?.rotate ?? 0);
@@ -100,6 +102,7 @@ export default function PrintSettingsPage() {
       printSettingsApi.update({
         default_printer: defaultPrinter,
         label_format: labelFormat,
+        printer_dpi: printerDpi,
         ozon_labels: { width_mm: ozonWidth, height_mm: ozonHeight, rotate: ozonRotate },
         wb_labels: { width_mm: wbWidth, height_mm: wbHeight, rotate: wbRotate },
         barcode_labels: { rotate: barcodeRotate },
@@ -228,6 +231,21 @@ export default function PrintSettingsPage() {
                   helperText={agentAvailable ? 'Агент использует системный принтер по умолчанию' : 'Браузер не может задать принтер. Выберите его при первой печати.'}
                 />
               )}
+
+              <FormControl fullWidth size="small" sx={{ mt: 1 }}>
+                <InputLabel>DPI принтера</InputLabel>
+                <Select
+                  value={printerDpi}
+                  label="DPI принтера"
+                  onChange={(e) => setPrinterDpi(Number(e.target.value) as 203 | 300)}
+                >
+                  <MenuItem value={203}>203 DPI</MenuItem>
+                  <MenuItem value={300}>300 DPI</MenuItem>
+                </Select>
+                <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
+                  Типичные значения для термо-принтеров. 203 — чаще всего. 300 — для высокого разрешения.
+                </Typography>
+              </FormControl>
 
               <Divider />
 

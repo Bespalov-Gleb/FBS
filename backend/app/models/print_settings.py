@@ -44,3 +44,6 @@ class PrintSettings(BaseModel):
     kiz_width_mm = Column(Integer, nullable=True)    # default 40
     kiz_height_mm = Column(Integer, nullable=True)   # default 35
     kiz_rotate = Column(Integer, nullable=False, default=0)         # 0/90/180/270
+
+    # DPI принтера (203 или 300) — для точной генерации этикеток под физический размер
+    printer_dpi = Column(Integer, nullable=True, default=203)

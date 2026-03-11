@@ -46,10 +46,8 @@ def _print_pdf_with_printer(
         cmd.extend(["-print-to", printer])
     else:
         cmd.append("-print-to-default")
-    # noscale на этикеточных принтерах даёт искажения (чёрные блоки, наложение) — заменяем на fit
+    # noscale = 100% — для PDF с точным размером 58×40 мм. Ожидается PDF с MediaBox 58×40.
     settings = print_settings if print_settings in ("noscale", "shrink", "fit") else "fit"
-    if settings == "noscale":
-        settings = "fit"
     cmd.extend(["-print-settings", settings])
     cmd.append(abs_path)
     from config import PRINT_TIMEOUT

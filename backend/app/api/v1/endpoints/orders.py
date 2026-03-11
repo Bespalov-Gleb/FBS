@@ -441,15 +441,72 @@ def kiz_export(
 MM_TO_PT = 2.834645669  # 1 мм = 2.834645669 pt (PDF points)
 
 
-def _ozon_fbs_to_standard_label(
+def _ozon_fbs_to_png(
     pdf_bytes: bytes,
     width_mm: int = 58,
     height_mm: int = 40,
     rotate: int = 90,
 ) -> bytes:
     """
+    Ozon FBS → PNG для превью. Размер 100% от этикетки.
+    """
+    import io
+
+    from PIL import Image as PILImage, ImageChops
+    from pdf2image import convert_from_bytes
+
+    images = convert_from_bytes(pdf_bytes, dpi=200)
+    if not images:
+        raise ValueError("PDF returned no pages")
+    img = images[0].convert("RGB")
+    iw, ih = img.size
+    if iw <= 0 or ih <= 0:
+        raise ValueError("Invalid image dimensions")
+
+    img_portrait = ih > iw
+    if img_portrait:
+        deg = rotate if (rotate and rotate % 90 == 0) else 90
+        img = img.rotate(deg, expand=True)
+        iw, ih = img.size
+
+    try:
+        bg = PILImage.new(img.mode, img.size, img.getpixel((0, 0)))
+        diff = ImageChops.difference(img, bg)
+        bbox = diff.getbbox()
+        if bbox and (bbox[2] - bbox[0]) > 10 and (bbox[3] - bbox[1]) > 10:
+            img = img.crop(bbox)
+            iw, ih = img.size
+    except Exception:
+        pass
+
+    # Целевой размер в пикселях: 100% от 40×58 мм при 96 DPI (превью)
+    MM_TO_INCH = 1 / 25.4
+    DPI = 96
+    target_w_pt = (min(width_mm, height_mm) * MM_TO_INCH * DPI)
+    target_h_pt = (max(width_mm, height_mm) * MM_TO_INCH * DPI)
+    scale = min(target_w_pt / iw, target_h_pt / ih, 1.0)
+    new_w = int(iw * scale)
+    new_h = int(ih * scale)
+    img = img.resize((new_w, new_h), PILImage.Resampling.LANCZOS)
+    out = PILImage.new("RGB", (new_w, new_h), (255, 255, 255))
+    out.paste(img, (0, 0))
+    buf = io.BytesIO()
+    out.save(buf, format="PNG")
+    buf.seek(0)
+    return buf.getvalue()
+
+
+def _ozon_fbs_to_standard_label(
+    pdf_bytes: bytes,
+    width_mm: int = 58,
+    height_mm: int = 40,
+    rotate: int = 90,
+    dpi: int = 203,
+) -> bytes:
+    """
     Этикетка Ozon FBS: как ШК товаров — страница 40×58 мм (книжная), контент повёрнут и вписан.
     Логика как у WB: изображение → поворот → масштаб → один стикер.
+    dpi: разрешение рендера (203 или 300 — DPI принтера).
     """
     import io
 
@@ -458,7 +515,7 @@ def _ozon_fbs_to_standard_label(
     from reportlab.lib.utils import ImageReader
     from reportlab.pdfgen import canvas
 
-    images = convert_from_bytes(pdf_bytes, dpi=200)
+    images = convert_from_bytes(pdf_bytes, dpi=max(150, min(dpi, 300)))
     if not images:
         raise ValueError("PDF returned no pages")
 
@@ -936,11 +993,13 @@ def _generate_product_barcode_pdf(
     barcode_value: str,
     ozn_code: str = "",
     label_width_mm: int = 58,
+    top_offset_mm: float = 0,
 ) -> bytes:
     """
     Штрихкод товара: Ozon (OZN+SKU) или WB (EAN13).
     EAN13: без встроенных цифр — рисуем свой текст с отступом (избегаем наложения).
     Размер этикетки 58×40 мм.
+    top_offset_mm: отступ сверху (5 для Ozon — не обрезать; 0 для WB — обычное центрирование).
     """
     import io
 
@@ -961,7 +1020,7 @@ def _generate_product_barcode_pdf(
     c = canvas.Canvas(buf, pagesize=pagesize)
     h = label_h
     margin = 2 * mm
-    top_offset = _BARCODE_TOP_OFFSET_MM * mm  # Сместить ниже, чтобы не обрезало сверху
+    top_offset = top_offset_mm * mm
     x0 = margin
     y0 = h - margin - top_offset
 
@@ -985,10 +1044,12 @@ def _generate_product_barcode_pdf(
 def _generate_multi_product_barcode_pdf(
     items: list[tuple[str, str]],
     label_width_mm: int = 58,
+    top_offset_mm: float = 0,
 ) -> bytes:
     """
     PDF с несколькими страницами — по одному штрихкоду на каждый товар (Ozon двойные заказы).
     Размер этикетки 58×40 мм.
+    top_offset_mm: отступ сверху (5 для Ozon; 0 для WB).
     """
     import io
 
@@ -999,7 +1060,7 @@ def _generate_multi_product_barcode_pdf(
     if not items:
         raise ValueError("No items for barcode PDF")
     if len(items) == 1:
-        return _generate_product_barcode_pdf(items[0][0], items[0][1], label_width_mm)
+        return _generate_product_barcode_pdf(items[0][0], items[0][1], label_width_mm, top_offset_mm)
 
     label_w = label_width_mm * mm
     label_h = 40 * mm
@@ -1007,7 +1068,7 @@ def _generate_multi_product_barcode_pdf(
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=pagesize)
     margin = 2 * mm
-    top_offset = _BARCODE_TOP_OFFSET_MM * mm
+    top_offset = top_offset_mm * mm
     x0 = margin
 
     for i, (barcode_value, ozn_code) in enumerate(items):
@@ -1035,72 +1096,66 @@ def _generate_multi_product_barcode_pdf(
     return buf.getvalue()
 
 
-def _generate_barcodes_pdf(
-    product_code: str,
-    fbs_code: str,
-    product_name: str = "",
+def _wb_sticker_to_png(
+    image_bytes: bytes,
     label_width_mm: int = 58,
+    label_height_mm: int = 40,
+    order_number: str | None = None,
+    rotate: int = 90,
 ) -> bytes:
     """
-    Генерация PDF с обоими штрихкодами (товар + ФБС) для качественной печати.
-    Страница = размер этикетки (58×40 или 80×40 мм) — без лишнего белого пространства.
+    WB стикер → PNG для превью. Размер 100% от этикетки.
     """
     import io
 
-    from reportlab.graphics import renderPDF
-    from reportlab.lib.units import mm
-    from reportlab.pdfgen import canvas
+    from PIL import Image, ImageDraw, ImageFont
 
-    label_w = label_width_mm * mm
-    label_h = 40 * mm
-    pagesize = (label_w, label_h)
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    iw, ih = img.size
+    if iw <= 0 or ih <= 0:
+        raise ValueError("Invalid image dimensions")
+    if rotate and rotate % 90 == 0:
+        img = img.rotate(rotate, expand=True)
+        iw, ih = img.size
+    elif ih > iw and label_width_mm > label_height_mm:
+        img = img.rotate(90, expand=True)
+        iw, ih = img.size
+
+    MM_TO_INCH = 1 / 25.4
+    DPI = 96
+    target_w = int(min(label_width_mm, label_height_mm) * MM_TO_INCH * DPI)
+    target_h = int(max(label_width_mm, label_height_mm) * MM_TO_INCH * DPI)
+    scale = min(target_w / iw, target_h / ih, 1.0)
+    new_w = int(iw * scale)
+    new_h = int(ih * scale)
+    img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+    out = Image.new("RGB", (new_w, new_h), (255, 255, 255))
+    out.paste(img, (0, 0))
+
+    if order_number and str(order_number).strip():
+        import os
+
+        draw = ImageDraw.Draw(out)
+        font_paths = [
+            "C:/Windows/Fonts/arialbd.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        ]
+        font = None
+        for p in font_paths:
+            try:
+                if os.path.exists(p):
+                    font = ImageFont.truetype(p, 10)
+                    break
+            except OSError:
+                pass
+        if font:
+            num_text = str(order_number).strip()[:25]
+            bbox = draw.textbbox((0, 0), num_text, font=font)
+            tw = bbox[2] - bbox[0]
+            draw.text(((new_w - tw) / 2, 4), num_text, fill=(0, 0, 0), font=font)
 
     buf = io.BytesIO()
-    c = canvas.Canvas(buf, pagesize=pagesize)
-    h = label_h
-
-    # Контент на всю страницу этикетки
-    margin = 2 * mm
-    x0 = margin
-    y0 = h - margin
-
-    # Штрихкод товара (уменьшенный barWidth для этикетки)
-    bc_product = _create_barcode_drawing(product_code, bar_width=0.2)
-    bw1, bh1 = bc_product.width, bc_product.height
-    scale1 = min((label_w - 4 * mm) / bw1, 12 * mm / bh1, 1.5)
-    c.saveState()
-    c.translate(x0 + (label_w - bw1 * scale1) / 2, y0 - bh1 * scale1 - 2 * mm)
-    c.scale(scale1, scale1)
-    renderPDF.draw(bc_product, c, 0, 0)
-    c.restoreState()
-
-    # Код OZN под штрихкодом (как у Ozon: OZN1994424509)
-    ty = y0 - bh1 * scale1 - 4 * mm
-    c.setFont("Helvetica-Bold", 9)
-    c.drawCentredString(x0 + label_w / 2, ty, str(product_code)[:20])
-    ty -= 3.5 * mm
-
-    # Название товара
-    if product_name:
-        text_lines = _wrap_text(product_name, max_chars=24)
-        c.setFont("Helvetica", 8)
-        for line in reversed(text_lines):
-            c.drawCentredString(x0 + label_w / 2, ty, line[:40])
-            ty -= 3.5 * mm
-
-    # Штрихкод ФБС (внизу этикетки, с отступом для подписи)
-    bc_fbs = _create_barcode_drawing(fbs_code, bar_width=0.2)
-    bw2, bh2 = bc_fbs.width, bc_fbs.height
-    scale2 = min((label_w - 4 * mm) / bw2, 10 * mm / bh2, 1.5)
-    fbs_y = 4 * mm  # отступ снизу для подписи «ШК ФБС»
-    c.saveState()
-    c.translate(x0 + (label_w - bw2 * scale2) / 2, fbs_y)
-    c.scale(scale2, scale2)
-    renderPDF.draw(bc_fbs, c, 0, 0)
-    c.restoreState()
-    c.drawCentredString(x0 + label_w / 2, fbs_y - 2 * mm, "ШК ФБС")
-
-    c.save()
+    out.save(buf, format="PNG")
     buf.seek(0)
     return buf.getvalue()
 
@@ -1374,7 +1429,9 @@ async def get_order_barcodes_pdf(
     ps_barcode = db.query(PrintSettings).filter(PrintSettings.user_id == current_user.id).first()
     if label_width is None:
         label_width = (ps_barcode.ozon_width_mm or 58) if ps_barcode else 58
-    pdf_bytes = _generate_multi_product_barcode_pdf(items, label_width_mm=label_width)
+    # Ozon: отступ сверху 5 мм — не обрезало принтером. WB: без отступа — обычное центрирование
+    top_offset = _BARCODE_TOP_OFFSET_MM if mp.type == MarketplaceType.OZON else 0
+    pdf_bytes = _generate_multi_product_barcode_pdf(items, label_width_mm=label_width, top_offset_mm=top_offset)
     # Поворот только для Ozon (OZN-штрихкоды). WB EAN13 — стандартная ориентация для термоэтикеток
     barcode_rotate = 0
     if mp.type == MarketplaceType.OZON and ps_barcode:
@@ -1394,7 +1451,7 @@ async def get_order_barcodes_pdf(
 @router.get("/{order_id}/label")
 async def get_order_label(
     order_id: int,
-    format: str = Query("pdf", description="Ozon: pdf. WB: всегда PNG."),
+    format: str = Query("pdf", description="pdf — для печати (точный размер 58×40 мм). png — превью."),
     width: Optional[int] = Query(None, description="WB: ширина этикетки в мм. Если не указано — из настроек пользователя."),
     height: Optional[int] = Query(None, description="WB: высота этикетки в мм. Если не указано — из настроек пользователя."),
     db: Session = Depends(get_db),
@@ -1463,10 +1520,24 @@ async def get_order_label(
             w_mm = (_ps.ozon_width_mm or 58) if _ps else 58
             h_mm = (_ps.ozon_height_mm or 40) if _ps else 40
             ozon_rot = (_ps.ozon_label_rotate or 90) if _ps else 90
+            printer_dpi = (_ps.printer_dpi or 203) if _ps else 203
         except Exception:
-            w_mm, h_mm, ozon_rot = 58, 40, 90
+            w_mm, h_mm, ozon_rot, printer_dpi = 58, 40, 90, 203
         try:
-            content = _ozon_fbs_to_standard_label(content, width_mm=w_mm, height_mm=h_mm, rotate=ozon_rot)
+            if format == "png":
+                content = _ozon_fbs_to_png(content, width_mm=w_mm, height_mm=h_mm, rotate=ozon_rot)
+                return Response(
+                    content=content,
+                    media_type="image/png",
+                    headers={
+                        "Content-Disposition": f"inline; filename=label-{order.posting_number}.png",
+                        "Cache-Control": "no-cache, no-store, must-revalidate",
+                        "Pragma": "no-cache",
+                    },
+                )
+            content = _ozon_fbs_to_standard_label(
+                content, width_mm=w_mm, height_mm=h_mm, rotate=ozon_rot, dpi=printer_dpi,
+            )
         except Exception as _re:
             logger.warning("Ozon FBS to standard label failed: %s", _re, exc_info=True)
         return Response(
@@ -1495,6 +1566,20 @@ async def get_order_label(
                 height=h,
             )
         order_num = order.posting_number or order.external_id or ""
+        if format == "png":
+            content = _wb_sticker_to_png(
+                content, label_width_mm=w, label_height_mm=h,
+                order_number=order_num, rotate=wb_rotate,
+            )
+            return Response(
+                content=content,
+                media_type="image/png",
+                headers={
+                    "Content-Disposition": f"inline; filename=label-{order.posting_number}.png",
+                    "Cache-Control": "no-cache, no-store, must-revalidate",
+                    "Pragma": "no-cache",
+                },
+            )
         content = _wb_sticker_to_pdf(
             content, label_width_mm=w, label_height_mm=h,
             order_number=order_num, rotate=wb_rotate,
