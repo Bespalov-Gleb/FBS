@@ -75,12 +75,18 @@ def _sanitize_size(s: Optional[str]) -> Optional[str]:
 
 
 def _ozon_product_size(p: dict) -> Optional[str]:
-    """Размер товара Ozon из product dict."""
+    """
+    Размер товара Ozon из product dict.
+    Приоритет: p.size (Размер продавца из Attributes API) → dimensions → size_name.
+    """
+    raw = p.get("size")
+    if raw:
+        return _sanitize_size(raw)
     dims = p.get("dimensions")
     if isinstance(dims, dict):
         raw = dims.get("size_name") or dims.get("size")
     else:
-        raw = p.get("size_name") or p.get("size")
+        raw = p.get("size_name")
     return _sanitize_size(raw)
 
 
