@@ -14,7 +14,10 @@ export interface OrdersParams {
 }
 
 export interface OrderCompletePayload {
+  /** Один КИЗ (для заказа с 1 товаром) */
   kiz_code?: string;
+  /** Массив КИЗ — по одному на каждый товар (для заказов с 2+ товарами) */
+  kiz_codes?: string[];
 }
 
 export interface OrdersStats {

@@ -19,7 +19,7 @@ from app.models.print_settings import PrintSettings
 from app.models.user import User, UserRole
 from app.models.user_marketplace_access import UserMarketplaceAccess
 from app.repositories.order_repository import OrderRepository
-from app.schemas.order import OrderProductItem, OrderResponse, OrdersListResponse
+from app.schemas.order import OrderCompleteRequest, OrderProductItem, OrderResponse, OrdersListResponse
 from app.services.marketplace.wildberries import WildberriesClient
 from app.services.order_complete_service import OrderCompleteService
 from app.services.order_sync_service import OrderSyncService
@@ -814,12 +814,22 @@ async def complete_order(
             detail="Заказ открыт другим упаковщиком. Завершить может только он или администратор.",
         )
     mp = order.marketplace
-    kiz = (data.kiz_code if data else None) or None
-    if mp.is_kiz_enabled and not kiz:
-        raise HTTPException(400, detail="kiz_code required for this marketplace")
+    kiz_list: list[str] = []
+    if data:
+        if data.kiz_codes:
+            kiz_list = [str(k).strip()[:31] for k in data.kiz_codes if k and str(k).strip()]
+        elif data.kiz_code and str(data.kiz_code).strip():
+            kiz_list = [str(data.kiz_code).strip()[:31]]
+    required_count = order.quantity
+    if mp.is_kiz_enabled:
+        if len(kiz_list) < required_count:
+            raise HTTPException(
+                400,
+                detail=f"Нужен КИЗ для каждого товара: введите {required_count} код(ов) маркировки.",
+            )
     try:
         ok = await OrderCompleteService.complete_order(
-            order, current_user.id, kiz, db,
+            order, current_user.id, kiz_list, db,
         )
     except Exception as e:
         from app.core.exceptions import MarketplaceAPIException

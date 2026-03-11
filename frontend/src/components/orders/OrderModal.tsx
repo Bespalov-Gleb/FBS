@@ -68,13 +68,16 @@ interface OrderModalProps {
   onComplete: () => void;
 }
 
+const KIZ_MAX_LENGTH = 31;
+
 export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate = true, labelFormat: labelFormatProp, agentAvailable = false, defaultPrinter, onClose, onComplete }: OrderModalProps) {
-  const [kizCode, setKizCode] = useState('');
+  const kizCount = order?.quantity ?? 1;
+  const [kizCodes, setKizCodes] = useState<string[]>(() => Array.from({ length: kizCount }, () => ''));
   const [completing, setCompleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [imageError, setImageError] = useState(false);
-  const kizPrintedRef = useRef<string | null>(null);
-  const kizInputRef = useRef<HTMLInputElement>(null);
+  const kizPrintedRef = useRef<Set<string>>(new Set());
+  const kizInputRefs = useRef<(HTMLInputElement | null)[]>([]);
   const kizDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const marketplace = order ? marketplaces.find((m) => m.id === order.marketplace_id) : null;
@@ -83,48 +86,48 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
 
   useEffect(() => {
     if (order) {
-      setKizCode('');
+      const n = order.quantity ?? 1;
+      setKizCodes(Array.from({ length: n }, () => ''));
       setError(null);
       setImageError(false);
-      kizPrintedRef.current = null;
+      kizPrintedRef.current = new Set();
     }
   }, [order?.id]);
 
-  // Фокус на поле КИЗ при открытии модалки (для товаров с маркировкой)
+  // Фокус на первое поле КИЗ при открытии модалки (после рендера полей)
   useEffect(() => {
-    if (order && isKizRequired && !isCompleted) {
-      const t = setTimeout(() => kizInputRef.current?.focus(), 100);
+    if (order && isKizRequired && !isCompleted && kizCount > 0) {
+      const t = setTimeout(() => kizInputRefs.current[0]?.focus(), 150);
       return () => clearTimeout(t);
     }
-  }, [order?.id, isKizRequired, isCompleted]);
+  }, [order?.id, isKizRequired, isCompleted, kizCount]);
 
   // Автопечать дубля КИЗ после завершения ввода (debounce 500ms).
-  // Сканер вбивает символы посимвольно — ждём паузы, только потом печатаем.
+  // Для каждого введённого кода — печатаем дубль, если ещё не печатали.
   useEffect(() => {
-    if (!order || !isKizRequired || isCompleted || !kizCode.trim() || !autoPrintKizDuplicate) return;
-    const kizFull = kizCode.trim();
-    if (!kizFull) return;
+    if (!order || !isKizRequired || isCompleted || !autoPrintKizDuplicate) return;
+    const trimmed = kizCodes.map((k) => k.trim()).filter(Boolean);
+    if (!trimmed.length) return;
 
-    // Отменяем предыдущий таймер
     if (kizDebounceRef.current) clearTimeout(kizDebounceRef.current);
-
-    // Запускаем новый: если 500ms нет новых символов — код введён полностью
     kizDebounceRef.current = setTimeout(() => {
-      if (kizPrintedRef.current === kizFull) return;
-      kizPrintedRef.current = kizFull;
-      ordersApi.getKizLabelBlob(kizFull).then(async (blob) => {
-        if (agentAvailable) {
-          await printViaAgent(blob, undefined, 'noscale');
-        } else {
-          openBlobInNewWindow(blob);
-        }
-      }).catch(() => {});
+      trimmed.forEach((kizFull) => {
+        if (kizPrintedRef.current.has(kizFull)) return;
+        kizPrintedRef.current.add(kizFull);
+        ordersApi.getKizLabelBlob(kizFull).then(async (blob) => {
+          if (agentAvailable) {
+            await printViaAgent(blob, undefined, 'noscale');
+          } else {
+            openBlobInNewWindow(blob);
+          }
+        }).catch(() => {});
+      });
     }, 500);
 
     return () => {
       if (kizDebounceRef.current) clearTimeout(kizDebounceRef.current);
     };
-  }, [order, kizCode, isKizRequired, isCompleted, autoPrintKizDuplicate, agentAvailable]);
+  }, [order, kizCodes, isKizRequired, isCompleted, autoPrintKizDuplicate, agentAvailable]);
 
   if (!order) return null;
 
@@ -168,13 +171,16 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
   };
 
   const handlePrintKizDuplicate = async () => {
-    if (!kizCode.trim()) return;
+    const trimmed = kizCodes.map((k) => k.trim()).filter(Boolean);
+    if (!trimmed.length) return;
     try {
-      const blob = await ordersApi.getKizLabelBlob(kizCode.trim());
-      if (agentAvailable) {
-        await printViaAgent(blob, defaultPrinter, 'noscale');
-      } else {
-        openBlobInNewWindow(blob);
+      for (const kiz of trimmed) {
+        const blob = await ordersApi.getKizLabelBlob(kiz);
+        if (agentAvailable) {
+          await printViaAgent(blob, defaultPrinter, 'noscale');
+        } else {
+          openBlobInNewWindow(blob);
+        }
       }
     } catch {
       setError('Ошибка печати дубля КИЗ');
@@ -182,14 +188,18 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
   };
 
   const handleComplete = async () => {
-    if (isKizRequired && !kizCode.trim()) {
-      setError('Введите КИЗ');
+    const trimmed = kizCodes.map((k) => k.trim().slice(0, KIZ_MAX_LENGTH)).filter(Boolean);
+    if (isKizRequired && trimmed.length < (order.quantity ?? 1)) {
+      setError(`Нужен КИЗ для каждого товара: введите ${order.quantity ?? 1} код(ов) маркировки`);
       return;
     }
     setError(null);
     setCompleting(true);
     try {
-      await ordersApi.complete(order.id, isKizRequired ? { kiz_code: kizCode.trim().slice(0, 31) } : undefined);
+      const payload = isKizRequired
+        ? (trimmed.length === 1 ? { kiz_code: trimmed[0] } : { kiz_codes: trimmed })
+        : undefined;
+      await ordersApi.complete(order.id, payload);
       onComplete();
     } catch (err: unknown) {
       const msg = err && typeof err === 'object' && 'response' in err
@@ -301,18 +311,25 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
           )}
           {isKizRequired && !isCompleted && (
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-              <TextField
-                inputRef={kizInputRef}
-                label="КИЗ (отсканируйте или введите)"
-                value={kizCode}
-                onChange={(e) => setKizCode(e.target.value)}
-                fullWidth
-                size="small"
-                error={!!error && !kizCode.trim()}
-                placeholder="Сканируйте код маркировки"
-                inputProps={{ autoComplete: 'off' }}
-              />
-              {kizCode.trim() && (
+              {kizCodes.map((code, i) => (
+                <TextField
+                  key={i}
+                  inputRef={(el) => { kizInputRefs.current[i] = el; }}
+                  label={kizCount > 1 ? `КИЗ товара ${i + 1}` : 'КИЗ (отсканируйте или введите)'}
+                  value={code}
+                  onChange={(e) => {
+                    const next = [...kizCodes];
+                    next[i] = e.target.value.slice(0, KIZ_MAX_LENGTH);
+                    setKizCodes(next);
+                  }}
+                  fullWidth
+                  size="small"
+                  error={!!error && !code.trim()}
+                  placeholder="Сканируйте код маркировки"
+                  inputProps={{ autoComplete: 'off' }}
+                />
+              ))}
+              {kizCodes.some((k) => k.trim()) && (
                 <Button
                   size="small"
                   startIcon={<LocalPrintshop />}
@@ -341,7 +358,7 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
             <Button
               variant="contained"
               onClick={handleComplete}
-              disabled={completing || (isKizRequired && !kizCode.trim())}
+              disabled={completing || (isKizRequired && kizCodes.filter((k) => k.trim()).length < (order.quantity ?? 1))}
             >
               Собрано
             </Button>

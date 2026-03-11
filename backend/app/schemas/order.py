@@ -2,9 +2,15 @@
 Схемы для заказов
 """
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 from pydantic import BaseModel
+
+
+class OrderCompleteRequest(BaseModel):
+    """Запрос на отметку «Собрано». КИЗ — один или массив (по одному на каждый товар)."""
+    kiz_code: Optional[str] = None  # один КИЗ (для quantity=1)
+    kiz_codes: Optional[List[str]] = None  # массив КИЗ (для quantity>=2)
 
 
 class OrderProductItem(BaseModel):

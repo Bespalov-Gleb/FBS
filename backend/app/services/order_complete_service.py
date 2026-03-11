@@ -31,40 +31,36 @@ class OrderCompleteService:
     async def complete_order(
         order: Order,
         user_id: int,
-        kiz_code: str | None,
+        kiz_codes: list[str],
         db: Session,
     ) -> bool:
         """
         Отметить заказ «Собрано»: обновить в БД.
 
-        Ozon и WB: только локально — сохраняем статус и КИЗ.
-        На Ozon нет кнопки «Собрано», заказ пропадает после приёмки на складе.
-        На WB статус меняется только внутри приложения, supply API не вызывается.
+        Ozon и WB: только локально — сохраняем статус и КИЗ (по одному на каждый товар).
         """
-        kiz_trimmed = (kiz_code.strip()[:KIZ_MAX_LENGTH] if kiz_code and kiz_code.strip() else None) or None
+        kiz_list = [k.strip()[:KIZ_MAX_LENGTH] for k in kiz_codes if k and k.strip()]
+        first_kiz = kiz_list[0] if kiz_list else None
 
         mp = order.marketplace
         if not mp:
-            if kiz_trimmed:
-                _add_to_scanned_kiz(db, user_id, kiz_trimmed, order)
-            order.complete(user_id=user_id, kiz_code=kiz_trimmed)
+            for kiz in kiz_list:
+                _add_to_scanned_kiz(db, user_id, kiz, order)
+            order.complete(user_id=user_id, kiz_code=first_kiz)
             db.commit()
             return True
 
         if mp.type == MarketplaceType.OZON:
-            # Ozon: только локально — без вызова ship API
-            if kiz_trimmed:
-                _add_to_scanned_kiz(db, user_id, kiz_trimmed, order)
-            order.complete(user_id=user_id, kiz_code=kiz_trimmed)
+            for kiz in kiz_list:
+                _add_to_scanned_kiz(db, user_id, kiz, order)
+            order.complete(user_id=user_id, kiz_code=first_kiz)
             db.commit()
             return True
 
         if mp.type == MarketplaceType.WILDBERRIES:
-            # WB: только локально — без вызова supply API.
-            # Статус меняется только внутри приложения, WB не уведомляется.
-            if kiz_trimmed:
-                _add_to_scanned_kiz(db, user_id, kiz_trimmed, order)
-            order.complete(user_id=user_id, kiz_code=kiz_trimmed)
+            for kiz in kiz_list:
+                _add_to_scanned_kiz(db, user_id, kiz, order)
+            order.complete(user_id=user_id, kiz_code=first_kiz)
             db.commit()
             return True
 
