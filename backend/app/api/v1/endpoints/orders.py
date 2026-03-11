@@ -467,11 +467,11 @@ def _ozon_fbs_to_standard_label(
     if iw <= 0 or ih <= 0:
         raise ValueError("Invalid Ozon FBS image dimensions")
 
-    # Поворот: Ozon присылает «высокую» этикетку, нужна «широкая». PIL: положительный = против часовой.
+    # Поворот: Ozon присылает «высокую» этикетку, нужна «широкая» 58×40. PIL: -90 = по часовой.
     label_w = width_mm * mm
     label_h = height_mm * mm
     if rotate and rotate % 90 == 0:
-        img = img.rotate(rotate, expand=True)
+        img = img.rotate(-int(rotate), expand=True)  # по часовой для термоэтикетки
         iw, ih = img.size
 
     margin = 2 * mm
