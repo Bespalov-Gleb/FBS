@@ -1096,6 +1096,10 @@ def _wb_sticker_to_pdf(
     if rotate and rotate % 90 == 0:
         img = img.rotate(rotate, expand=True)
         iw, ih = img.size
+    # WB часто присылает «высокую» картинку — для широкой 58×40 всегда поворачиваем
+    elif ih > iw and label_width_mm > label_height_mm:
+        img = img.rotate(90, expand=True)
+        iw, ih = img.size
     label_w = label_width_mm * mm
     label_h = label_height_mm * mm
     scale = min(label_w / iw, label_h / ih, 1.0)
@@ -1451,7 +1455,7 @@ async def get_order_label(
             h = (ps.wb_height_mm if ps else 40) or 40
         else:
             w, h = width, height
-        wb_rotate = ps.wb_label_rotate if ps is not None else 90
+        wb_rotate = (ps.wb_label_rotate or 90) if ps else 90
         async with WildberriesClient(api_key=api_key) as client:
             content = await client.get_order_label(
                 order.external_id,
