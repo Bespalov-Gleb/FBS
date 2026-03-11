@@ -442,20 +442,26 @@ def _ozon_fbs_to_standard_label(
 ) -> bytes:
     """
     Привести PDF этикетки Ozon FBS к стандартному размеру и расположению,
-    как у штрихкода товара (58×40 или заданные мм).
-    Масштабирует и центрирует контент, при портретной ориентации — поворачивает в альбомную.
+    как у штрихкода товара (58×40 мм). Уменьшает и центрирует на одной этикетке.
+    - Отступы по краям (как у ШК товара) — чтобы не обрезало при печати
+    - Масштабирование вписать в область этикетки
+    - При портретной ориентации источника — поворот в альбомную
     """
     import io
 
     from pypdf import PdfReader, PdfWriter, Transformation
 
-    reader = PdfReader(io.BytesIO(pdf_bytes))
-    writer = PdfWriter()
+    # Отступы как у штрихкода товара (margin 2 мм) — контент не прижат к краям
+    margin_mm = 2
+    inner_w_pt = (width_mm - 2 * margin_mm) * MM_TO_PT
+    inner_h_pt = (height_mm - 2 * margin_mm) * MM_TO_PT
     target_w_pt = width_mm * MM_TO_PT
     target_h_pt = height_mm * MM_TO_PT
 
+    reader = PdfReader(io.BytesIO(pdf_bytes))
+    writer = PdfWriter()
+
     for page in reader.pages:
-        # Рекомендация pypdf: применить /Rotate к контенту до merge, чтобы mediabox соответствовал
         try:
             page.transfer_rotation_to_content()
         except Exception:
@@ -466,7 +472,7 @@ def _ozon_fbs_to_standard_label(
         if src_w <= 0 or src_h <= 0:
             continue
 
-        # Если источник в портрете (высота > ширины), а целевой формат альбомный — поворачиваем 90°
+        # Если источник в портрете, а целевой формат альбомный — поворачиваем 90°
         if src_h > src_w and target_w_pt > target_h_pt:
             page = page.rotate(90)
             src_w, src_h = src_h, src_w
@@ -474,10 +480,11 @@ def _ozon_fbs_to_standard_label(
             page = page.rotate(90)
             src_w, src_h = src_h, src_w
 
-        # scale to fit (вписать в целевой размер; без cap 1.0 — маленькие этикетки масштабируем вверх)
-        scale = min(target_w_pt / src_w, target_h_pt / src_h)
+        # Масштаб: вписать в внутреннюю область (с отступами), уменьшая при необходимости
+        scale = min(inner_w_pt / src_w, inner_h_pt / src_h)
         scaled_w = src_w * scale
         scaled_h = src_h * scale
+        # Центрирование по всей этикетке (как ШК товара)
         tx = (target_w_pt - scaled_w) / 2
         ty = (target_h_pt - scaled_h) / 2
 
