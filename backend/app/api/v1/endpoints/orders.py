@@ -448,50 +448,59 @@ def _ozon_fbs_to_standard_label(
 ) -> bytes:
     """
     Привести PDF этикетки Ozon FBS к формату 58×40 мм.
-    Лист = этикетка: страница PDF ровно width_mm × height_mm.
+    Рендерим PDF в изображение, поворачиваем изображение до формирования PDF,
+    затем создаём новый PDF нужного размера — без обрезки контента.
     """
     import io
 
-    from pypdf import PdfReader, PdfWriter, Transformation
+    from pdf2image import convert_from_bytes
+    from reportlab.lib.units import mm
+    from reportlab.lib.utils import ImageReader
+    from reportlab.pdfgen import canvas
 
-    reader = PdfReader(io.BytesIO(pdf_bytes))
-    writer = PdfWriter()
-    target_w_pt = width_mm * MM_TO_PT
-    target_h_pt = height_mm * MM_TO_PT
+    target_w = width_mm * mm
+    target_h = height_mm * mm
 
-    for page in reader.pages:
-        try:
-            page.transfer_rotation_to_content()
-        except Exception:
-            pass
-        mb = page.mediabox
-        src_w = float(mb.width)
-        src_h = float(mb.height)
-        if src_w <= 0 or src_h <= 0:
-            continue
-
-        # Повернуть, если портрет при целевом альбоме
-        if src_h > src_w and target_w_pt > target_h_pt:
-            page = page.rotate(90)
-            src_w, src_h = src_h, src_w
-        elif src_w > src_h and target_h_pt > target_w_pt:
-            page = page.rotate(90)
-            src_w, src_h = src_h, src_w
-
-        # Масштаб: вписать в целевой размер
-        scale = min(target_w_pt / src_w, target_h_pt / src_h)
-        scaled_w = src_w * scale
-        scaled_h = src_h * scale
-        tx = (target_w_pt - scaled_w) / 2
-        ty = (target_h_pt - scaled_h) / 2
-
-        # Лист ровно 58×40 — контент вписан и центрирован
-        blank = writer.add_blank_page(width=target_w_pt, height=target_h_pt)
-        op = Transformation().scale(sx=scale, sy=scale).translate(tx=tx, ty=ty)
-        blank.merge_transformed_page(page, op)
+    images = convert_from_bytes(pdf_bytes, dpi=150)
+    if not images:
+        raise ValueError("PDF returned no pages")
 
     buf = io.BytesIO()
-    writer.write(buf)
+    c = canvas.Canvas(buf, pagesize=(target_w, target_h))
+
+    for idx, img in enumerate(images):
+        if idx > 0:
+            c.showPage()
+        img = img.convert("RGB")
+        iw, ih = img.size
+        if iw <= 0 or ih <= 0:
+            continue
+
+        # Поворот изображения ДО вставки в PDF (не внутри PDF — без обрезки)
+        if ih > iw and width_mm > height_mm:
+            img = img.rotate(90, expand=True)
+            iw, ih = img.size
+        elif iw > ih and height_mm > width_mm:
+            img = img.rotate(90, expand=True)
+            iw, ih = img.size
+
+        scale = min(target_w / iw, target_h / ih, 1.0)
+        draw_w = iw * scale
+        draw_h = ih * scale
+        x0 = (target_w - draw_w) / 2
+        y0 = (target_h - draw_h) / 2
+
+        img_buf = io.BytesIO()
+        img.save(img_buf, format="PNG")
+        img_buf.seek(0)
+
+        c.drawImage(
+            ImageReader(img_buf),
+            x0, y0, width=draw_w, height=draw_h,
+            preserveAspectRatio=True,
+        )
+
+    c.save()
     buf.seek(0)
     return buf.getvalue()
 
