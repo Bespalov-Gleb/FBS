@@ -446,18 +446,13 @@ def _ozon_fbs_to_standard_label(
     width_mm: int = 58,
     height_mm: int = 40,
     rotate: int = 90,
-    use_a4: bool = True,
 ) -> bytes:
     """
-    Этикетка Ozon FBS: рендерим PDF в изображение, ориентируем правильно,
-    масштабируем и размещаем на странице.
-    use_a4=True: лист A4 альбомная — этикетка по центру, печать без искажений в диалоге.
-    use_a4=False: страница 58×40 мм (как WB).
+    Этикетка Ozon FBS: как WB — PDF в изображение, ориентируем, страница 58×40 мм.
     """
     import io
 
     from pdf2image import convert_from_bytes
-    from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib.units import mm
     from reportlab.lib.utils import ImageReader
     from reportlab.pdfgen import canvas
@@ -466,15 +461,8 @@ def _ozon_fbs_to_standard_label(
     if not images:
         raise ValueError("PDF returned no pages")
 
-    if use_a4:
-        page_w, page_h = landscape(A4)  # 297×210 мм — стандартный лист
-        margin_mm = 15
-        max_w = (297 - 2 * margin_mm) * mm
-        max_h = (210 - 2 * margin_mm) * mm
-    else:
-        page_w = width_mm * mm
-        page_h = height_mm * mm
-        max_w, max_h = page_w, page_h
+    page_w = width_mm * mm
+    page_h = height_mm * mm
 
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=(page_w, page_h))
@@ -487,8 +475,8 @@ def _ozon_fbs_to_standard_label(
         if iw <= 0 or ih <= 0:
             continue
 
-        # Ориентируем: этикетка широкая (не перевёрнута на бок), как WB
-        target_landscape = width_mm > height_mm or use_a4
+        # Ориентируем: широкая этикетка (58×40), как WB
+        target_landscape = width_mm > height_mm
         img_portrait = ih > iw
         if target_landscape and img_portrait:
             deg = rotate if (rotate and rotate % 90 == 0) else 90
@@ -499,8 +487,8 @@ def _ozon_fbs_to_standard_label(
                 img = img.rotate(rotate, expand=True)
                 iw, ih = img.size
 
-        # Масштаб: вписать в область (для A4 — с полями)
-        scale = min(max_w / iw, max_h / ih, 1.0)
+        # Масштаб: вписать в 58×40
+        scale = min(page_w / iw, page_h / ih, 1.0)
         draw_w = iw * scale
         draw_h = ih * scale
         x0 = (page_w - draw_w) / 2
@@ -1464,9 +1452,7 @@ async def get_order_label(
         except Exception:
             w_mm, h_mm, ozon_rot = 58, 40, 90
         try:
-            content = _ozon_fbs_to_standard_label(
-                content, width_mm=w_mm, height_mm=h_mm, rotate=ozon_rot, use_a4=True,
-            )
+            content = _ozon_fbs_to_standard_label(content, width_mm=w_mm, height_mm=h_mm, rotate=ozon_rot)
         except Exception as _re:
             logger.warning("Ozon FBS to standard label failed: %s", _re, exc_info=True)
         return Response(
