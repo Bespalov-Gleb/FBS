@@ -172,23 +172,24 @@ class OrderSyncService:
                                     if i >= len(our_prods) or our_prods[i].get("size"):
                                         continue
                                     size_val = None
-                                    dims = dp.get("dimensions") or {}
-                                    if isinstance(dims, dict):
-                                        size_val = dims.get("size_name") or dims.get("size")
+                                    # Сначала атрибуты — там чаще буквенный размер (M, L, XL)
+                                    for attrs_key in ("optional_product_attributes", "required_product_attributes"):
+                                        attrs = dp.get(attrs_key) or []
+                                        for a in attrs if isinstance(attrs, list) else []:
+                                            if not isinstance(a, dict):
+                                                continue
+                                            name = (a.get("attribute_name") or a.get("name") or "").lower()
+                                            if "размер" in name or "size" in name:
+                                                v = a.get("attribute_value") or a.get("value")
+                                                if v:
+                                                    size_val = v
+                                                    break
+                                        if size_val:
+                                            break
                                     if not size_val:
-                                        for attrs_key in ("optional_product_attributes", "required_product_attributes"):
-                                            attrs = dp.get(attrs_key) or []
-                                            for a in attrs if isinstance(attrs, list) else []:
-                                                if not isinstance(a, dict):
-                                                    continue
-                                                name = (a.get("attribute_name") or a.get("name") or "").lower()
-                                                if "размер" in name or "size" in name:
-                                                    v = a.get("attribute_value") or a.get("value")
-                                                    if v:
-                                                        size_val = v
-                                                        break
-                                            if size_val:
-                                                break
+                                        dims = dp.get("dimensions") or {}
+                                        if isinstance(dims, dict):
+                                            size_val = dims.get("size_name") or dims.get("size")
                                     if size_val and str(size_val).strip():
                                         our_prods[i]["size"] = str(size_val).strip()
                                         sizes_from_get += 1
