@@ -808,14 +808,15 @@ class OzonClient(BaseMarketplaceClient):
         "с принтом", "с рисунком", "с надписью",
     )
 
-    MAX_SIZE_VALUE_LEN = 15  # Макс. длина валидного размера
+    MAX_SIZE_VALUE_LEN = 40  # DTF_adidas_mario_man_black_5 и т.п. — строчки варианта как размер
 
     @staticmethod
     def _validate_and_extract_seller_size(raw: Any) -> Optional[str]:
         """
         Валидация и извлечение размера продавца из значения атрибута.
-        Отсекает длинные строки, описание варианта и идентификаторы (артикулы, коды).
-        Приоритет — буквенная часть (S/M/L/XL), числовые размеры и диапазоны (46-52).
+        Возвращает строчки вида DTF_adidas_mario_man_black_5, vtor_gussi_man1 — на сервисе
+        они показываются как размер; ошибочные пропускаются вручную.
+        Отсекает только длинные строки и описание варианта (чёрный список).
         """
         if raw is None:
             return None
@@ -823,9 +824,6 @@ class OzonClient(BaseMarketplaceClient):
         if not s or len(s) > 60:
             return None
         if s.startswith("{") or s.startswith("[") or "tcTable" in s or "IcTable" in s:
-            return None
-        # Подчёркивание — признак артикула/варианта (vtor_gussi_man1, 2_EBUSHKI_man), не размера
-        if "_" in s:
             return None
         s_lower = s.lower()
         for bad in OzonClient.OZON_SIZE_BLACKLIST:
