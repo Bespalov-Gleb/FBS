@@ -808,39 +808,21 @@ class OzonClient(BaseMarketplaceClient):
         "с принтом", "с рисунком", "с надписью",
     )
 
-    MAX_SIZE_VALUE_LEN = 40  # DTF_adidas_mario_man_black_5 и т.п. — строчки варианта как размер
-
     @staticmethod
     def _validate_and_extract_seller_size(raw: Any) -> Optional[str]:
         """
-        Валидация и извлечение размера продавца из значения атрибута.
-        Возвращает строчки вида DTF_adidas_mario_man_black_5, vtor_gussi_man1 — на сервисе
-        они показываются как размер; ошибочные пропускаются вручную.
-        Отсекает только длинные строки и описание варианта (чёрный список).
+        Возвращает значение атрибута размера как есть. Ограничений нет —
+        ставим то, что возвращает Ozon (DTF_adidas_mario_man_black_5, vtor_gussi_man1,
+        XXL / 52-54 и т.п.). Отсекаем только JSON/таблицы и пустые строки.
         """
         if raw is None:
             return None
         s = str(raw).strip()
-        if not s or len(s) > 60:
+        if not s or len(s) > 120:
             return None
         if s.startswith("{") or s.startswith("[") or "tcTable" in s or "IcTable" in s:
             return None
-        s_lower = s.lower()
-        for bad in OzonClient.OZON_SIZE_BLACKLIST:
-            if bad in s_lower:
-                return None
-        letter = OzonClient._extract_letter_size(s)
-        if letter:
-            return letter
-        # Числовой диапазон (50-52, 46/48) или одиночное число
-        if re.match(r"^\d{1,2}(?:\s*[-/]\s*\d{1,2})?$", s):
-            return s
-        if re.match(r"^\d{1,2}$", s):
-            return s
-        # Короткие строки без пробелов (числа+буквы допустимы: 50-52, EU42 и т.п.)
-        if len(s) <= OzonClient.MAX_SIZE_VALUE_LEN and " " not in s:
-            return s
-        return None
+        return s
 
     @staticmethod
     def _extract_size_from_offer_id(offer_id: str) -> Optional[str]:
