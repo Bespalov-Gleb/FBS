@@ -167,25 +167,22 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
   const handlePrint = async () => {
     setError(null);
     try {
-      // Товарный штрихкод: и для Ozon, и для WB
       const lw = labelFormatProp === '80mm' ? 80 : 58;
-      const barcodesBlob = await ordersApi.getBarcodesPdfBlob(order.id, lw).catch(() => null);
-      if (barcodesBlob) {
-        if (agentAvailable) {
-          await printViaAgent(barcodesBlob, defaultPrinter, 'noscale');
-        } else {
-          openBlobInNewWindow(barcodesBlob);
-        }
-      }
-      // ФБС этикетка (стикер отправления)
-      const blob = await ordersApi.getLabelBlob(
-        order.id,
-        labelFormat,
-        order.marketplace_type === 'wildberries' ? labelWidth : undefined,
-      );
+      // Загружаем оба blob одновременно; при выключенном агенте открываем окна синхронно
+      const [barcodesBlob, blob] = await Promise.all([
+        ordersApi.getBarcodesPdfBlob(order.id, lw).catch(() => null),
+        ordersApi.getLabelBlob(
+          order.id,
+          labelFormat,
+          order.marketplace_type === 'wildberries' ? labelWidth : undefined,
+        ),
+      ]);
       if (agentAvailable) {
+        if (barcodesBlob) await printViaAgent(barcodesBlob, defaultPrinter, 'noscale');
         await printViaAgent(blob, defaultPrinter, 'noscale');
       } else {
+        // Оба окна открываем синхронно в рамках жеста пользователя (иначе блокирует popup)
+        if (barcodesBlob) openBlobInNewWindow(barcodesBlob);
         openBlobInNewWindow(blob);
       }
     } catch (err: unknown) {

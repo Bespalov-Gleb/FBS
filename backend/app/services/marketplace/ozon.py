@@ -800,6 +800,67 @@ class OzonClient(BaseMarketplaceClient):
         "размер",
     )
 
+    # Слова, по которым отсекаем «размер» — это описание варианта, не размер
+    OZON_SIZE_BLACKLIST = (
+        "футболка", "майка", "блуза", "рубашка", "платье", "брюки", "джинсы",
+        "принт", "100%", "хлопок", "полиэстер", "мужская", "женская", "детская",
+        "белая", "черная", "синяя", "красная", "зеленая", "желтая", "серая",
+        "с принтом", "с рисунком", "с надписью",
+    )
+
+    MAX_SIZE_VALUE_LEN = 15  # Макс. длина валидного размера
+
+    @staticmethod
+    def _validate_and_extract_seller_size(raw: Any) -> Optional[str]:
+        """
+        Валидация и извлечение размера продавца из значения атрибута.
+        Отсекает длинные строки и описание варианта, приоритет — буквенная часть.
+        """
+        if raw is None:
+            return None
+        s = str(raw).strip()
+        if not s or len(s) > 60:
+            return None
+        if s.startswith("{") or s.startswith("[") or "tcTable" in s or "IcTable" in s:
+            return None
+        s_lower = s.lower()
+        for bad in OzonClient.OZON_SIZE_BLACKLIST:
+            if bad in s_lower:
+                return None
+        letter = OzonClient._extract_letter_size(s)
+        if letter:
+            return letter
+        if re.match(r"^\d{1,2}(?:\s*[-/]\s*\d{1,2})?$", s):
+            return s
+        if len(s) <= OzonClient.MAX_SIZE_VALUE_LEN and " " not in s:
+            return s
+        if re.match(r"^\d{1,2}$", s):
+            return s
+        return None
+
+    @staticmethod
+    def _extract_size_from_offer_id(offer_id: str) -> Optional[str]:
+        """
+        Извлечь размер из артикула. Паттерны: _L, _M, _XL, _5, _42 в конце.
+        """
+        if not offer_id or not isinstance(offer_id, str):
+            return None
+        s = offer_id.strip()
+        if len(s) < 2:
+            return None
+        m = re.search(r"_([XS]{0,2}[SML]|XL{1,3}|XXX?S)(?:_|$)", s, re.IGNORECASE)
+        if m:
+            return m.group(1).upper()
+        m = re.search(r"_([A-Za-z]{1,4})$", s)
+        if m:
+            val = m.group(1).upper()
+            if val in ("S", "M", "L", "XS", "XL", "XXS", "XXL", "XXXL"):
+                return val
+        m = re.search(r"_(\d{1,2})$", s)
+        if m:
+            return m.group(1)
+        return None
+
     @staticmethod
     def _extract_letter_size(size_str: str) -> Optional[str]:
         """
@@ -989,12 +1050,12 @@ class OzonClient(BaseMarketplaceClient):
                                         parsed = self._parse_tctable_size(s)
                                         size_val = parsed if parsed else s
                                 break
-                        if size_val:
-                            # Приоритет — буквенная часть (XL, L, M); иначе полная строка
-                            letter = self._extract_letter_size(size_val)
-                            result[oid] = letter if letter else size_val
+                        # Валидация: отсекаем длинные/описание, извлекаем буквенную часть
+                        validated = self._validate_and_extract_seller_size(size_val) if size_val else None
+                        if validated:
+                            result[oid] = validated
                             logger.info(
-                                f"Ozon size for {oid}: {result[oid]} "
+                                f"Ozon size for {oid}: {validated} "
                                 f"(raw={size_val}, attr_id={size_attr_id})"
                             )
                         else:

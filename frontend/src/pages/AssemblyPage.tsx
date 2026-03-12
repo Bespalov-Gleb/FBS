@@ -206,26 +206,25 @@ export default function AssemblyPage() {
         const wbWidth = printSettings?.wb_labels?.width_mm ?? (printSettings?.label_format === '80mm' ? 80 : 58);
         const wbHeight = printSettings?.wb_labels?.height_mm ?? 40;
         try {
-          // Штрихкод товара: Ozon и WB (если skus есть в заказе)
           const labelWidthForBarcode =
             order.marketplace_type === 'ozon' ? ozonWidth : wbWidth;
-          const barcodesBlob = await ordersApi
-            .getBarcodesPdfBlob(order.id, labelWidthForBarcode)
-            .catch(() => null);
-          const labelBlob = await ordersApi.getLabelBlob(
-            order.id,
-            labelFormat,
-            order.marketplace_type === 'wildberries' ? wbWidth : undefined,
-            order.marketplace_type === 'wildberries' ? wbHeight : undefined,
-          );
-          if (barcodesBlob) await printBlob(barcodesBlob);
+          // Загружаем оба blob одновременно; при выключенном агенте открываем окна синхронно
+          const [barcodesBlob, labelBlob] = await Promise.all([
+            ordersApi.getBarcodesPdfBlob(order.id, labelWidthForBarcode).catch(() => null),
+            ordersApi.getLabelBlob(
+              order.id,
+              labelFormat,
+              order.marketplace_type === 'wildberries' ? wbWidth : undefined,
+              order.marketplace_type === 'wildberries' ? wbHeight : undefined,
+            ),
+          ]);
           if (agentAvailable) {
+            if (barcodesBlob) await printBlob(barcodesBlob);
             await printBlob(labelBlob, { noFallback: !!barcodesBlob });
           } else {
-            setTimeout(
-              () => printBlob(labelBlob, { noFallback: !!barcodesBlob }),
-              150,
-            );
+            // Оба окна открываем синхронно в рамках жеста пользователя (иначе блокирует popup)
+            if (barcodesBlob) openBlobInNewWindow(barcodesBlob);
+            openBlobInNewWindow(labelBlob);
           }
         } catch {
           // игнорируем ошибки печати
