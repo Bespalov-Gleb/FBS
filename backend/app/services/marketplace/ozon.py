@@ -856,9 +856,7 @@ class OzonClient(BaseMarketplaceClient):
             val = m.group(1).upper()
             if val in ("S", "M", "L", "XS", "XL", "XXS", "XXL", "XXXL"):
                 return val
-        m = re.search(r"_(\d{1,2})$", s)
-        if m:
-            return m.group(1)
+        # Не извлекаем _5, _1 и т.п. — это обычно номер варианта/дизайна, а не размер
         return None
 
     @staticmethod
