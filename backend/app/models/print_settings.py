@@ -47,3 +47,6 @@ class PrintSettings(BaseModel):
 
     # DPI принтера (203 или 300) — для точной генерации этикеток под физический размер
     printer_dpi = Column(Integer, nullable=True, default=203)
+
+    # Масштаб печати SumatraPDF: fit (рекомендуется) | shrink | noscale
+    print_scale = Column(String(20), nullable=True, default="fit")

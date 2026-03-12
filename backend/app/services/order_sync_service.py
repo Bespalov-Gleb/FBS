@@ -203,7 +203,9 @@ class OrderSyncService:
                                             size_val = dims.get("size_name") or dims.get("size")
                                             size_source = "dimensions.size_name|size" if size_val else None
                                     if size_val and str(size_val).strip():
-                                        our_prods[i]["size"] = str(size_val).strip()
+                                        raw = str(size_val).strip()
+                                        letter = OzonClient._extract_letter_size(raw)
+                                        our_prods[i]["size"] = letter if letter else raw
                                         sizes_from_get += 1
                                         logger.debug(
                                             "Ozon size [posting/fbs/get fallback]: posting=%s product_idx=%s source=%s size=%r",

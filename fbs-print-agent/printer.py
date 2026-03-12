@@ -23,10 +23,17 @@ def get_sumatra_path() -> Optional[str]:
     return _find_sumatra()
 
 
+# Размер этикетки 58×40 мм — стандарт термопринтеров
+LABEL_WIDTH_MM = 58
+LABEL_HEIGHT_MM = 40
+
+
 def _image_to_pdf(img_path: str, pdf_path: str) -> None:
-    """Конвертировать изображение в PDF"""
+    """Конвертировать изображение в PDF с фиксированным размером страницы 58×40 мм."""
+    size_pt = (img2pdf.mm_to_pt(LABEL_WIDTH_MM), img2pdf.mm_to_pt(LABEL_HEIGHT_MM))
+    layout_fun = img2pdf.get_layout_fun(size_pt)
     with open(pdf_path, "wb") as f:
-        f.write(img2pdf.convert(img_path))
+        f.write(img2pdf.convert(img_path, layout_fun=layout_fun))
 
 
 def _print_pdf_with_printer(

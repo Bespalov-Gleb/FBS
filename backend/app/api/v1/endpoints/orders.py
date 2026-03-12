@@ -463,7 +463,7 @@ def _ozon_fbs_to_png(
     from PIL import Image as PILImage, ImageChops
     from pdf2image import convert_from_bytes
 
-    images = convert_from_bytes(pdf_bytes, dpi=200)
+    images = convert_from_bytes(pdf_bytes, dpi=203)  # DPI термопринтера для консистентности
     if not images:
         raise ValueError("PDF returned no pages")
     img = images[0].convert("RGB")
@@ -487,11 +487,11 @@ def _ozon_fbs_to_png(
     except Exception:
         pass
 
-    # Целевой размер в пикселях: 100% от 40×58 мм при 96 DPI (превью)
+    # Целевой размер в пикселях: 100% от 58×40 мм при 96 DPI (превью)
     MM_TO_INCH = 1 / 25.4
     DPI = 96
-    target_w_pt = (min(width_mm, height_mm) * MM_TO_INCH * DPI)
-    target_h_pt = (max(width_mm, height_mm) * MM_TO_INCH * DPI)
+    target_w_pt = (width_mm * MM_TO_INCH * DPI)
+    target_h_pt = (height_mm * MM_TO_INCH * DPI)
     scale = min(target_w_pt / iw, target_h_pt / ih, 1.0)
     new_w = int(iw * scale)
     new_h = int(ih * scale)
@@ -512,9 +512,8 @@ def _ozon_fbs_to_standard_label(
     dpi: int = 203,
 ) -> bytes:
     """
-    Этикетка Ozon FBS: как ШК товаров — страница 40×58 мм (книжная), контент повёрнут и вписан.
-    Логика как у WB: изображение → поворот → масштаб → один стикер.
-    dpi: разрешение рендера (203 или 300 — DPI принтера).
+    Этикетка Ozon FBS: страница 58×40 мм (альбом — ширина × высота стикера).
+    Контент повёрнут и вписан. dpi: 203 или 300 (DPI термопринтера).
     """
     import io
 
@@ -527,9 +526,9 @@ def _ozon_fbs_to_standard_label(
     if not images:
         raise ValueError("PDF returned no pages")
 
-    # Книжная ориентация: 40 ширина × 58 высота (стикер 58×40 мм)
-    page_w = min(width_mm, height_mm) * mm
-    page_h = max(width_mm, height_mm) * mm
+    # Альбомная ориентация: 58 ширина × 40 высота — соответствует физическому стикеру
+    page_w = width_mm * mm
+    page_h = height_mm * mm
 
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=(page_w, page_h))
@@ -542,7 +541,7 @@ def _ozon_fbs_to_standard_label(
         if iw <= 0 or ih <= 0:
             continue
 
-        # Ozon присылает портрет (высокий) — крутим 90° чтобы вписать в книжную 40×58
+        # Ozon присылает портрет (высокий) — крутим 90° чтобы вписать в широкий 58×40
         img_portrait = ih > iw
         if img_portrait:
             deg = rotate if (rotate and rotate % 90 == 0) else 90
@@ -1131,8 +1130,8 @@ def _wb_sticker_to_png(
 
     MM_TO_INCH = 1 / 25.4
     DPI = 96
-    target_w = int(min(label_width_mm, label_height_mm) * MM_TO_INCH * DPI)
-    target_h = int(max(label_width_mm, label_height_mm) * MM_TO_INCH * DPI)
+    target_w = int(label_width_mm * MM_TO_INCH * DPI)
+    target_h = int(label_height_mm * MM_TO_INCH * DPI)
     scale = min(target_w / iw, target_h / ih, 1.0)
     new_w = int(iw * scale)
     new_h = int(ih * scale)
@@ -1200,7 +1199,7 @@ def _wb_sticker_to_pdf(
         iw, ih = img.size
     label_w = label_width_mm * mm
     label_h = label_height_mm * mm
-    scale = min(label_w / iw, label_h / ih, 1.0)
+    scale = min(label_w / iw, label_h / ih)  # вписать в стикер (масштаб вверх/вниз)
     draw_w = iw * scale
     draw_h = ih * scale
     x0 = (label_w - draw_w) / 2

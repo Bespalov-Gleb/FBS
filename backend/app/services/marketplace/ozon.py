@@ -6,6 +6,7 @@
 https://github.com/irenicaa/ozon-seller
 """
 import json
+import re
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
@@ -791,6 +792,36 @@ class OzonClient(BaseMarketplaceClient):
     # Fallback: attribute_id 8229 — «Размер» (из неофициальных источников, может отличаться по категориям)
     OZON_SIZE_ATTRIBUTE_ID_FALLBACK = 8229
 
+    # Варианты названий атрибута «размер продавца» (приоритет при поиске)
+    OZON_SIZE_ATTR_NAMES = (
+        "размер продавца",
+        "размер артикула",
+        "размер товара",
+        "размер",
+    )
+
+    @staticmethod
+    def _extract_letter_size(size_str: str) -> Optional[str]:
+        """
+        Извлечь буквенную часть размера из строк вида "XL / 50-52" или "50 - 52 / XL".
+        Возвращает "XL", "L", "M" и т.д. или None если не найдено.
+        """
+        s = (size_str or "").strip()
+        if not s:
+            return None
+        # Паттерн: буквенный размер в начале (XXS, XS, S, M, L, XL, XXL, XXXL, 4XL и т.д.)
+        m = re.match(r"^(XXX?S|XXX?L|\d+XL|XS|S|M|L|XL|XXL)(?:\s*[/\-]|\s*$)", s, re.IGNORECASE)
+        if m:
+            return m.group(1).strip()
+        # Паттерн: буквенный размер в конце "50 - 52 / XL" или "46-48 / M"
+        m = re.search(r"[/\-]\s*(XXX?S|XXX?L|\d+XL|XS|S|M|L|XL|XXL)\s*$", s, re.IGNORECASE)
+        if m:
+            return m.group(1).strip()
+        # Одна буква или короткое сочетание без цифр — уже размер
+        if re.match(r"^[A-Za-zА-Яа-яЁё]+$", s) and len(s) <= 10:
+            return s
+        return None
+
     @staticmethod
     def _parse_tctable_size(raw_val: Any) -> Optional[str]:
         """
@@ -839,7 +870,8 @@ class OzonClient(BaseMarketplaceClient):
     ) -> Optional[int]:
         """
         Получить attribute_id размера для категории через POST /v1/description-category/attribute.
-        Приоритет: «Размер продавца» (формат 46-48 / M) — затем «Размер» (только цифры).
+        Приоритет: Размер продавца → Размер артикула → Размер товара → Размер.
+        Проверяем name, title и description атрибута.
         """
         try:
             response = await self._request(
@@ -853,22 +885,19 @@ class OzonClient(BaseMarketplaceClient):
             attrs = response.get("result") or response.get("attributes") or []
             if not isinstance(attrs, list):
                 attrs = []
-            # Сначала ищем «Размер продавца» (формат 46-48 / M с буквами)
-            for a in attrs:
-                name = (a.get("name") or a.get("title") or "").strip().lower()
-                if "размер продавца" in name:
-                    aid = a.get("id") or a.get("attribute_id")
-                    if aid is not None:
-                        logger.info(f"Ozon category attr 'Размер продавца' found: id={aid} (cat={description_category_id} type={type_id})")
-                        return int(aid)
-            # Fallback: «Размер» (только цифры)
-            for a in attrs:
-                name = (a.get("name") or a.get("title") or "").strip().lower()
-                if "размер" in name:
-                    aid = a.get("id") or a.get("attribute_id")
-                    if aid is not None:
-                        logger.info(f"Ozon category attr 'Размер' found: id={aid} (cat={description_category_id} type={type_id})")
-                        return int(aid)
+            # Ищем по приоритету: Размер продавца, Размер артикула, Размер товара, Размер
+            for search_name in self.OZON_SIZE_ATTR_NAMES:
+                for a in attrs:
+                    name = (a.get("name") or a.get("title") or "").strip().lower()
+                    desc = (a.get("description") or "").strip().lower()
+                    if search_name in name or search_name in desc:
+                        aid = a.get("id") or a.get("attribute_id")
+                        if aid is not None:
+                            logger.info(
+                                f"Ozon category attr '{search_name}' found: id={aid} "
+                                f"(cat={description_category_id} type={type_id})"
+                            )
+                            return int(aid)
             logger.info(
                 f"Ozon category attr 'Размер' not found: cat={description_category_id} type={type_id} "
                 f"attrs_sample={[(a.get('name'), a.get('id')) for a in attrs[:5]]}",
@@ -884,8 +913,8 @@ class OzonClient(BaseMarketplaceClient):
     ) -> dict[str, str]:
         """
         Получение размера товаров через Ozon Attributes API.
-        Endpoint: POST /v4/product/info/attributes (ozon-api-client)
-        Динамически определяет attribute_id размера через /v1/description-category/attribute.
+        Endpoint: POST /v4/product/info/attributes
+        Пагинация через last_id. Приоритет — буквенная часть (XL, L, M).
         Returns: { offer_id: size }
         """
         if not offer_ids:
@@ -897,75 +926,92 @@ class OzonClient(BaseMarketplaceClient):
 
         for i in range(0, len(offer_ids), batch_size):
             batch = offer_ids[i : i + batch_size]
-            try:
-                # docs.ozon.ru: GetProductAttributesV4 — filter, limit (1–1000), last_id
-                response = await self._request(
-                    method="POST",
-                    endpoint="/v4/product/info/attributes",
-                    json_data={
+            last_id = ""
+            page_num = 0
+            while True:
+                try:
+                    json_data: dict[str, Any] = {
                         "filter": {
                             "offer_id": batch,
                             "visibility": "ALL",
                         },
                         "limit": max(1, min(len(batch), 1000)),
-                    },
-                )
-                items = response.get("result") or response.get("items") or []
-                if isinstance(items, dict):
-                    items = items.get("items", [])
-                if not isinstance(items, list):
-                    items = []
-                logger.info(
-                    f"Ozon get_product_sizes: got {len(items)} items, response keys: {list(response.keys())}",
-                )
-                for item in items:
-                    oid = item.get("offer_id")
-                    if not oid:
-                        continue
-                    desc_cat = item.get("description_category_id")
-                    type_id = item.get("type_id")
-                    attrs = item.get("attributes") or []
-                    size_attr_id = None
-                    if desc_cat is not None and type_id is not None:
-                        key = (int(desc_cat), int(type_id))
-                        if key not in size_attr_cache:
-                            size_attr_cache[key] = await self._get_category_size_attribute_id(
-                                int(desc_cat), int(type_id)
-                            )
-                        size_attr_id = size_attr_cache[key]
-                    if size_attr_id is None:
-                        size_attr_id = self.OZON_SIZE_ATTRIBUTE_ID_FALLBACK
-                    size_val = ""
-                    for a in attrs:
-                        aid = a.get("attribute_id") or a.get("id")
-                        if aid is not None and int(aid) == size_attr_id:
-                            vals = a.get("values") or []
-                            raw = vals[0] if vals else None
-                            if isinstance(raw, dict):
-                                raw = raw.get("value", raw)
-                            if raw is not None:
+                    }
+                    if last_id:
+                        json_data["last_id"] = last_id
+                    response = await self._request(
+                        method="POST",
+                        endpoint="/v4/product/info/attributes",
+                        json_data=json_data,
+                    )
+                    items = response.get("result") or response.get("items") or []
+                    if isinstance(items, dict):
+                        items = items.get("items", [])
+                    if not isinstance(items, list):
+                        items = []
+                    page_num += 1
+                    logger.info(
+                        f"Ozon get_product_sizes: page {page_num} got {len(items)} items, "
+                        f"response keys: {list(response.keys())}",
+                    )
+                    for item in items:
+                        oid = item.get("offer_id")
+                        if not oid:
+                            continue
+                        # Поддержка обоих вариантов: description_category_id и category_id
+                        desc_cat = item.get("description_category_id") or item.get("category_id")
+                        type_id = item.get("type_id")
+                        attrs = item.get("attributes") or []
+                        size_attr_id = None
+                        if desc_cat is not None and type_id is not None:
+                            key = (int(desc_cat), int(type_id))
+                            if key not in size_attr_cache:
+                                size_attr_cache[key] = await self._get_category_size_attribute_id(
+                                    int(desc_cat), int(type_id)
+                                )
+                            size_attr_id = size_attr_cache[key]
+                        if size_attr_id is None:
+                            size_attr_id = self.OZON_SIZE_ATTRIBUTE_ID_FALLBACK
+                        size_val = ""
+                        for a in attrs:
+                            aid = a.get("attribute_id") or a.get("id")
+                            if aid is not None and int(aid) == size_attr_id:
+                                vals = a.get("values") or []
+                                raw = vals[0] if vals else None
                                 if isinstance(raw, dict):
-                                    parsed = self._parse_tctable_size(raw)
-                                    size_val = parsed or ""
-                                else:
-                                    s = str(raw).strip()
-                                    parsed = self._parse_tctable_size(s)
-                                    size_val = parsed if parsed else s
-                            break
-                    if size_val:
-                        result[oid] = size_val
-                        logger.info(f"Ozon size for {oid}: {size_val} (attr_id={size_attr_id})")
-                    else:
-                        attr_ids = [a.get("attribute_id") or a.get("id") for a in attrs]
-                        logger.info(
-                            f"Ozon no size for {oid}: desc_cat={desc_cat} type_id={type_id} "
-                            f"size_attr_id={size_attr_id} product_attr_ids={attr_ids[:10]}",
-                        )
-            except Exception as e:
-                logger.warning(
-                    f"Ozon get_product_sizes failed: {e}",
-                    extra={"batch_size": len(batch)},
-                )
+                                    raw = raw.get("value", raw)
+                                if raw is not None:
+                                    if isinstance(raw, dict):
+                                        parsed = self._parse_tctable_size(raw)
+                                        size_val = parsed or ""
+                                    else:
+                                        s = str(raw).strip()
+                                        parsed = self._parse_tctable_size(s)
+                                        size_val = parsed if parsed else s
+                                break
+                        if size_val:
+                            # Приоритет — буквенная часть (XL, L, M); иначе полная строка
+                            letter = self._extract_letter_size(size_val)
+                            result[oid] = letter if letter else size_val
+                            logger.info(
+                                f"Ozon size for {oid}: {result[oid]} "
+                                f"(raw={size_val}, attr_id={size_attr_id})"
+                            )
+                        else:
+                            attr_ids = [a.get("attribute_id") or a.get("id") for a in attrs]
+                            logger.debug(
+                                f"Ozon no size for {oid}: desc_cat={desc_cat} type_id={type_id} "
+                                f"size_attr_id={size_attr_id} product_attr_ids={attr_ids[:10]}",
+                            )
+                    last_id = response.get("last_id", "")
+                    if not last_id or not items:
+                        break
+                except Exception as e:
+                    logger.warning(
+                        f"Ozon get_product_sizes failed: {e}",
+                        extra={"batch_size": len(batch), "last_id": last_id or "first"},
+                    )
+                    break
         return result
     
     async def get_warehouses(self) -> list[dict[str, Any]]:
