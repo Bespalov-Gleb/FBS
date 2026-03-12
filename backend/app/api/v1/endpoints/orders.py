@@ -74,10 +74,12 @@ def _sanitize_size(s: Optional[str]) -> Optional[str]:
     return s if s else None
 
 
-def _ozon_product_size(p: dict, order_id: Optional[int] = None, offer_id: str = "") -> Optional[str]:
+def _ozon_product_size(
+    p: dict, order_id: Optional[int] = None, offer_id: str = "", order_size: Optional[str] = None
+) -> Optional[str]:
     """
     Размер товара Ozon из product dict.
-    Приоритет: p.size (Размер продавца из Attributes API) → dimensions → size_name.
+    Приоритет: p.size → dimensions → size_name → order_size (размер на уровне заказа).
     """
     raw = p.get("size")
     if raw:
@@ -88,28 +90,35 @@ def _ozon_product_size(p: dict, order_id: Optional[int] = None, offer_id: str = 
     else:
         raw = p.get("size_name")
     result = _sanitize_size(raw)
-    if not result:
-        logger.debug(
-            "Ozon size MISSING: order_id=%s offer_id=%s tried: p.size=%r dims=%r p.size_name=%r product_keys=%s",
-            order_id, offer_id or p.get("offer_id"),
-            p.get("size"), p.get("dimensions"), p.get("size_name"),
-            list(p.keys()),
-        )
-    return result
+    if result:
+        return result
+    if order_size:
+        return _sanitize_size(order_size)
+    logger.debug(
+        "Ozon size MISSING: order_id=%s offer_id=%s tried: p.size=%r dims=%r p.size_name=%r product_keys=%s",
+        order_id, offer_id or p.get("offer_id"),
+        p.get("size"), p.get("dimensions"), p.get("size_name"),
+        list(p.keys()),
+    )
+    return None
 
 
 def _order_products(o: Order) -> list[OrderProductItem]:
     """Список товаров в заказе (Ozon: несколько в одном posting)."""
     if not o.marketplace or o.marketplace.type.value != "ozon":
         return []
-    prods = (o.extra_data or {}).get("products", [])
+    ed = o.extra_data or {}
+    prods = ed.get("products", [])
+    order_size = _sanitize_size(ed.get("size"))
     return [
         OrderProductItem(
             offer_id=str(p.get("offer_id", "")),
             name=str(p.get("name", "")),
             quantity=int(p.get("quantity", 1)),
             image_url=str(p.get("image_url", "")),
-            size=_ozon_product_size(p, order_id=o.id, offer_id=str(p.get("offer_id", ""))),
+            size=_ozon_product_size(
+                p, order_id=o.id, offer_id=str(p.get("offer_id", "")), order_size=order_size
+            ),
         )
         for p in prods
     ]
