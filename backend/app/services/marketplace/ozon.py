@@ -814,7 +814,8 @@ class OzonClient(BaseMarketplaceClient):
     def _validate_and_extract_seller_size(raw: Any) -> Optional[str]:
         """
         Валидация и извлечение размера продавца из значения атрибута.
-        Отсекает длинные строки и описание варианта, приоритет — буквенная часть.
+        Отсекает длинные строки, описание варианта и идентификаторы (артикулы, коды).
+        Приоритет — буквенная часть (S/M/L/XL), числовые размеры и диапазоны (46-52).
         """
         if raw is None:
             return None
@@ -823,6 +824,9 @@ class OzonClient(BaseMarketplaceClient):
             return None
         if s.startswith("{") or s.startswith("[") or "tcTable" in s or "IcTable" in s:
             return None
+        # Подчёркивание — признак артикула/варианта (vtor_gussi_man1, 2_EBUSHKI_man), не размера
+        if "_" in s:
+            return None
         s_lower = s.lower()
         for bad in OzonClient.OZON_SIZE_BLACKLIST:
             if bad in s_lower:
@@ -830,11 +834,13 @@ class OzonClient(BaseMarketplaceClient):
         letter = OzonClient._extract_letter_size(s)
         if letter:
             return letter
+        # Числовой диапазон (50-52, 46/48) или одиночное число
         if re.match(r"^\d{1,2}(?:\s*[-/]\s*\d{1,2})?$", s):
             return s
-        if len(s) <= OzonClient.MAX_SIZE_VALUE_LEN and " " not in s:
-            return s
         if re.match(r"^\d{1,2}$", s):
+            return s
+        # Короткие строки без пробелов (числа+буквы допустимы: 50-52, EU42 и т.п.)
+        if len(s) <= OzonClient.MAX_SIZE_VALUE_LEN and " " not in s:
             return s
         return None
 
