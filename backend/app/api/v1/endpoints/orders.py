@@ -1582,7 +1582,7 @@ async def get_order_label(
                     },
                 )
             if label_mode == "as_is_fit":
-                content = content  # Ozon PDF как есть, без обработки
+                content = _rotate_pdf(content, 90)  # Повернуть в альбом: ширина > высоты, этикетка в углу
             else:
                 content = _ozon_fbs_to_standard_label(
                     content, width_mm=w_mm, height_mm=h_mm, rotate=ozon_rot, dpi=printer_dpi,
