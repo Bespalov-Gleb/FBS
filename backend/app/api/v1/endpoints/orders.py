@@ -538,15 +538,16 @@ def _ozon_fbs_to_standard_label(
     from reportlab.lib.utils import ImageReader
     from reportlab.pdfgen import canvas
 
-    # use_pdftocairo — лучше обрабатывает /Rotate в PDF (Ozon может иметь метаданные)
+    # Сначала рендер без pdftocairo: страница Ozon часто в портрете (ih>iw), после поворота — альбом.
+    # pdftocairo может применять /Rotate и отдавать альбом (iw>ih), тогда контент остаётся вертикальным.
+    dpi_val = max(150, min(dpi, 300))
     try:
-        images = convert_from_bytes(
-            pdf_bytes,
-            dpi=max(150, min(dpi, 300)),
-            use_pdftocairo=True,
-        )
+        images = convert_from_bytes(pdf_bytes, dpi=dpi_val, use_pdftocairo=False)
     except Exception:
-        images = convert_from_bytes(pdf_bytes, dpi=max(150, min(dpi, 300)))
+        try:
+            images = convert_from_bytes(pdf_bytes, dpi=dpi_val, use_pdftocairo=True)
+        except Exception:
+            images = convert_from_bytes(pdf_bytes, dpi=dpi_val)
     if not images:
         raise ValueError("PDF returned no pages")
 
@@ -565,10 +566,14 @@ def _ozon_fbs_to_standard_label(
         if iw <= 0 or ih <= 0:
             continue
 
-        # Поворот по настройке пользователя. Всегда применяем при deg != 0: pdf2image может
-        # отдать картинку уже в альбоме (iw > ih) из-за /Rotate в PDF Ozon — тогда условие
-        # ih > iw не выполнялось и поворот не применялся.
+        # Поворот: настройка пользователя или принудительно 90° при портрете и целевом альбоме (58×40).
         deg = rotate if (rotate and rotate % 90 == 0) else (90 if rotate else 0)
+        if deg == 0 and width_mm > height_mm and ih > iw:
+            deg = 90  # целевой стикер альбомный — повернуть портрет в альбом
+        logger.info(
+            "Ozon FBS label: page %s size %sx%s rotate=%s deg=%s applying_rotation=%s",
+            idx + 1, iw, ih, rotate, deg, bool(deg),
+        )
         if deg:
             if deg == 90:
                 img = img.transpose(Image.Transpose.ROTATE_270)  # 270° CCW = 90° CW
