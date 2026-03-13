@@ -480,10 +480,16 @@ def _ozon_fbs_to_png(
     if iw <= 0 or ih <= 0:
         raise ValueError("Invalid image dimensions")
 
-    img_portrait = ih > iw
-    if img_portrait:
-        deg = rotate if (rotate and rotate % 90 == 0) else 90
-        img = img.rotate(deg, expand=True)
+    # Поворот по настройке: всегда применяем при deg != 0 (как в _ozon_fbs_to_standard_label),
+    # иначе превью не совпадает с PDF при рендере pdf2image в альбоме (iw > ih).
+    deg = rotate if (rotate and rotate % 90 == 0) else (90 if rotate else 0)
+    if deg:
+        if deg == 90:
+            img = img.transpose(PILImage.Transpose.ROTATE_270)
+        elif deg == 270:
+            img = img.transpose(PILImage.Transpose.ROTATE_90)
+        elif deg == 180:
+            img = img.transpose(PILImage.Transpose.ROTATE_180)
         iw, ih = img.size
 
     try:
@@ -559,9 +565,11 @@ def _ozon_fbs_to_standard_label(
         if iw <= 0 or ih <= 0:
             continue
 
-        # Ozon: портрет (ih>iw) → поворот в альбом для 58×40. transpose надёжнее rotate()
+        # Поворот по настройке пользователя. Всегда применяем при deg != 0: pdf2image может
+        # отдать картинку уже в альбоме (iw > ih) из-за /Rotate в PDF Ozon — тогда условие
+        # ih > iw не выполнялось и поворот не применялся.
         deg = rotate if (rotate and rotate % 90 == 0) else (90 if rotate else 0)
-        if deg and ih > iw:
+        if deg:
             if deg == 90:
                 img = img.transpose(Image.Transpose.ROTATE_270)  # 270° CCW = 90° CW
             elif deg == 270:
