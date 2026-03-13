@@ -597,17 +597,16 @@ def _ozon_fbs_to_standard_label(
         except Exception:
             pass
 
-        # Масштаб с небольшим полем по бокам; по вертикали — прижать к верхнему краю (как у ШК товара).
-        _ozon_margin_side = 0.04
-        _ozon_margin_top_mm = 1.5
-        margin_top_pt = _ozon_margin_top_mm * mm
-        usable_w = page_w * (1 - _ozon_margin_side)
-        usable_h = page_h - margin_top_pt
+        # После поворота прижимаем к углу (верхний левый): маленький отступ сверху и слева, без центрирования.
+        _ozon_edge_mm = 1.5
+        margin_pt = _ozon_edge_mm * mm
+        usable_w = page_w - 2 * margin_pt
+        usable_h = page_h - margin_pt
         scale = min(usable_w / iw, usable_h / ih)
         draw_w = iw * scale
         draw_h = ih * scale
-        x0 = (page_w - draw_w) / 2
-        y0 = page_h - draw_h - margin_top_pt
+        x0 = margin_pt
+        y0 = page_h - draw_h - margin_pt
 
         img_buf = io.BytesIO()
         img.save(img_buf, format="PNG")
