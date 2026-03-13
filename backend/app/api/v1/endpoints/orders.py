@@ -550,9 +550,10 @@ def _ozon_fbs_to_standard_label(
         if iw <= 0 or ih <= 0:
             continue
 
-        # Ozon: всегда поворачиваем на rotate° в noscale — иначе обрезает (проверка ih>iw убрана)
-        if rotate and rotate % 90 == 0:
-            img = img.rotate(rotate, expand=True)
+        # Ozon: всегда поворачиваем на rotate° (PIL — надёжно). rotate=0 = не крутить
+        deg = rotate if (rotate and rotate % 90 == 0) else (90 if rotate else 0)
+        if deg:
+            img = img.rotate(-deg, expand=True)  # -90 = по часовой (PIL: положительный = против часовой)
             iw, ih = img.size
 
         # Обрезаем только белые поля по краям. НЕ режем правый край — там 9234, ПВЗ.
@@ -1582,11 +1583,9 @@ async def get_order_label(
             if label_mode == "as_is_fit":
                 content = _rotate_pdf(content, 90)  # Повернуть в альбом: ширина > высоты, этикетка в углу
             else:
-                # noscale: поворот на уровне PDF (pypdf), затем рендер в 58×40
-                if ozon_rot:
-                    content = _rotate_pdf(content, ozon_rot)
+                # noscale: поворот только через PIL в _ozon_fbs_to_standard_label (pypdf ненадёжен с PDF Ozon)
                 content = _ozon_fbs_to_standard_label(
-                    content, width_mm=w_mm, height_mm=h_mm, rotate=0, dpi=printer_dpi,
+                    content, width_mm=w_mm, height_mm=h_mm, rotate=ozon_rot, dpi=printer_dpi,
                 )
         except Exception as _re:
             logger.warning("Ozon FBS to standard label failed: %s", _re, exc_info=True)
