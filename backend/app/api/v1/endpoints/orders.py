@@ -566,13 +566,19 @@ def _ozon_fbs_to_standard_label(
         if iw <= 0 or ih <= 0:
             continue
 
-        # Поворот по настройке. Если страница портретная, а целевой стикер альбомный (58×40),
-        # по умолчанию крутим на 90° по часовой.
-        deg = rotate if (rotate and rotate % 90 == 0) else None
-        if deg is None and width_mm > height_mm and ih > iw:
+        # Поворот по настройке:
+        # - 0  → без поворота;
+        # - 90/180/270 → строго соответствуют настройке;
+        # - None/другое и страница портретная при альбомном стикере 58×40 → 90° по умолчанию.
+        deg: Optional[int]
+        if rotate in (0, 90, 180, 270):
+            deg = rotate
+        elif width_mm > height_mm and ih > iw:
             deg = 90
+        else:
+            deg = 0
         logger.info(
-            "Ozon FBS label: page %s size %sx%s rotate=%s effective_deg=%s",
+            "Ozon FBS label: page %s size %sx%s rotate_setting=%s applied_deg=%s",
             idx + 1, iw, ih, rotate, deg,
         )
         if deg:
@@ -1592,11 +1598,16 @@ async def get_order_label(
             raise
         try:
             _ps = db.query(PrintSettings).filter(PrintSettings.user_id == current_user.id).first()
-            w_mm = (_ps.ozon_width_mm or 58) if _ps else 58
-            h_mm = (_ps.ozon_height_mm or 40) if _ps else 40
-            ozon_rot = (_ps.ozon_label_rotate or 90) if _ps else 90
-            printer_dpi = (_ps.printer_dpi or 203) if _ps else 203
-            label_mode = (_ps.label_print_mode or "standard_58x40_noscale") if _ps else "standard_58x40_noscale"
+            if _ps:
+                w_mm = _ps.ozon_width_mm or 58
+                h_mm = _ps.ozon_height_mm or 40
+                # 0 = 0 (без поворота), 90/180/270 — как есть; None → по умолчанию 90.
+                ozon_rot = _ps.ozon_label_rotate if _ps.ozon_label_rotate is not None else 90
+                printer_dpi = _ps.printer_dpi or 203
+                label_mode = _ps.label_print_mode or "standard_58x40_noscale"
+            else:
+                w_mm, h_mm, ozon_rot, printer_dpi = 58, 40, 90, 203
+                label_mode = "standard_58x40_noscale"
         except Exception:
             w_mm, h_mm, ozon_rot, printer_dpi = 58, 40, 90, 203
             label_mode = "standard_58x40_noscale"
