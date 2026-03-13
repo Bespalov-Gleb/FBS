@@ -566,17 +566,18 @@ def _ozon_fbs_to_standard_label(
         if iw <= 0 or ih <= 0:
             continue
 
-        # Поворот по настройке; при портрете и целевом альбоме 58×40 — принудительно 90° по часовой.
-        deg = rotate if (rotate and rotate % 90 == 0) else (90 if rotate else 0)
-        if deg == 0 and width_mm > height_mm and ih > iw:
+        # Поворот по настройке. Если страница портретная, а целевой стикер альбомный (58×40),
+        # по умолчанию крутим на 90° по часовой.
+        deg = rotate if (rotate and rotate % 90 == 0) else None
+        if deg is None and width_mm > height_mm and ih > iw:
             deg = 90
         logger.info(
-            "Ozon FBS label: page %s size %sx%s rotate=%s deg=%s applying_rotation=%s",
-            idx + 1, iw, ih, rotate, deg, bool(deg),
+            "Ozon FBS label: page %s size %sx%s rotate=%s effective_deg=%s",
+            idx + 1, iw, ih, rotate, deg,
         )
         if deg:
             if deg == 90:
-                img = img.transpose(Image.Transpose.ROTATE_270)  # 90° по часовой
+                img = img.transpose(Image.Transpose.ROTATE_270)
             elif deg == 270:
                 img = img.transpose(Image.Transpose.ROTATE_90)
             elif deg == 180:
@@ -596,6 +597,7 @@ def _ozon_fbs_to_standard_label(
         except Exception:
             pass
 
+        # Масштаб с небольшим полем, чтобы ничего не обрезалось.
         _ozon_margin = 0.04
         usable_w = page_w * (1 - _ozon_margin)
         usable_h = page_h * (1 - _ozon_margin)
@@ -605,19 +607,15 @@ def _ozon_fbs_to_standard_label(
         x0 = (page_w - draw_w) / 2
         y0 = (page_h - draw_h) / 2
 
-        # В PDF первая строка растра рисуется снизу; flip по Y, чтобы контент не был перевёрнут.
         img_buf = io.BytesIO()
         img.save(img_buf, format="PNG")
         img_buf.seek(0)
-        c.saveState()
-        c.translate(x0, y0 + draw_h)
-        c.scale(1, -1)
+
         c.drawImage(
             ImageReader(img_buf),
-            0, 0, width=draw_w, height=draw_h,
+            x0, y0, width=draw_w, height=draw_h,
             preserveAspectRatio=True,
         )
-        c.restoreState()
 
     c.save()
     buf.seek(0)
