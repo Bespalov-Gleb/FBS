@@ -526,12 +526,21 @@ def _ozon_fbs_to_standard_label(
     """
     import io
 
+    from PIL import Image
     from pdf2image import convert_from_bytes
     from reportlab.lib.units import mm
     from reportlab.lib.utils import ImageReader
     from reportlab.pdfgen import canvas
 
-    images = convert_from_bytes(pdf_bytes, dpi=max(150, min(dpi, 300)))
+    # use_pdftocairo — лучше обрабатывает /Rotate в PDF (Ozon может иметь метаданные)
+    try:
+        images = convert_from_bytes(
+            pdf_bytes,
+            dpi=max(150, min(dpi, 300)),
+            use_pdftocairo=True,
+        )
+    except Exception:
+        images = convert_from_bytes(pdf_bytes, dpi=max(150, min(dpi, 300)))
     if not images:
         raise ValueError("PDF returned no pages")
 
@@ -550,16 +559,22 @@ def _ozon_fbs_to_standard_label(
         if iw <= 0 or ih <= 0:
             continue
 
-        # Ozon: всегда поворачиваем на rotate° (PIL — надёжно). rotate=0 = не крутить
+        # Ozon: портрет (ih>iw) → поворот в альбом для 58×40. transpose надёжнее rotate()
         deg = rotate if (rotate and rotate % 90 == 0) else (90 if rotate else 0)
-        if deg:
-            img = img.rotate(-deg, expand=True)  # -90 = по часовой (PIL: положительный = против часовой)
+        if deg and ih > iw:
+            if deg == 90:
+                img = img.transpose(Image.Transpose.ROTATE_270)  # 270° CCW = 90° CW
+            elif deg == 270:
+                img = img.transpose(Image.Transpose.ROTATE_90)
+            elif deg == 180:
+                img = img.transpose(Image.Transpose.ROTATE_180)
             iw, ih = img.size
 
-        # Обрезаем только белые поля по краям. НЕ режем правый край — там 9234, ПВЗ.
-        from PIL import Image as PILImage, ImageChops
+        # Обрезаем только белые поля по краям. Фон этикеток — белый (255,255,255)
+        from PIL import ImageChops
         try:
-            bg = PILImage.new(img.mode, img.size, img.getpixel((0, 0)))
+            bg_color = (255, 255, 255)
+            bg = Image.new(img.mode, img.size, bg_color)
             diff = ImageChops.difference(img, bg)
             bbox = diff.getbbox()
             if bbox and (bbox[2] - bbox[0]) > 10 and (bbox[3] - bbox[1]) > 10:
