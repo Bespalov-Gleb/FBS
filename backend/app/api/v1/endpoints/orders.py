@@ -550,11 +550,9 @@ def _ozon_fbs_to_standard_label(
         if iw <= 0 or ih <= 0:
             continue
 
-        # Ozon присылает портрет (высокий) — крутим 90° чтобы вписать в широкий 58×40
-        img_portrait = ih > iw
-        if img_portrait:
-            deg = rotate if (rotate and rotate % 90 == 0) else 90
-            img = img.rotate(deg, expand=True)
+        # Ozon: всегда поворачиваем на rotate° в noscale — иначе обрезает (проверка ih>iw убрана)
+        if rotate and rotate % 90 == 0:
+            img = img.rotate(rotate, expand=True)
             iw, ih = img.size
 
         # Обрезаем только белые поля по краям. НЕ режем правый край — там 9234, ПВЗ.
