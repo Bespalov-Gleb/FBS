@@ -566,24 +566,17 @@ def _ozon_fbs_to_standard_label(
         if iw <= 0 or ih <= 0:
             continue
 
-        # Поворот: настройка пользователя или принудительно 90° при портрете и целевом альбоме (58×40).
+        # Поворот: при целевом альбоме (58×40) и портрете рисуем через rotate(-90) на канвасе,
+        # чтобы контент был однозначно горизонтальным в PDF (без путаницы с осью Y в drawImage).
         deg = rotate if (rotate and rotate % 90 == 0) else (90 if rotate else 0)
         if deg == 0 and width_mm > height_mm and ih > iw:
-            deg = 90  # целевой стикер альбомный — повернуть портрет в альбом
+            deg = 90
         logger.info(
             "Ozon FBS label: page %s size %sx%s rotate=%s deg=%s applying_rotation=%s",
             idx + 1, iw, ih, rotate, deg, bool(deg),
         )
-        if deg:
-            if deg == 90:
-                img = img.transpose(Image.Transpose.ROTATE_270)  # 270° CCW = 90° CW
-            elif deg == 270:
-                img = img.transpose(Image.Transpose.ROTATE_90)
-            elif deg == 180:
-                img = img.transpose(Image.Transpose.ROTATE_180)
-            iw, ih = img.size
 
-        # Обрезаем только белые поля по краям. Фон этикеток — белый (255,255,255)
+        # Обрезаем только белые поля по краям
         from PIL import ImageChops
         try:
             bg_color = (255, 255, 255)
@@ -595,28 +588,66 @@ def _ozon_fbs_to_standard_label(
                 iw, ih = img.size
         except Exception:
             pass
-        # Масштаб: вписать с запасом 96% — чтобы верх (9234, ПВЗ) и низ (Упак:...) не обрезало
-        _ozon_margin = 0.04  # 4% запас со всех сторон
+
+        _ozon_margin = 0.04
         usable_w = page_w * (1 - _ozon_margin)
         usable_h = page_h * (1 - _ozon_margin)
-        scale = min(usable_w / iw, usable_h / ih)
-        draw_w = iw * scale
-        draw_h = ih * scale
-        x0 = (page_w - draw_w) / 2
-        y0 = (page_h - draw_h) / 2
 
-        # В PDF/ReportLab Y растёт вверх, в растре первый ряд — сверху; без отражения картинка
-        # уходит в печать перевёрнутой (этикетка "вертикальной" или вверх ногами).
-        img = img.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
-        img_buf = io.BytesIO()
-        img.save(img_buf, format="PNG")
-        img_buf.seek(0)
-
-        c.drawImage(
-            ImageReader(img_buf),
-            x0, y0, width=draw_w, height=draw_h,
-            preserveAspectRatio=True,
-        )
+        if deg == 90:
+            # Портрет (ih>iw): рисуем с поворотом -90°. Ось X канваса после rotate(-90) смотрит вниз,
+            # Y — вправо. Нужно, чтобы исходная высота (ih) шла вправо по странице → draw_h = ih*scale.
+            scale = min(usable_w / ih, usable_h / iw)
+            draw_w = iw * scale   # по вертикали страницы (ось X после поворота)
+            draw_h = ih * scale   # по горизонтали страницы (ось Y после поворота)
+            img_buf = io.BytesIO()
+            img.save(img_buf, format="PNG")
+            img_buf.seek(0)
+            c.saveState()
+            c.translate(page_w / 2, page_h / 2)
+            c.rotate(-90)
+            c.translate(-draw_w / 2, -draw_h / 2)
+            c.drawImage(
+                ImageReader(img_buf),
+                0, 0, width=draw_w, height=draw_h,
+                preserveAspectRatio=True,
+            )
+            c.restoreState()
+        elif deg == 270:
+            scale = min(usable_w / ih, usable_h / iw)
+            draw_w = iw * scale
+            draw_h = ih * scale
+            img_buf = io.BytesIO()
+            img.save(img_buf, format="PNG")
+            img_buf.seek(0)
+            c.saveState()
+            c.translate(page_w / 2, page_h / 2)
+            c.rotate(90)
+            c.translate(-draw_w / 2, -draw_h / 2)
+            c.drawImage(ImageReader(img_buf), 0, 0, width=draw_w, height=draw_h, preserveAspectRatio=True)
+            c.restoreState()
+        elif deg == 180:
+            img = img.transpose(Image.Transpose.ROTATE_180)
+            iw, ih = img.size
+            scale = min(usable_w / iw, usable_h / ih)
+            draw_w = iw * scale
+            draw_h = ih * scale
+            x0 = (page_w - draw_w) / 2
+            y0 = (page_h - draw_h) / 2
+            img_buf = io.BytesIO()
+            img.save(img_buf, format="PNG")
+            img_buf.seek(0)
+            c.drawImage(ImageReader(img_buf), x0, y0, width=draw_w, height=draw_h, preserveAspectRatio=True)
+        else:
+            # Без поворота
+            scale = min(usable_w / iw, usable_h / ih)
+            draw_w = iw * scale
+            draw_h = ih * scale
+            x0 = (page_w - draw_w) / 2
+            y0 = (page_h - draw_h) / 2
+            img_buf = io.BytesIO()
+            img.save(img_buf, format="PNG")
+            img_buf.seek(0)
+            c.drawImage(ImageReader(img_buf), x0, y0, width=draw_w, height=draw_h, preserveAspectRatio=True)
 
     c.save()
     buf.seek(0)
