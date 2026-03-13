@@ -603,12 +603,11 @@ def _ozon_fbs_to_standard_label(
         except Exception:
             pass
 
-        # Масштабируем с небольшим боковым полем; по вертикали прижимаем максимально к верху.
+        # Масштабируем с небольшим боковым полем; по вертикали прижимаем к самому верху страницы.
         _ozon_side_margin = 0.04
-        _ozon_top_margin_mm = 0.5  # минимальный зазор от верхнего края страницы
-        margin_top_pt = _ozon_top_margin_mm * mm
+        margin_top_pt = 0
         usable_w = page_w * (1 - _ozon_side_margin)
-        usable_h = page_h - margin_top_pt
+        usable_h = page_h
         scale = min(usable_w / iw, usable_h / ih)
         draw_w = iw * scale
         draw_h = ih * scale
