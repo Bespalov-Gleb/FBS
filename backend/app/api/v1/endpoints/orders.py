@@ -597,15 +597,17 @@ def _ozon_fbs_to_standard_label(
         except Exception:
             pass
 
-        # Масштаб с небольшим полем, чтобы ничего не обрезалось.
-        _ozon_margin = 0.04
-        usable_w = page_w * (1 - _ozon_margin)
-        usable_h = page_h * (1 - _ozon_margin)
+        # Масштаб с небольшим полем по бокам; по вертикали — прижать к верхнему краю (как у ШК товара).
+        _ozon_margin_side = 0.04
+        _ozon_margin_top_mm = 1.5
+        margin_top_pt = _ozon_margin_top_mm * mm
+        usable_w = page_w * (1 - _ozon_margin_side)
+        usable_h = page_h - margin_top_pt
         scale = min(usable_w / iw, usable_h / ih)
         draw_w = iw * scale
         draw_h = ih * scale
         x0 = (page_w - draw_w) / 2
-        y0 = (page_h - draw_h) / 2
+        y0 = page_h - draw_h - margin_top_pt
 
         img_buf = io.BytesIO()
         img.save(img_buf, format="PNG")
@@ -1030,8 +1032,8 @@ def _is_ean13(code: str) -> bool:
     return len(s) == 13 and s.isdigit()
 
 
-# Отступ сверху для ШК товара — чтобы не обрезало принтером (сместить ниже)
-_BARCODE_TOP_OFFSET_MM = 5.0
+# Отступ сверху для ШК товара Ozon — как у ФБС этикетки (к краю, минимальный)
+_BARCODE_TOP_OFFSET_MM = 1.5
 
 
 def _generate_product_barcode_pdf(
