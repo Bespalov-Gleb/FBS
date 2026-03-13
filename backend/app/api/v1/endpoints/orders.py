@@ -1582,8 +1582,11 @@ async def get_order_label(
             if label_mode == "as_is_fit":
                 content = _rotate_pdf(content, 90)  # Повернуть в альбом: ширина > высоты, этикетка в углу
             else:
+                # noscale: поворот на уровне PDF (pypdf), затем рендер в 58×40
+                if ozon_rot:
+                    content = _rotate_pdf(content, ozon_rot)
                 content = _ozon_fbs_to_standard_label(
-                    content, width_mm=w_mm, height_mm=h_mm, rotate=ozon_rot, dpi=printer_dpi,
+                    content, width_mm=w_mm, height_mm=h_mm, rotate=0, dpi=printer_dpi,
                 )
         except Exception as _re:
             logger.warning("Ozon FBS to standard label failed: %s", _re, exc_info=True)
