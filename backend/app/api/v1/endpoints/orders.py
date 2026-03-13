@@ -1276,8 +1276,11 @@ def _wb_sticker_to_pdf(
     scale = min(label_w / iw, label_h / ih)  # вписать в стикер (масштаб вверх/вниз)
     draw_w = iw * scale
     draw_h = ih * scale
-    x0 = (label_w - draw_w) / 2
-    y0 = max(2 * mm, (label_h - draw_h) / 2 - top_margin_mm * mm)
+    # Прижимаем к верху, добавляя небольшой отступ слева, чтобы не обрезалось.
+    margin_left_mm = 1.5
+    margin_top_mm = 0.0
+    x0 = margin_left_mm * mm
+    y0 = label_h - draw_h - margin_top_mm * mm
     img_buf = io.BytesIO()
     img.save(img_buf, format="PNG")
     img_buf.seek(0)
