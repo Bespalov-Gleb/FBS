@@ -605,6 +605,9 @@ def _ozon_fbs_to_standard_label(
         x0 = (page_w - draw_w) / 2
         y0 = (page_h - draw_h) / 2
 
+        # В PDF/ReportLab Y растёт вверх, в растре первый ряд — сверху; без отражения картинка
+        # уходит в печать перевёрнутой (этикетка "вертикальной" или вверх ногами).
+        img = img.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
         img_buf = io.BytesIO()
         img.save(img_buf, format="PNG")
         img_buf.seek(0)
