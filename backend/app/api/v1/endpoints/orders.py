@@ -597,16 +597,17 @@ def _ozon_fbs_to_standard_label(
         except Exception:
             pass
 
-        # После поворота прижимаем к углу (верхний левый): маленький отступ сверху и слева, без центрирования.
-        _ozon_edge_mm = 1.5
-        margin_pt = _ozon_edge_mm * mm
-        usable_w = page_w - 2 * margin_pt
-        usable_h = page_h - margin_pt
+        # Масштабируем с небольшим боковым полем; по вертикали прижимаем максимально к верху.
+        _ozon_side_margin = 0.04
+        _ozon_top_margin_mm = 0.5  # минимальный зазор от верхнего края страницы
+        margin_top_pt = _ozon_top_margin_mm * mm
+        usable_w = page_w * (1 - _ozon_side_margin)
+        usable_h = page_h - margin_top_pt
         scale = min(usable_w / iw, usable_h / ih)
         draw_w = iw * scale
         draw_h = ih * scale
-        x0 = margin_pt
-        y0 = page_h - draw_h - margin_pt
+        x0 = (page_w - draw_w) / 2
+        y0 = page_h - draw_h - margin_top_pt
 
         img_buf = io.BytesIO()
         img.save(img_buf, format="PNG")
