@@ -1477,10 +1477,10 @@ async def get_order_barcodes_pdf(
     # Ozon: отступ сверху 5 мм — не обрезало принтером. WB: без отступа — обычное центрирование
     top_offset = _BARCODE_TOP_OFFSET_MM if mp.type == MarketplaceType.OZON else 0
     pdf_bytes = _generate_multi_product_barcode_pdf(items, label_width_mm=label_width, top_offset_mm=top_offset)
-    # Поворот только для Ozon (OZN-штрихкоды). WB EAN13 — стандартная ориентация для термоэтикеток
-    barcode_rotate = 0
-    if mp.type == MarketplaceType.OZON and ps_barcode:
-        barcode_rotate = ps_barcode.barcode_rotate or 0
+    # Ozon OZN-штрихкоды: поворот 90° по умолчанию (в noscale иначе обрезает). WB EAN13 — без поворота
+    barcode_rotate = 90 if mp.type == MarketplaceType.OZON else 0
+    if mp.type == MarketplaceType.OZON and ps_barcode and ps_barcode.barcode_rotate is not None:
+        barcode_rotate = ps_barcode.barcode_rotate
     if barcode_rotate:
         try:
             pdf_bytes = _rotate_pdf(pdf_bytes, barcode_rotate)
