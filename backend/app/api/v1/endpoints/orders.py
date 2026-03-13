@@ -1271,6 +1271,17 @@ def _wb_sticker_to_pdf(
     elif ih > iw and label_width_mm > label_height_mm:
         img = img.rotate(90, expand=True)
         iw, ih = img.size
+    # Стикер WB обычно с белыми полями; убираем их, чтобы вся этикетка (включая код) подтянулась к верху.
+    try:
+        from PIL import ImageChops as _WBImageChops
+        bg = Image.new(img.mode, img.size, (255, 255, 255))
+        diff = _WBImageChops.difference(img, bg)
+        bbox = diff.getbbox()
+        if bbox and (bbox[2] - bbox[0]) > 10 and (bbox[3] - bbox[1]) > 10:
+            img = img.crop(bbox)
+            iw, ih = img.size
+    except Exception:
+        pass
     label_w = label_width_mm * mm
     label_h = label_height_mm * mm
     scale = min(label_w / iw, label_h / ih)  # вписать в стикер (масштаб вверх/вниз)
