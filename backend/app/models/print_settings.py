@@ -50,3 +50,8 @@ class PrintSettings(BaseModel):
 
     # Масштаб печати SumatraPDF: fit (рекомендуется) | shrink | noscale
     print_scale = Column(String(20), nullable=True, default="fit")
+
+    # Режим печати этикеток заказов (ФБС):
+    # as_is_fit — этикетки от маркетплейсов без обработки, агенту fit
+    # standard_58x40_noscale — на листе 58×40 мм, агенту noscale (по умолчанию)
+    label_print_mode = Column(String(30), nullable=True, default="standard_58x40_noscale")

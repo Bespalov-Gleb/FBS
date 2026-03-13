@@ -1176,6 +1176,35 @@ def _wb_sticker_to_png(
     return buf.getvalue()
 
 
+def _wb_sticker_to_pdf_as_is(image_bytes: bytes, dpi: int = 96) -> bytes:
+    """
+    WB стикер «как есть»: PNG → PDF с размером страницы = размер изображения.
+    Для печати с fit — принтер масштабирует под физический лист.
+    """
+    import io
+
+    from PIL import Image
+    from reportlab.lib.utils import ImageReader
+    from reportlab.pdfgen import canvas
+
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    iw, ih = img.size
+    if iw <= 0 or ih <= 0:
+        raise ValueError("Invalid image dimensions")
+    # Страница = размер изображения в пунктах (72 pt = 1 inch)
+    page_w = iw * 72 / dpi
+    page_h = ih * 72 / dpi
+    img_buf = io.BytesIO()
+    img.save(img_buf, format="PNG")
+    img_buf.seek(0)
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=(page_w, page_h))
+    c.drawImage(ImageReader(img_buf), 0, 0, width=page_w, height=page_h)
+    c.save()
+    buf.seek(0)
+    return buf.getvalue()
+
+
 def _wb_sticker_to_pdf(
     image_bytes: bytes,
     label_width_mm: int = 58,
@@ -1530,15 +1559,16 @@ async def get_order_label(
                     detail="Заказ уже отгружен в Ozon. Этикетка недоступна. Обновите список заказов.",
                 )
             raise
-        # Этикетка на листе A4: изображение ориентировано, масштабировано, по центру — печать без искажений.
         try:
             _ps = db.query(PrintSettings).filter(PrintSettings.user_id == current_user.id).first()
             w_mm = (_ps.ozon_width_mm or 58) if _ps else 58
             h_mm = (_ps.ozon_height_mm or 40) if _ps else 40
             ozon_rot = (_ps.ozon_label_rotate or 90) if _ps else 90
             printer_dpi = (_ps.printer_dpi or 203) if _ps else 203
+            label_mode = (_ps.label_print_mode or "standard_58x40_noscale") if _ps else "standard_58x40_noscale"
         except Exception:
             w_mm, h_mm, ozon_rot, printer_dpi = 58, 40, 90, 203
+            label_mode = "standard_58x40_noscale"
         try:
             if format == "png":
                 content = _ozon_fbs_to_png(content, width_mm=w_mm, height_mm=h_mm, rotate=ozon_rot)
@@ -1551,9 +1581,12 @@ async def get_order_label(
                         "Pragma": "no-cache",
                     },
                 )
-            content = _ozon_fbs_to_standard_label(
-                content, width_mm=w_mm, height_mm=h_mm, rotate=ozon_rot, dpi=printer_dpi,
-            )
+            if label_mode == "as_is_fit":
+                content = content  # Ozon PDF как есть, без обработки
+            else:
+                content = _ozon_fbs_to_standard_label(
+                    content, width_mm=w_mm, height_mm=h_mm, rotate=ozon_rot, dpi=printer_dpi,
+                )
         except Exception as _re:
             logger.warning("Ozon FBS to standard label failed: %s", _re, exc_info=True)
         return Response(
@@ -1566,7 +1599,6 @@ async def get_order_label(
             },
         )
     elif mp.type == MarketplaceType.WILDBERRIES:
-        # WB API возвращает PNG. Поворот 90° — широкая этикетка для 58×40 мм.
         ps = db.query(PrintSettings).filter(PrintSettings.user_id == current_user.id).first()
         if width is None or height is None:
             w = (ps.wb_width_mm if ps else 58) or 58
@@ -1574,6 +1606,7 @@ async def get_order_label(
         else:
             w, h = width, height
         wb_rotate = (ps.wb_label_rotate or 90) if ps else 90
+        label_mode = (ps.label_print_mode or "standard_58x40_noscale") if ps else "standard_58x40_noscale"
         async with WildberriesClient(api_key=api_key) as client:
             content = await client.get_order_label(
                 order.external_id,
@@ -1596,10 +1629,13 @@ async def get_order_label(
                     "Pragma": "no-cache",
                 },
             )
-        content = _wb_sticker_to_pdf(
-            content, label_width_mm=w, label_height_mm=h,
-            order_number=order_num, rotate=wb_rotate,
-        )
+        if label_mode == "as_is_fit":
+            content = _wb_sticker_to_pdf_as_is(content)
+        else:
+            content = _wb_sticker_to_pdf(
+                content, label_width_mm=w, label_height_mm=h,
+                order_number=order_num, rotate=wb_rotate,
+            )
         return Response(
             content=content,
             media_type="application/pdf",

@@ -54,6 +54,7 @@ export default function PrintSettingsPage() {
   const [kizHeight, setKizHeight] = useState(35);
   const [kizRotate, setKizRotate] = useState(0);
 
+  const [labelPrintMode, setLabelPrintMode] = useState<'as_is_fit' | 'standard_58x40_noscale'>('standard_58x40_noscale');
   const [autoPrint, setAutoPrint] = useState(true);
   const [autoPrintKiz, setAutoPrintKiz] = useState(true);
   const [agentAvailable, setAgentAvailable] = useState(false);
@@ -81,6 +82,7 @@ export default function PrintSettingsPage() {
       setKizWidth(settings.kiz_labels?.width_mm ?? 40);
       setKizHeight(settings.kiz_labels?.height_mm ?? 35);
       setKizRotate(settings.kiz_labels?.rotate ?? 0);
+      setLabelPrintMode(settings.label_print_mode === 'as_is_fit' ? 'as_is_fit' : 'standard_58x40_noscale');
       setAutoPrint(settings.auto_print_on_click !== false);
       setAutoPrintKiz(settings.auto_print_kiz_duplicate !== false);
     }
@@ -107,6 +109,7 @@ export default function PrintSettingsPage() {
         wb_labels: { width_mm: wbWidth, height_mm: wbHeight, rotate: wbRotate },
         barcode_labels: { rotate: barcodeRotate },
         kiz_labels: { width_mm: kizWidth, height_mm: kizHeight, rotate: kizRotate },
+        label_print_mode: labelPrintMode,
         auto_print_on_click: autoPrint,
         auto_print_kiz_duplicate: autoPrintKiz,
       }),
@@ -244,6 +247,21 @@ export default function PrintSettingsPage() {
                 </Select>
                 <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
                   Типичные значения для термо-принтеров. 203 — чаще всего. 300 — для высокого разрешения.
+                </Typography>
+              </FormControl>
+
+              <FormControl fullWidth size="small" sx={{ mt: 1 }}>
+                <InputLabel>Режим печати этикеток заказов</InputLabel>
+                <Select
+                  value={labelPrintMode}
+                  label="Режим печати этикеток заказов"
+                  onChange={(e) => setLabelPrintMode(e.target.value as 'as_is_fit' | 'standard_58x40_noscale')}
+                >
+                  <MenuItem value="standard_58x40_noscale">Стандартный лист 58×40 мм (noscale)</MenuItem>
+                  <MenuItem value="as_is_fit">Этикетки как от маркетплейса (fit)</MenuItem>
+                </Select>
+                <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
+                  Стандартный: этикетки ресайзятся на 58×40, печать 100%. Как есть: без обработки, принтер масштабирует (fit).
                 </Typography>
               </FormControl>
 

@@ -180,9 +180,14 @@ export default function AssemblyPage() {
     }
   };
 
-  const printBlob = async (blob: Blob, _options?: { noFallback?: boolean }) => {
+  const labelPrintScale = printSettings?.label_print_mode === 'as_is_fit' ? 'fit' as const : 'noscale' as const;
+  const printBlob = async (
+    blob: Blob,
+    options?: { noFallback?: boolean; printScale?: 'fit' | 'noscale' },
+  ) => {
+    const scale = options?.printScale ?? 'noscale';
     if (agentAvailable) {
-      const ok = await printViaAgent(blob, printSettings?.default_printer || undefined, 'noscale');
+      const ok = await printViaAgent(blob, printSettings?.default_printer || undefined, scale);
       if (ok) return;
     }
     openBlobInNewWindow(blob);
@@ -219,8 +224,8 @@ export default function AssemblyPage() {
             ),
           ]);
           if (agentAvailable) {
-            if (barcodesBlob) await printBlob(barcodesBlob);
-            await printBlob(labelBlob, { noFallback: !!barcodesBlob });
+            if (barcodesBlob) await printBlob(barcodesBlob, { printScale: 'noscale' });
+            await printBlob(labelBlob, { noFallback: !!barcodesBlob, printScale: labelPrintScale });
           } else {
             // Оба окна открываем синхронно в рамках жеста пользователя (иначе блокирует popup)
             if (barcodesBlob) openBlobInNewWindow(barcodesBlob);
@@ -355,6 +360,7 @@ export default function AssemblyPage() {
         marketplaces={marketplaces}
         autoPrintKizDuplicate={printSettings?.auto_print_kiz_duplicate !== false}
         labelFormat={printSettings?.label_format}
+        labelPrintMode={printSettings?.label_print_mode}
         agentAvailable={agentAvailable}
         defaultPrinter={printSettings?.default_printer}
         onClose={handleModalClose}

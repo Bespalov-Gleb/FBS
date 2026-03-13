@@ -60,6 +60,8 @@ interface OrderModalProps {
   autoPrintKizDuplicate?: boolean;
   /** Формат этикетки 58/80 мм для WB */
   labelFormat?: '58mm' | '80mm';
+  /** Режим печати этикеток: as_is_fit → fit, standard_58x40_noscale → noscale */
+  labelPrintMode?: 'as_is_fit' | 'standard_58x40_noscale';
   /** Агент печати доступен — тихая печать без диалога */
   agentAvailable?: boolean;
   /** Принтер по умолчанию (для агента) */
@@ -70,7 +72,7 @@ interface OrderModalProps {
 
 const KIZ_MAX_LENGTH = 31;
 
-export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate = true, labelFormat: labelFormatProp, agentAvailable = false, defaultPrinter, onClose, onComplete }: OrderModalProps) {
+export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate = true, labelFormat: labelFormatProp, labelPrintMode, agentAvailable = false, defaultPrinter, onClose, onComplete }: OrderModalProps) {
   const kizCount = order?.quantity ?? 1;
   const [kizCodes, setKizCodes] = useState<string[]>(() => Array.from({ length: kizCount }, () => ''));
   const [completing, setCompleting] = useState(false);
@@ -164,6 +166,7 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
   const labelFormat = agentAvailable ? 'pdf' : (order.marketplace_type === 'ozon' ? 'pdf' : 'svg');
   const labelWidth = labelFormatProp === '80mm' ? 80 : 58;
 
+  const labelPrintScale = labelPrintMode === 'as_is_fit' ? 'fit' as const : 'noscale' as const;
   const handlePrint = async () => {
     setError(null);
     try {
@@ -179,7 +182,7 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
       ]);
       if (agentAvailable) {
         if (barcodesBlob) await printViaAgent(barcodesBlob, defaultPrinter, 'noscale');
-        await printViaAgent(blob, defaultPrinter, 'noscale');
+        await printViaAgent(blob, defaultPrinter, labelPrintScale);
       } else {
         // Оба окна открываем синхронно в рамках жеста пользователя (иначе блокирует popup)
         if (barcodesBlob) openBlobInNewWindow(barcodesBlob);

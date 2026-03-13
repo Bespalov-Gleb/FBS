@@ -47,6 +47,7 @@ class PrintSettingsResponse(BaseModel):
     auto_print_kiz_duplicate: Optional[bool] = None
     printer_dpi: Optional[int] = None  # 203 или 300 — DPI принтера
     print_scale: Optional[str] = None  # fit | shrink | noscale — для SumatraPDF
+    label_print_mode: Optional[str] = None  # as_is_fit | standard_58x40_noscale — путь печати этикеток
     ozon_labels: Optional[dict] = None     # {width_mm, height_mm, rotate}
     wb_labels: Optional[dict] = None       # {width_mm, height_mm, rotate}
     kiz_labels: Optional[dict] = None      # {width_mm, height_mm, rotate}
@@ -62,6 +63,7 @@ class PrintSettingsUpdate(BaseModel):
     auto_print_kiz_duplicate: Optional[bool] = None
     printer_dpi: Optional[int] = None  # 203 или 300
     print_scale: Optional[str] = None  # fit | shrink | noscale
+    label_print_mode: Optional[str] = None  # as_is_fit | standard_58x40_noscale
     ozon_labels: Optional[OzonLabelsSchema] = None
     wb_labels: Optional[WbLabelsSchema] = None
     kiz_labels: Optional[KizLabelsSchema] = None
@@ -111,6 +113,7 @@ def get_print_settings(
         return PrintSettingsResponse(
             printer_dpi=203,
             print_scale="fit",
+            label_print_mode="standard_58x40_noscale",
             ozon_labels={"width_mm": 58, "height_mm": 40, "rotate": 90},
             wb_labels={"width_mm": 58, "height_mm": 40, "rotate": 90},
             kiz_labels={"width_mm": 40, "height_mm": 35, "rotate": 0},
@@ -124,6 +127,7 @@ def get_print_settings(
         auto_print_kiz_duplicate=ps.auto_print_kiz_duplicate == "true" if ps.auto_print_kiz_duplicate else None,
         printer_dpi=ps.printer_dpi or 203,
         print_scale=ps.print_scale or "fit",
+        label_print_mode=ps.label_print_mode or "standard_58x40_noscale",
         ozon_labels=_ozon_labels_from_ps(ps),
         wb_labels=_wb_labels_from_ps(ps),
         kiz_labels=_kiz_labels_from_ps(ps),
@@ -185,6 +189,9 @@ def update_print_settings(
     if data.print_scale is not None:
         if data.print_scale in ("fit", "shrink", "noscale"):
             ps.print_scale = data.print_scale
+    if data.label_print_mode is not None:
+        if data.label_print_mode in ("as_is_fit", "standard_58x40_noscale"):
+            ps.label_print_mode = data.label_print_mode
     db.commit()
     db.refresh(ps)
     return PrintSettingsResponse(
@@ -195,6 +202,7 @@ def update_print_settings(
         auto_print_kiz_duplicate=ps.auto_print_kiz_duplicate == "true" if ps.auto_print_kiz_duplicate else None,
         printer_dpi=ps.printer_dpi or 203,
         print_scale=ps.print_scale or "fit",
+        label_print_mode=ps.label_print_mode or "standard_58x40_noscale",
         ozon_labels=_ozon_labels_from_ps(ps),
         wb_labels=_wb_labels_from_ps(ps),
         kiz_labels=_kiz_labels_from_ps(ps),

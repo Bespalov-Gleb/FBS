@@ -22,6 +22,7 @@ export interface PrintSettingsUpdate {
   auto_print_on_click?: boolean;
   auto_print_kiz_duplicate?: boolean;
   printer_dpi?: number;  // 203 или 300
+  label_print_mode?: 'as_is_fit' | 'standard_58x40_noscale';
   ozon_labels?: LabelSizeWithRotateUpdate;
   wb_labels?: LabelSizeWithRotateUpdate;
   kiz_labels?: LabelSizeWithRotateUpdate;
