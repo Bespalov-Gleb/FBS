@@ -603,16 +603,16 @@ def _ozon_fbs_to_standard_label(
         except Exception:
             pass
 
-        # Прижимаем к верхнему левому углу страницы с минимальным отступом (1 мм).
-        _ozon_edge_mm = 1.0
-        edge_pt = _ozon_edge_mm * mm
-        usable_w = page_w - edge_pt
-        usable_h = page_h - edge_pt
+        # Прижимаем к верхнему левому углу: сверху без отступа (0), слева 1 мм — чтобы не обрезало.
+        edge_left_pt = 1.0 * mm
+        edge_top_pt = 0
+        usable_w = page_w - edge_left_pt
+        usable_h = page_h - edge_top_pt
         scale = min(usable_w / iw, usable_h / ih)
         draw_w = iw * scale
         draw_h = ih * scale
-        x0 = edge_pt
-        y0 = page_h - draw_h - edge_pt
+        x0 = edge_left_pt
+        y0 = page_h - draw_h
 
         img_buf = io.BytesIO()
         img.save(img_buf, format="PNG")
@@ -643,6 +643,67 @@ def _rotate_pdf(pdf_bytes: bytes, degrees: int) -> bytes:
         writer.add_page(page.rotate(degrees))  # rotate() возвращает новую страницу
     buf = io.BytesIO()
     writer.write(buf)
+    buf.seek(0)
+    return buf.getvalue()
+
+
+def _rotate_pdf_via_image(
+    pdf_bytes: bytes,
+    degrees: int,
+    width_mm: int = 58,
+    height_mm: int = 40,
+    dpi: int = 203,
+) -> bytes:
+    """
+    Поворот PDF через рендер в изображение (для PDF от ReportLab, где pypdf может падать).
+    При 90/270 размер страницы меняется на height_mm×width_mm.
+    """
+    if not degrees or degrees % 90 != 0:
+        return pdf_bytes
+    import io
+
+    from PIL import Image
+    from pdf2image import convert_from_bytes
+    from reportlab.lib.units import mm
+    from reportlab.lib.utils import ImageReader
+    from reportlab.pdfgen import canvas
+
+    try:
+        images = convert_from_bytes(pdf_bytes, dpi=max(150, min(dpi, 300)))
+    except Exception as e:
+        logger.warning("Barcode PDF rotate via image: convert_from_bytes failed: %s", e)
+        return pdf_bytes
+    if not images:
+        return pdf_bytes
+
+    # При 90/270 меняем размер страницы
+    if degrees in (90, 270):
+        page_w_pt = height_mm * mm
+        page_h_pt = width_mm * mm
+    else:
+        page_w_pt = width_mm * mm
+        page_h_pt = height_mm * mm
+
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=(page_w_pt, page_h_pt))
+    for idx, img in enumerate(images):
+        if idx > 0:
+            c.showPage()
+        img = img.convert("RGB")
+        if degrees == 90:
+            img = img.transpose(Image.Transpose.ROTATE_270)
+        elif degrees == 270:
+            img = img.transpose(Image.Transpose.ROTATE_90)
+        elif degrees == 180:
+            img = img.transpose(Image.Transpose.ROTATE_180)
+        iw, ih = img.size
+        if iw <= 0 or ih <= 0:
+            continue
+        img_buf = io.BytesIO()
+        img.save(img_buf, format="PNG")
+        img_buf.seek(0)
+        c.drawImage(ImageReader(img_buf), 0, 0, width=page_w_pt, height=page_h_pt, preserveAspectRatio=True)
+    c.save()
     buf.seek(0)
     return buf.getvalue()
 
@@ -1532,10 +1593,11 @@ async def get_order_barcodes_pdf(
     if mp.type == MarketplaceType.OZON and ps_barcode and ps_barcode.barcode_rotate is not None:
         barcode_rotate = ps_barcode.barcode_rotate
     if barcode_rotate:
-        try:
-            pdf_bytes = _rotate_pdf(pdf_bytes, barcode_rotate)
-        except Exception as _re:
-            logger.warning(f"Barcode PDF rotate failed: {_re}")
+        # Поворот через рендер в изображение: pypdf может падать на PDF от ReportLab.
+        pdf_bytes = _rotate_pdf_via_image(
+            pdf_bytes, barcode_rotate,
+            width_mm=label_width, height_mm=40,
+        )
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
