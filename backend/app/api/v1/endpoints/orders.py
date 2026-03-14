@@ -603,6 +603,30 @@ def _ozon_fbs_to_standard_label(
         except Exception:
             pass
 
+        # Дополнительно поднимаем контент: обрезаем верх по первой небелой строке (внутренний отступ в PDF Ozon).
+        try:
+            pix = img.load()
+            white_thresh = 250  # считаем белым
+            y_top = 0
+            for y in range(ih):
+                for x in range(iw):
+                    p = pix[x, y]
+                    if isinstance(p, int):
+                        if p < white_thresh:
+                            break
+                    else:
+                        if max(p[:3]) < white_thresh:
+                            break
+                else:
+                    continue
+                y_top = y
+                break
+            if y_top > 0 and ih - y_top > 20:
+                img = img.crop((0, y_top, iw, ih))
+                iw, ih = img.size
+        except Exception:
+            pass
+
         # Прижимаем к верхнему левому углу: сверху без отступа (0), слева 1 мм — чтобы не обрезало.
         edge_left_pt = 1.0 * mm
         edge_top_pt = 0
@@ -1585,19 +1609,27 @@ async def get_order_barcodes_pdf(
     ps_barcode = db.query(PrintSettings).filter(PrintSettings.user_id == current_user.id).first()
     if label_width is None:
         label_width = (ps_barcode.ozon_width_mm or 58) if ps_barcode else 58
+    label_width = int(label_width)
     # Ozon: отступ сверху 5 мм — не обрезало принтером. WB: без отступа — обычное центрирование
     top_offset = _BARCODE_TOP_OFFSET_MM if mp.type == MarketplaceType.OZON else 0
     pdf_bytes = _generate_multi_product_barcode_pdf(items, label_width_mm=label_width, top_offset_mm=top_offset)
-    # Ozon OZN-штрихкоды: поворот 90° по умолчанию (в noscale иначе обрезает). WB EAN13 — без поворота
+    # Ozon OZN-штрихкоды: поворот из настроек (90 по умолчанию). WB EAN13 — без поворота
     barcode_rotate = 90 if mp.type == MarketplaceType.OZON else 0
     if mp.type == MarketplaceType.OZON and ps_barcode and ps_barcode.barcode_rotate is not None:
-        barcode_rotate = ps_barcode.barcode_rotate
-    if barcode_rotate:
-        # Поворот через рендер в изображение: pypdf может падать на PDF от ReportLab.
-        pdf_bytes = _rotate_pdf_via_image(
-            pdf_bytes, barcode_rotate,
-            width_mm=label_width, height_mm=40,
-        )
+        barcode_rotate = int(ps_barcode.barcode_rotate)
+    if barcode_rotate and barcode_rotate in (90, 180, 270):
+        logger.info("Barcode PDF: applying rotate=%s (label %s×40 mm)", barcode_rotate, label_width)
+        try:
+            pdf_bytes = _rotate_pdf_via_image(
+                pdf_bytes, barcode_rotate,
+                width_mm=label_width, height_mm=40,
+            )
+        except Exception as e:
+            logger.warning("Barcode rotate via image failed (%s), trying pypdf", e)
+            try:
+                pdf_bytes = _rotate_pdf(pdf_bytes, barcode_rotate)
+            except Exception as e2:
+                logger.warning("Barcode rotate pypdf also failed: %s", e2)
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
