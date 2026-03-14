@@ -1587,7 +1587,7 @@ def _wb_sticker_to_pdf(
         thresh = 250
         pix = img.load()
         band_min_rows = 3
-        dark_frac = 0.04
+        dark_frac = 0.10
         bands = []
         y_band_start = y_band_end = None
         for y in range(ih):
@@ -1674,12 +1674,13 @@ def _wb_sticker_to_pdf(
         logger.warning("WB label: ошибка при поиске горизонтального пояса: %s", e, exc_info=True)
 
     # Запасной вариант: горизонтальный пояс не нашли — ищем нижний блок (строчка) снизу и прижимаем к верху
+    # Границу строчки ищем по падению числа тёмных пикселей (зазор «белее» строчки), а не по строго белой строке
     if not line_at_top and ih > 20:
         try:
             pix = img.load()
             thresh_b = 252
             min_dark = 2
-            # Снизу вверх: первая строка с контентом — низ строчки; вверх только по контенту (до белой строки) — верх строчки
+            white_threshold = max(5, int(iw * 0.05))
             y_line_bottom = None
             for y in range(ih - 1, -1, -1):
                 dark = sum(1 for x in range(iw) if (pix[x, y] if isinstance(pix[x, y], int) else max(pix[x, y][:3])) < thresh_b)
@@ -1687,15 +1688,15 @@ def _wb_sticker_to_pdf(
                     y_line_bottom = y
                     break
             if y_line_bottom is not None and y_line_bottom > 0:
-                y_line_top = y_line_bottom
+                y_line_top = None
                 for y in range(y_line_bottom - 1, -1, -1):
                     dark = sum(1 for x in range(iw) if (pix[x, y] if isinstance(pix[x, y], int) else max(pix[x, y][:3])) < thresh_b)
-                    if dark >= min_dark:
-                        y_line_top = y
-                    else:
+                    if dark < white_threshold:
+                        y_line_top = y + 1
                         break
+                if y_line_top is None:
+                    y_line_top = 0
                 line_h = y_line_bottom - y_line_top + 1
-                # Нижний блок — одна строчка по высоте; выше должен быть контент этикетки
                 if line_h <= ih * 0.6 and line_h >= 2 and y_line_top >= 1:
                     top_img = img.crop((0, 0, iw, y_line_top))
                     bottom_img = img.crop((0, y_line_top, iw, ih))
@@ -1753,7 +1754,7 @@ def _wb_sticker_to_pdf(
         try:
             pix = img.load()
             t = 250
-            dark_frac = 0.06
+            dark_frac = 0.12
             best_band_start = None
             best_band_end = None
             best_band_len = 0
