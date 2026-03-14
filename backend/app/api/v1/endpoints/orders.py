@@ -798,9 +798,9 @@ def _rotate_pdf_via_image(
     dpi: int = 203,
 ) -> bytes:
     """
-    Поворот PDF через рендер в изображение (для PDF от ReportLab, где pypdf может падать).
-    При 90/270 размер страницы меняется на height_mm×width_mm.
-    После поворота обрезаем белое и размещаем контент в верхнем левом углу страницы (без отступа вниз).
+    Поворот/размещение PDF через рендер в изображение (для PDF от ReportLab).
+    При 90/270 — та же логика, что у этикетки ФБС: лист книжной ориентации 40×58,
+    контент уже альбомный (наш PDF 58×40) — не вращаем, кроп и привязка к верхнему левому как у этикетки.
     """
     if not degrees or degrees % 90 != 0:
         return pdf_bytes
@@ -820,14 +820,16 @@ def _rotate_pdf_via_image(
     if not images:
         return pdf_bytes
 
-    # Как у этикетки ФБС: при 90/270 — лист книжной ориентации (40×58), контент в альбомном виде в верхнем левом углу
+    # Полностью как у этикетки ФБС: книжная страница 40×58, отступы 1 мм, контент в альбомном виде в верхнем левом углу
     if degrees in (90, 270):
         page_w_pt = height_mm * mm   # 40 mm
-        page_h_pt = width_mm * mm    # 58 mm
+        page_h_pt = width_mm * mm   # 58 mm
         margin_left_pt = 1.0 * mm
         margin_top_pt = 1.0 * mm
         usable_w = page_w_pt - margin_left_pt - 1.0 * mm
         usable_h = page_h_pt - margin_top_pt - 1.0 * mm
+        # Штрихкод-источник уже альбомный (58×40) — не поворачиваем, иначе станет портрет и будет вертикально
+        skip_pixel_rotate = True
     else:
         page_w_pt = width_mm * mm
         page_h_pt = height_mm * mm
@@ -835,6 +837,7 @@ def _rotate_pdf_via_image(
         margin_top_pt = 0
         usable_w = page_w_pt - margin_left_pt
         usable_h = page_h_pt - margin_top_pt
+        skip_pixel_rotate = False
 
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=(page_w_pt, page_h_pt))
@@ -842,21 +845,54 @@ def _rotate_pdf_via_image(
         if idx > 0:
             c.showPage()
         img = img.convert("RGB")
-        # Как у этикетки: 90° = по часовой (штрихкод горизонтальный на альбоме 58×40)
-        if degrees == 90:
-            img = img.transpose(Image.Transpose.ROTATE_270)
-        elif degrees == 270:
-            img = img.transpose(Image.Transpose.ROTATE_90)
-        elif degrees == 180:
-            img = img.transpose(Image.Transpose.ROTATE_180)
+        if not skip_pixel_rotate:
+            if degrees == 90:
+                img = img.transpose(Image.Transpose.ROTATE_270)
+            elif degrees == 270:
+                img = img.transpose(Image.Transpose.ROTATE_90)
+            elif degrees == 180:
+                img = img.transpose(Image.Transpose.ROTATE_180)
         iw, ih = img.size
         if iw <= 0 or ih <= 0:
             continue
-        # Обрезаем белое, чтобы контент прижать к углу (как у ФБС этикетки)
-        img = _crop_image_to_content(img)
-        iw, ih = img.size
+        # Кроп как у этикетки: bbox по порогу 250, затем первая строка с тёмным 253
+        try:
+            pix = img.load()
+            thresh = 250
+            min_x, min_y, max_x, max_y = iw, ih, 0, 0
+            for y in range(ih):
+                for x in range(iw):
+                    p = pix[x, y]
+                    v = (p if isinstance(p, int) else max(p[:3]))
+                    if v < thresh:
+                        min_x, min_y = min(min_x, x), min(min_y, y)
+                        max_x, max_y = max(max_x, x), max(max_y, y)
+            if max_x >= min_x and max_y >= min_y and (max_x - min_x) > 10 and (max_y - min_y) > 10:
+                img = img.crop((min_x, min_y, max_x + 1, max_y + 1))
+                iw, ih = img.size
+        except Exception:
+            pass
+        try:
+            pix = img.load()
+            top_thresh = 253
+            y_top = 0
+            for y in range(ih):
+                for x in range(iw):
+                    p = pix[x, y]
+                    if (p if isinstance(p, int) else max(p[:3])) < top_thresh:
+                        y_top = y
+                        break
+                else:
+                    continue
+                break
+            if y_top > 0 and ih - y_top > 15:
+                img = img.crop((0, y_top, iw, ih))
+                iw, ih = img.size
+        except Exception:
+            pass
         if iw <= 0 or ih <= 0:
             continue
+        # Вписать в область, прижать к верхнему левому — как у этикетки
         scale = min(usable_w / iw, usable_h / ih)
         draw_w = iw * scale
         draw_h = ih * scale
