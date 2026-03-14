@@ -1732,16 +1732,6 @@ def _wb_sticker_to_pdf(
         except Exception as e:
             logger.warning("WB label: ошибка при сжатии белого пояса: %s", e, exc_info=True)
 
-    # Удалить строку eb4... внизу: закрасить белым фиксированную полосу по низу (строка всегда у самого края, этикетка выше)
-    if ih > 50 and iw > 20:
-        try:
-            strip_h = min(55, max(28, int(ih * 0.07)))
-            y0 = ih - strip_h
-            patch = Image.new("RGB", (iw, strip_h), (255, 255, 255))
-            img.paste(patch, (0, y0))
-        except Exception:
-            pass
-
     # Не давать надписи уходить низко: при сильной вытянутости по высоте режем снизу
     if ih > iw * 1.35:
         max_h = max(int(iw * 1.25), int(ih * 0.82))
