@@ -590,7 +590,7 @@ def _ozon_fbs_to_standard_label(
                 img = img.transpose(Image.Transpose.ROTATE_180)
             iw, ih = img.size
 
-        # Обрезаем только белые поля по краям
+        # Обрезаем белые поля по краям (фон этикеток Ozon — белый).
         from PIL import ImageChops
         try:
             bg_color = (255, 255, 255)
@@ -603,16 +603,16 @@ def _ozon_fbs_to_standard_label(
         except Exception:
             pass
 
-        # Масштабируем с небольшим боковым полем; по вертикали прижимаем к самому верху страницы.
-        _ozon_side_margin = 0.04
-        margin_top_pt = 0
-        usable_w = page_w * (1 - _ozon_side_margin)
-        usable_h = page_h
+        # Прижимаем к верхнему левому углу страницы с минимальным отступом (1 мм).
+        _ozon_edge_mm = 1.0
+        edge_pt = _ozon_edge_mm * mm
+        usable_w = page_w - edge_pt
+        usable_h = page_h - edge_pt
         scale = min(usable_w / iw, usable_h / ih)
         draw_w = iw * scale
         draw_h = ih * scale
-        x0 = (page_w - draw_w) / 2
-        y0 = page_h - draw_h - margin_top_pt
+        x0 = edge_pt
+        y0 = page_h - draw_h - edge_pt
 
         img_buf = io.BytesIO()
         img.save(img_buf, format="PNG")
