@@ -1528,6 +1528,10 @@ def _wb_sticker_to_pdf(
     if iw <= 0 or ih <= 0:
         raise ValueError("Invalid image dimensions")
 
+    try:
+        rotate = int(rotate) if rotate is not None else 90
+    except (TypeError, ValueError):
+        rotate = 90
     # Поворот как у Ozon: 0/90/180/270; при «высокой» картинке и формате 58×40 — 90° по часовой
     if rotate in (0, 90, 180, 270):
         deg = rotate
@@ -1972,7 +1976,7 @@ async def get_order_label(
             h = (ps.wb_height_mm if ps else 40) or 40
         else:
             w, h = width, height
-        wb_rotate = (ps.wb_label_rotate or 90) if ps else 90
+        wb_rotate = (ps.wb_label_rotate if ps.wb_label_rotate is not None else 90) if ps else 90
         label_mode = (ps.label_print_mode or "standard_58x40_noscale") if ps else "standard_58x40_noscale"
         async with WildberriesClient(api_key=api_key) as client:
             content = await client.get_order_label(
