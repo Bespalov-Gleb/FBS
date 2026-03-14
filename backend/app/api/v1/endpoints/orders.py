@@ -1584,9 +1584,10 @@ def _wb_sticker_to_pdf(
     # Берём самый широкий пояс в нижней половине картинки (между этикеткой и строчкой), а не первый попавшийся
     line_at_top = False
     try:
+        thresh = 250
         pix = img.load()
         band_min_rows = 3
-        dark_frac = 0.008
+        dark_frac = 0.04
         bands = []
         y_band_start = y_band_end = None
         for y in range(ih):
@@ -1667,15 +1668,17 @@ def _wb_sticker_to_pdf(
             iw, ih = img.size
             line_at_top = True
             logger.info("WB label: строчка прижата к верху (горизонтальный белый пояс)")
-    except Exception:
-        pass
+        else:
+            logger.info("WB label: горизонтальный пояс не сработал — bands=%s best_start=%s ih=%s iw=%s", len(bands), best_start, ih, iw)
+    except Exception as e:
+        logger.warning("WB label: ошибка при поиске горизонтального пояса: %s", e, exc_info=True)
 
     # Запасной вариант: горизонтальный пояс не нашли — ищем нижний блок (строчка) снизу и прижимаем к верху
     if not line_at_top and ih > 20:
         try:
             pix = img.load()
             thresh_b = 252
-            min_dark = max(2, min(4, int(iw * 0.005)))
+            min_dark = 2
             # Снизу вверх: первая строка с контентом — низ строчки; вверх только по контенту (до белой строки) — верх строчки
             y_line_bottom = None
             for y in range(ih - 1, -1, -1):
@@ -1693,7 +1696,7 @@ def _wb_sticker_to_pdf(
                         break
                 line_h = y_line_bottom - y_line_top + 1
                 # Нижний блок — одна строчка по высоте; выше должен быть контент этикетки
-                if line_h <= ih * 0.55 and line_h >= 3 and y_line_top >= 1:
+                if line_h <= ih * 0.6 and line_h >= 2 and y_line_top >= 1:
                     top_img = img.crop((0, 0, iw, y_line_top))
                     bottom_img = img.crop((0, y_line_top, iw, ih))
                     if deg:
@@ -1725,8 +1728,12 @@ def _wb_sticker_to_pdf(
                     iw, ih = img.size
                     line_at_top = True
                     logger.info("WB label: строчка прижата к верху (поиск нижнего блока снизу)")
-        except Exception:
-            pass
+                else:
+                    logger.info("WB label: нижний блок не подошёл — y_line_bottom=%s y_line_top=%s line_h=%s ih=%s", y_line_bottom, y_line_top, line_h, ih)
+            else:
+                logger.info("WB label: нижний блок не найден — y_line_bottom=%s ih=%s iw=%s", y_line_bottom, ih, iw)
+        except Exception as e:
+            logger.warning("WB label: ошибка при поиске нижнего блока: %s", e, exc_info=True)
 
     if not line_at_top:
         # Белый пояс не нашли — крутим всё изображение
@@ -1782,8 +1789,10 @@ def _wb_sticker_to_pdf(
                 img.paste(bottom_part, (0, 0))
                 iw, ih = img.size
                 logger.info("WB label: строчка прижата к верху (сжатие белого пояса по середине)")
-        except Exception:
-            pass
+            else:
+                logger.info("WB label: сжатие пояса не сработало — best_band_len=%s ih=%s", best_band_len, ih)
+        except Exception as e:
+            logger.warning("WB label: ошибка при сжатии белого пояса: %s", e, exc_info=True)
 
     # Не давать надписи уходить низко: при сильной вытянутости по высоте режем снизу
     if ih > iw * 1.35:
