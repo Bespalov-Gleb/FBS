@@ -1513,8 +1513,8 @@ def _wb_sticker_to_pdf(
     top_margin_mm: float = 6.0,
 ) -> bytes:
     """
-    Конвертировать PNG-стикер WB в PDF для печати (размер 58×40 мм).
-    WB присылает «высокую» этикетку — поворачиваем на 90° для широкой 58×40.
+    Конвертировать PNG-стикер WB в PDF — та же логика, что у этикетки Ozon:
+    лист книжной ориентации (40×58 мм), этикетка в альбомном виде прижата к верхнему левому углу.
     """
     import io
 
@@ -1527,49 +1527,88 @@ def _wb_sticker_to_pdf(
     iw, ih = img.size
     if iw <= 0 or ih <= 0:
         raise ValueError("Invalid image dimensions")
-    if rotate and rotate % 90 == 0:
-        img = img.rotate(rotate, expand=True)
+
+    # Поворот как у Ozon: 0/90/180/270; при «высокой» картинке и формате 58×40 — 90° по часовой
+    if rotate in (0, 90, 180, 270):
+        deg = rotate
+    elif label_width_mm > label_height_mm and ih > iw:
+        deg = 90
+    else:
+        deg = 0
+    if deg:
+        if deg == 90:
+            img = img.transpose(Image.Transpose.ROTATE_270)
+        elif deg == 270:
+            img = img.transpose(Image.Transpose.ROTATE_90)
+        elif deg == 180:
+            img = img.transpose(Image.Transpose.ROTATE_180)
         iw, ih = img.size
-    # WB часто присылает «высокую» картинку — для широкой 58×40 всегда поворачиваем
-    elif ih > iw and label_width_mm > label_height_mm:
-        img = img.rotate(90, expand=True)
-        iw, ih = img.size
-    # Стикер WB обычно с белыми полями; убираем их, чтобы вся этикетка (включая код) подтянулась к верху.
+
+    # Кроп как у этикетки Ozon: bbox по порогу 250, затем первая строка с тёмным 253
     try:
-        from PIL import ImageChops as _WBImageChops
-        bg = Image.new(img.mode, img.size, (255, 255, 255))
-        diff = _WBImageChops.difference(img, bg)
-        bbox = diff.getbbox()
-        if bbox and (bbox[2] - bbox[0]) > 10 and (bbox[3] - bbox[1]) > 10:
-            img = img.crop(bbox)
+        pix = img.load()
+        thresh = 250
+        min_x, min_y, max_x, max_y = iw, ih, 0, 0
+        for y in range(ih):
+            for x in range(iw):
+                p = pix[x, y]
+                v = (p if isinstance(p, int) else max(p[:3]))
+                if v < thresh:
+                    min_x, min_y = min(min_x, x), min(min_y, y)
+                    max_x, max_y = max(max_x, x), max(max_y, y)
+        if max_x >= min_x and max_y >= min_y and (max_x - min_x) > 10 and (max_y - min_y) > 10:
+            img = img.crop((min_x, min_y, max_x + 1, max_y + 1))
             iw, ih = img.size
     except Exception:
         pass
-    label_w = label_width_mm * mm
-    label_h = label_height_mm * mm
-    scale = min(label_w / iw, label_h / ih)  # вписать в стикер (масштаб вверх/вниз)
+    try:
+        pix = img.load()
+        top_thresh = 253
+        y_top = 0
+        for y in range(ih):
+            for x in range(iw):
+                p = pix[x, y]
+                if (p if isinstance(p, int) else max(p[:3])) < top_thresh:
+                    y_top = y
+                    break
+            else:
+                continue
+            break
+        if y_top > 0 and ih - y_top > 15:
+            img = img.crop((0, y_top, iw, ih))
+            iw, ih = img.size
+    except Exception:
+        pass
+
+    # Лист книжной ориентации 40×58 (как Ozon), прижать к верхнему левому углу
+    page_width_mm = label_height_mm
+    page_height_mm = label_width_mm
+    frame_w_pt = page_width_mm * mm
+    frame_h_pt = page_height_mm * mm
+    margin_left_pt = 1.0 * mm
+    margin_top_pt = 1.0 * mm
+    usable_w = frame_w_pt - margin_left_pt - 1.0 * mm
+    usable_h = frame_h_pt - margin_top_pt - 1.0 * mm
+
+    scale = min(usable_w / iw, usable_h / ih)
     draw_w = iw * scale
     draw_h = ih * scale
-    # Прижимаем к верху, добавляя небольшой отступ слева, чтобы не обрезалось.
-    margin_left_mm = 1.5
-    margin_top_mm = 0.0
-    x0 = margin_left_mm * mm
-    y0 = label_h - draw_h - margin_top_mm * mm
+    x_place = margin_left_pt
+    y_place = frame_h_pt - margin_top_pt - draw_h
+
     img_buf = io.BytesIO()
     img.save(img_buf, format="PNG")
     img_buf.seek(0)
     buf = io.BytesIO()
-    c = canvas.Canvas(buf, pagesize=(label_w, label_h))
+    c = canvas.Canvas(buf, pagesize=(frame_w_pt, frame_h_pt))
     c.drawImage(
         ImageReader(img_buf),
-        x0, y0, width=draw_w, height=draw_h,
+        x_place, y_place, width=draw_w, height=draw_h,
         preserveAspectRatio=True,
     )
-    # Номер заказа WB — внизу этикетки
     if order_number and str(order_number).strip():
         c.setFont("Helvetica-Bold", 8)
-        num_text = str(order_number).strip()[:25]
-        c.drawCentredString(label_w / 2, 2 * mm, num_text)
+        c.drawCentredString(frame_w_pt / 2, 2 * mm, str(order_number).strip()[:25])
     c.save()
     buf.seek(0)
     return buf.getvalue()
