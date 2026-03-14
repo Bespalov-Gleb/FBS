@@ -639,6 +639,7 @@ def _ozon_fbs_to_standard_label(
     frame_h_pt = height_mm * mm
     margin_left_pt = 1.0 * mm
     margin_top_pt = 0
+    margin_bottom_pt = 2.0 * mm  # отступ снизу — поднимаем рисунок над нижней границей
 
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=(frame_w_pt, frame_h_pt))
@@ -710,16 +711,15 @@ def _ozon_fbs_to_standard_label(
         except Exception:
             pass
 
-        # Размещение в новом фрейме: контент прижат к верхнему левому углу (слева отступ 1 мм, сверху 0)
+        # Размещение в новом фрейме: слева 1 мм, сверху 0, снизу отступ margin_bottom — рисунок выше низа листа
         usable_w = frame_w_pt - margin_left_pt
-        usable_h = frame_h_pt - margin_top_pt
+        usable_h = frame_h_pt - margin_top_pt - margin_bottom_pt
         scale = min(usable_w / iw, usable_h / ih)
         draw_w = iw * scale
         draw_h = ih * scale
-        # При preserveAspectRatio=True дефолтный anchor='sw' прижимает картинку к низу бокса — сверху белое поле.
-        # anchor='nw': (x,y) = верхний левый угол; прижимаем контент к верху страницы.
+        # (x, y) — нижний левый угол рисунка; низ рисунка на margin_bottom, верх упирается в верх страницы
         x_place = margin_left_pt
-        y_place = frame_h_pt  # верх бокса (для anchor='nw' это точка привязки)
+        y_place = margin_bottom_pt
 
         img_buf = io.BytesIO()
         img.save(img_buf, format="PNG")
@@ -729,7 +729,6 @@ def _ozon_fbs_to_standard_label(
             ImageReader(img_buf),
             x_place, y_place, width=draw_w, height=draw_h,
             preserveAspectRatio=True,
-            anchor="nw",
         )
 
     c.save()
@@ -854,13 +853,13 @@ def _rotate_pdf_via_image(
         draw_w = iw * scale
         draw_h = ih * scale
         x_place = margin_left_pt
-        y_place = page_h_pt  # верх страницы; anchor='nw' прижмёт картинку к верху
+        y_place = page_h_pt - draw_h
         img_buf = io.BytesIO()
         img.save(img_buf, format="PNG")
         img_buf.seek(0)
         c.drawImage(
             ImageReader(img_buf), x_place, y_place, width=draw_w, height=draw_h,
-            preserveAspectRatio=True, anchor="nw",
+            preserveAspectRatio=True,
         )
     c.save()
     buf.seek(0)
