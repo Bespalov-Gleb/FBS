@@ -1581,13 +1581,14 @@ def _wb_sticker_to_pdf(
         pass
 
     # Ищем белый пояс: верх = этикетка (её повернём), низ = строчка (без поворота, прижмём к верху страницы)
+    # Берём самый широкий пояс в нижней половине картинки (между этикеткой и строчкой), а не первый попавшийся
     line_at_top = False
     try:
         pix = img.load()
         band_min_rows = 3
-        dark_frac = 0.005
-        y_band_start = None
-        y_band_end = None
+        dark_frac = 0.008
+        bands = []
+        y_band_start = y_band_end = None
         for y in range(ih):
             dark = sum(1 for x in range(iw) if (pix[x, y] if isinstance(pix[x, y], int) else max(pix[x, y][:3])) < thresh)
             if dark < max(2, int(iw * dark_frac)):
@@ -1596,9 +1597,25 @@ def _wb_sticker_to_pdf(
                 y_band_end = y
             else:
                 if y_band_start is not None and (y_band_end - y_band_start + 1) >= band_min_rows:
-                    break
+                    bands.append((y_band_start, y_band_end))
                 y_band_start = None
                 y_band_end = None
+        if y_band_start is not None and (y_band_end - y_band_start + 1) >= band_min_rows:
+            bands.append((y_band_start, y_band_end))
+        best_start, best_end = None, None
+        best_len = 0
+        for (ys, ye) in bands:
+            length = ye - ys + 1
+            mid = (ys + ye) / 2
+            if length >= band_min_rows and mid >= ih * 0.25 and length > best_len:
+                best_len = length
+                best_start, best_end = ys, ye
+        if best_start is None and bands:
+            ys, ye = max(bands, key=lambda b: b[1] - b[0] + 1)
+            if ye - ys + 1 >= band_min_rows:
+                best_start, best_end = ys, ye
+        if best_start is not None and best_end is not None:
+            y_band_start, y_band_end = best_start, best_end
         if y_band_start is not None and y_band_end is not None and (y_band_end - y_band_start + 1) >= band_min_rows:
             top_img = img.crop((0, 0, iw, y_band_start))
             bottom_img = img.crop((0, y_band_end + 1, iw, ih))
@@ -1649,6 +1666,7 @@ def _wb_sticker_to_pdf(
             img.paste(bottom_img, (0, 0))
             iw, ih = img.size
             line_at_top = True
+            logger.info("WB label: строчка прижата к верху (горизонтальный белый пояс)")
     except Exception:
         pass
 
@@ -1656,26 +1674,26 @@ def _wb_sticker_to_pdf(
     if not line_at_top and ih > 20:
         try:
             pix = img.load()
-            thresh_b = 250
-            dark_frac_b = 0.01
+            thresh_b = 252
+            min_dark = max(2, min(4, int(iw * 0.005)))
             # Снизу вверх: первая строка с контентом — низ строчки; вверх только по контенту (до белой строки) — верх строчки
             y_line_bottom = None
             for y in range(ih - 1, -1, -1):
                 dark = sum(1 for x in range(iw) if (pix[x, y] if isinstance(pix[x, y], int) else max(pix[x, y][:3])) < thresh_b)
-                if dark >= max(2, int(iw * dark_frac_b)):
+                if dark >= min_dark:
                     y_line_bottom = y
                     break
             if y_line_bottom is not None and y_line_bottom > 0:
                 y_line_top = y_line_bottom
                 for y in range(y_line_bottom - 1, -1, -1):
                     dark = sum(1 for x in range(iw) if (pix[x, y] if isinstance(pix[x, y], int) else max(pix[x, y][:3])) < thresh_b)
-                    if dark >= max(2, int(iw * dark_frac_b)):
+                    if dark >= min_dark:
                         y_line_top = y
                     else:
                         break
                 line_h = y_line_bottom - y_line_top + 1
                 # Нижний блок — одна строчка по высоте; выше должен быть контент этикетки
-                if line_h <= ih * 0.4 and line_h >= 5 and y_line_top > 3:
+                if line_h <= ih * 0.55 and line_h >= 3 and y_line_top >= 1:
                     top_img = img.crop((0, 0, iw, y_line_top))
                     bottom_img = img.crop((0, y_line_top, iw, ih))
                     if deg:
@@ -1706,6 +1724,7 @@ def _wb_sticker_to_pdf(
                     img.paste(bottom_img, (0, 0))
                     iw, ih = img.size
                     line_at_top = True
+                    logger.info("WB label: строчка прижата к верху (поиск нижнего блока снизу)")
         except Exception:
             pass
 
@@ -1722,12 +1741,12 @@ def _wb_sticker_to_pdf(
                 img = img.transpose(Image.Transpose.ROTATE_180)
                 iw, ih = img.size
 
-    # Подтянуть всё вверх: если есть большой белый пояс по вертикали в середине — убрать его, нижний блок прижать к верху
+    # Подтянуть всё вверх: если есть большой белый пояс в середине — убрать его, нижний блок прижать к верху (наложение)
     if ih > 30 and iw > 10:
         try:
             pix = img.load()
             t = 250
-            dark_frac = 0.02
+            dark_frac = 0.06
             best_band_start = None
             best_band_end = None
             best_band_len = 0
@@ -1740,17 +1759,17 @@ def _wb_sticker_to_pdf(
                         y_start = y
                     y_end = y
                 else:
-                    if y_start is not None and (y_end - y_start + 1) > best_band_len:
+                    if y_start is not None:
                         band_len = y_end - y_start + 1
-                        if band_len >= max(8, int(ih * 0.08)) and y_start > ih * 0.1 and y_end < ih * 0.9:
+                        if band_len >= max(5, int(ih * 0.05)) and y_start >= int(ih * 0.05) and y_end <= int(ih * 0.95) and band_len > best_band_len:
                             best_band_len = band_len
                             best_band_start = y_start
                             best_band_end = y_end
                     y_start = None
                     y_end = None
-            if y_start is not None and (y_end - y_start + 1) > best_band_len:
+            if y_start is not None:
                 band_len = y_end - y_start + 1
-                if band_len >= max(8, int(ih * 0.08)) and y_start > ih * 0.1 and y_end < ih * 0.9:
+                if band_len >= max(5, int(ih * 0.05)) and y_start >= int(ih * 0.05) and y_end <= int(ih * 0.95) and band_len > best_band_len:
                     best_band_start = y_start
                     best_band_end = y_end
             if best_band_start is not None and best_band_end is not None:
@@ -1762,6 +1781,7 @@ def _wb_sticker_to_pdf(
                 img.paste(top_part, (0, 0))
                 img.paste(bottom_part, (0, 0))
                 iw, ih = img.size
+                logger.info("WB label: строчка прижата к верху (сжатие белого пояса по середине)")
         except Exception:
             pass
 
