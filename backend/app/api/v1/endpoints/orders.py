@@ -484,11 +484,11 @@ def _ozon_fbs_to_png(
     # иначе превью не совпадает с PDF при рендере pdf2image в альбоме (iw > ih).
     deg = rotate if (rotate and rotate % 90 == 0) else (90 if rotate else 0)
     if deg:
-        # Направление как в _ozon_fbs_to_standard_label: 90° = против часовой (читаемый текст при альбоме)
+        # Как в _ozon_fbs_to_standard_label: 90° = по часовой (текст горизонтальный на альбоме)
         if deg == 90:
-            img = img.transpose(PILImage.Transpose.ROTATE_90)
-        elif deg == 270:
             img = img.transpose(PILImage.Transpose.ROTATE_270)
+        elif deg == 270:
+            img = img.transpose(PILImage.Transpose.ROTATE_90)
         elif deg == 180:
             img = img.transpose(PILImage.Transpose.ROTATE_180)
         iw, ih = img.size
@@ -668,11 +668,11 @@ def _ozon_fbs_to_standard_label(
             idx + 1, iw, ih, rotate, deg,
         )
         if deg:
-            # PIL: ROTATE_90 = 90° против часовой, ROTATE_270 = 90° по часовой. Для этикетки 58×40 «90°» = читаемый текст при альбоме → поворот против часовой.
+            # PIL: ROTATE_90 = 90° против ч/с, ROTATE_270 = 90° по ч/с. Ozon присылает портрет; для альбома 58×40 нужен поворот по часовой → текст горизонтальный.
             if deg == 90:
-                img = img.transpose(Image.Transpose.ROTATE_90)
-            elif deg == 270:
                 img = img.transpose(Image.Transpose.ROTATE_270)
+            elif deg == 270:
+                img = img.transpose(Image.Transpose.ROTATE_90)
             elif deg == 180:
                 img = img.transpose(Image.Transpose.ROTATE_180)
             iw, ih = img.size
@@ -837,11 +837,11 @@ def _rotate_pdf_via_image(
         if idx > 0:
             c.showPage()
         img = img.convert("RGB")
-        # Направление как у этикетки: 90° = против часовой (читаемый штрихкод при альбоме 58×40)
+        # Как у этикетки: 90° = по часовой (штрихкод горизонтальный на альбоме 58×40)
         if degrees == 90:
-            img = img.transpose(Image.Transpose.ROTATE_90)
-        elif degrees == 270:
             img = img.transpose(Image.Transpose.ROTATE_270)
+        elif degrees == 270:
+            img = img.transpose(Image.Transpose.ROTATE_90)
         elif degrees == 180:
             img = img.transpose(Image.Transpose.ROTATE_180)
         iw, ih = img.size
