@@ -601,24 +601,25 @@ def _ozon_fbs_to_standard_label(
         except Exception:
             pass
 
-        # Убираем верхний «пояс» белого: первая небелая строка становится верхом контента
+        # Убираем верхний белый пояс: ищем первую строку с «существенным» контентом (не тонкая рамка)
         try:
             pix = img.load()
             white_thresh = 252
+            min_fraction = 0.01  # хотя бы 1% пикселей строки — не белые
             y_top = 0
             for y in range(ih):
+                dark_count = 0
                 for x in range(iw):
                     p = pix[x, y]
                     if isinstance(p, int):
                         if p < white_thresh:
-                            break
+                            dark_count += 1
                     else:
                         if max(p[:3]) < white_thresh:
-                            break
-                else:
-                    continue
-                y_top = y
-                break
+                            dark_count += 1
+                if dark_count >= max(2, iw * min_fraction):
+                    y_top = y
+                    break
             if y_top > 0 and ih - y_top > 20:
                 img = img.crop((0, y_top, iw, ih))
                 iw, ih = img.size
@@ -668,6 +669,39 @@ def _rotate_pdf(pdf_bytes: bytes, degrees: int) -> bytes:
     return buf.getvalue()
 
 
+def _crop_image_to_content(img: "Image.Image", white_thresh: int = 252, min_fraction: float = 0.01) -> "Image.Image":
+    """Обрезать белые поля: по getbbox и по первой строке с существенным контентом сверху."""
+    from PIL import Image
+    from PIL import ImageChops
+
+    img = img.convert("RGB")
+    iw, ih = img.size
+    if iw <= 0 or ih <= 0:
+        return img
+    try:
+        bg = ImageChops.difference(img, Image.new(img.mode, img.size, (255, 255, 255)))
+        bbox = bg.getbbox()
+        if bbox and (bbox[2] - bbox[0]) > 10 and (bbox[3] - bbox[1]) > 10:
+            img = img.crop(bbox)
+            iw, ih = img.size
+    except Exception:
+        pass
+    try:
+        pix = img.load()
+        for y in range(ih):
+            dark_count = sum(
+                1 for x in range(iw)
+                if (pix[x, y] if isinstance(pix[x, y], int) else max(pix[x, y][:3])) < white_thresh
+            )
+            if dark_count >= max(2, int(iw * min_fraction)):
+                if y > 0 and ih - y > 20:
+                    img = img.crop((0, y, iw, ih))
+                break
+    except Exception:
+        pass
+    return img
+
+
 def _rotate_pdf_via_image(
     pdf_bytes: bytes,
     degrees: int,
@@ -678,6 +712,7 @@ def _rotate_pdf_via_image(
     """
     Поворот PDF через рендер в изображение (для PDF от ReportLab, где pypdf может падать).
     При 90/270 размер страницы меняется на height_mm×width_mm.
+    После поворота обрезаем белое и размещаем контент в верхнем левом углу страницы (без отступа вниз).
     """
     if not degrees or degrees % 90 != 0:
         return pdf_bytes
@@ -697,13 +732,15 @@ def _rotate_pdf_via_image(
     if not images:
         return pdf_bytes
 
-    # При 90/270 меняем размер страницы
     if degrees in (90, 270):
         page_w_pt = height_mm * mm
         page_h_pt = width_mm * mm
     else:
         page_w_pt = width_mm * mm
         page_h_pt = height_mm * mm
+
+    margin_left_pt = 1.0 * mm
+    margin_top_pt = 0
 
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=(page_w_pt, page_h_pt))
@@ -720,10 +757,22 @@ def _rotate_pdf_via_image(
         iw, ih = img.size
         if iw <= 0 or ih <= 0:
             continue
+        # Обрезаем белое, чтобы контент прижать к углу (как у ФБС этикетки)
+        img = _crop_image_to_content(img)
+        iw, ih = img.size
+        if iw <= 0 or ih <= 0:
+            continue
+        usable_w = page_w_pt - margin_left_pt
+        usable_h = page_h_pt - margin_top_pt
+        scale = min(usable_w / iw, usable_h / ih)
+        draw_w = iw * scale
+        draw_h = ih * scale
+        x_place = margin_left_pt
+        y_place = page_h_pt - draw_h
         img_buf = io.BytesIO()
         img.save(img_buf, format="PNG")
         img_buf.seek(0)
-        c.drawImage(ImageReader(img_buf), 0, 0, width=page_w_pt, height=page_h_pt, preserveAspectRatio=True)
+        c.drawImage(ImageReader(img_buf), x_place, y_place, width=draw_w, height=draw_h, preserveAspectRatio=True)
     c.save()
     buf.seek(0)
     return buf.getvalue()
