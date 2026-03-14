@@ -527,8 +527,10 @@ def _ozon_fbs_to_standard_label(
     dpi: int = 203,
 ) -> bytes:
     """
-    Этикетка Ozon FBS: страница 58×40 мм (альбом — ширина × высота стикера).
-    Контент повёрнут и вписан. dpi: 203 или 300 (DPI термопринтера).
+    Этикетка Ozon FBS: не редактируем исходный PDF, а пересоздаём страницу.
+    1) Рендерим PDF в растровую этикетку.
+    2) Поворачиваем и обрезаем белые поля — получаем «контент» этикетки.
+    3) Создаём новый PDF-фрейм 58×40 мм и рисуем этот контент в верхнем левом углу фрейма.
     """
     import io
 
@@ -538,8 +540,6 @@ def _ozon_fbs_to_standard_label(
     from reportlab.lib.utils import ImageReader
     from reportlab.pdfgen import canvas
 
-    # Сначала рендер без pdftocairo: страница Ozon часто в портрете (ih>iw), после поворота — альбом.
-    # pdftocairo может применять /Rotate и отдавать альбом (iw>ih), тогда контент остаётся вертикальным.
     dpi_val = max(150, min(dpi, 300))
     try:
         images = convert_from_bytes(pdf_bytes, dpi=dpi_val, use_pdftocairo=False)
@@ -551,12 +551,14 @@ def _ozon_fbs_to_standard_label(
     if not images:
         raise ValueError("PDF returned no pages")
 
-    # Альбомная ориентация: 58 ширина × 40 высота — соответствует физическому стикеру
-    page_w = width_mm * mm
-    page_h = height_mm * mm
+    # Размер нового фрейма (страницы), который мы создаём с нуля
+    frame_w_pt = width_mm * mm
+    frame_h_pt = height_mm * mm
+    margin_left_pt = 1.0 * mm
+    margin_top_pt = 0
 
     buf = io.BytesIO()
-    c = canvas.Canvas(buf, pagesize=(page_w, page_h))
+    c = canvas.Canvas(buf, pagesize=(frame_w_pt, frame_h_pt))
 
     for idx, img in enumerate(images):
         if idx > 0:
@@ -566,10 +568,7 @@ def _ozon_fbs_to_standard_label(
         if iw <= 0 or ih <= 0:
             continue
 
-        # Поворот по настройке:
-        # - 0  → без поворота;
-        # - 90/180/270 → строго соответствуют настройке;
-        # - None/другое и страница портретная при альбомном стикере 58×40 → 90° по умолчанию.
+        # Поворот растра по настройке (0 / 90 / 180 / 270; при портрете и альбомном стикере — 90 по умолчанию)
         deg: Optional[int]
         if rotate in (0, 90, 180, 270):
             deg = rotate
@@ -590,11 +589,10 @@ def _ozon_fbs_to_standard_label(
                 img = img.transpose(Image.Transpose.ROTATE_180)
             iw, ih = img.size
 
-        # Обрезаем белые поля по краям (фон этикеток Ozon — белый).
+        # Убираем белые поля с картинки — оставляем только контент (для последующего размещения в углу фрейма)
         from PIL import ImageChops
         try:
-            bg_color = (255, 255, 255)
-            bg = Image.new(img.mode, img.size, bg_color)
+            bg = Image.new(img.mode, img.size, (255, 255, 255))
             diff = ImageChops.difference(img, bg)
             bbox = diff.getbbox()
             if bbox and (bbox[2] - bbox[0]) > 10 and (bbox[3] - bbox[1]) > 10:
@@ -603,10 +601,10 @@ def _ozon_fbs_to_standard_label(
         except Exception:
             pass
 
-        # Дополнительно поднимаем контент: обрезаем верх по первой небелой строке (внутренний отступ в PDF Ozon).
+        # Убираем верхний «пояс» белого: первая небелая строка становится верхом контента
         try:
             pix = img.load()
-            white_thresh = 250  # считаем белым
+            white_thresh = 252
             y_top = 0
             for y in range(ih):
                 for x in range(iw):
@@ -627,16 +625,15 @@ def _ozon_fbs_to_standard_label(
         except Exception:
             pass
 
-        # Прижимаем к верхнему левому углу: сверху без отступа (0), слева 1 мм — чтобы не обрезало.
-        edge_left_pt = 1.0 * mm
-        edge_top_pt = 0
-        usable_w = page_w - edge_left_pt
-        usable_h = page_h - edge_top_pt
+        # Размещение в новом фрейме: контент прижат к верхнему левому углу (слева отступ 1 мм, сверху 0)
+        usable_w = frame_w_pt - margin_left_pt
+        usable_h = frame_h_pt - margin_top_pt
         scale = min(usable_w / iw, usable_h / ih)
         draw_w = iw * scale
         draw_h = ih * scale
-        x0 = edge_left_pt
-        y0 = page_h - draw_h
+        # В ReportLab (x, y) у drawImage — нижний левый угол; чтобы верх контента был у верха страницы: y = frame_h - draw_h
+        x_place = margin_left_pt
+        y_place = frame_h_pt - draw_h
 
         img_buf = io.BytesIO()
         img.save(img_buf, format="PNG")
@@ -644,7 +641,7 @@ def _ozon_fbs_to_standard_label(
 
         c.drawImage(
             ImageReader(img_buf),
-            x0, y0, width=draw_w, height=draw_h,
+            x_place, y_place, width=draw_w, height=draw_h,
             preserveAspectRatio=True,
         )
 
