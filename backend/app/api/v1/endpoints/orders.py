@@ -1588,10 +1588,16 @@ def _wb_sticker_to_pdf(
                 continue
             break
         if y_top > 0 and ih - y_top > 15:
-            img = img.crop((0, y_top, iw, ih))
-            iw, ih = img.size
+                img = img.crop((0, y_top, iw, ih))
+                iw, ih = img.size
     except Exception:
         pass
+    # Не давать надписи (WB + код) уходить низко: при сильной вытянутости по высоте режем снизу, прижимаем к углу
+    if ih > iw * 1.35:
+        max_h = max(int(iw * 1.25), int(ih * 0.82))
+        if max_h < ih:
+            img = img.crop((0, 0, iw, max_h))
+            iw, ih = img.size
 
     # Лист книжной ориентации 40×58 (как Ozon), прижать к верхнему левому углу
     page_width_mm = label_height_mm
