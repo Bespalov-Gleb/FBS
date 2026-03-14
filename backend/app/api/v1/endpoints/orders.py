@@ -1641,17 +1641,74 @@ def _wb_sticker_to_pdf(
                         bottom_img = bottom_img.crop((0, btop, bw, bh))
                 except Exception:
                     pass
-            # Собираем: строчка в самый верх страницы (без поворота), под нею этикетка
-            gap = 4
-            new_h = bottom_img.size[1] + gap + top_img.size[1]
+            # Собираем: этикетка по размеру; строчка прижата к верху и накладывается на этикетку
+            new_h = top_img.size[1]
             new_w = max(top_img.size[0], bottom_img.size[0])
             img = Image.new("RGB", (new_w, new_h), (255, 255, 255))
+            img.paste(top_img, (0, 0))
             img.paste(bottom_img, (0, 0))
-            img.paste(top_img, (0, bottom_img.size[1] + gap))
             iw, ih = img.size
             line_at_top = True
     except Exception:
         pass
+
+    # Запасной вариант: горизонтальный пояс не нашли — ищем нижний блок (строчка) снизу и прижимаем к верху
+    if not line_at_top and ih > 20:
+        try:
+            pix = img.load()
+            thresh_b = 250
+            dark_frac_b = 0.02
+            # Снизу вверх: первая строка с контентом — низ строчки; идём вверх, пока есть контент — верх строчки
+            y_line_bottom = None
+            for y in range(ih - 1, -1, -1):
+                dark = sum(1 for x in range(iw) if (pix[x, y] if isinstance(pix[x, y], int) else max(pix[x, y][:3])) < thresh_b)
+                if dark >= max(2, int(iw * dark_frac_b)):
+                    y_line_bottom = y
+                    break
+            if y_line_bottom is not None and y_line_bottom > 0:
+                y_line_top = None
+                for y in range(y_line_bottom, -1, -1):
+                    dark = sum(1 for x in range(iw) if (pix[x, y] if isinstance(pix[x, y], int) else max(pix[x, y][:3])) < thresh_b)
+                    if dark < max(2, int(iw * dark_frac_b)):
+                        y_line_top = y + 1
+                        break
+                if y_line_top is None:
+                    y_line_top = 0
+                line_h = y_line_bottom - y_line_top + 1
+                # Нижний блок — не больше ~35% высоты (одна строчка), и этикетка выше не пустая
+                if line_h <= ih * 0.35 and line_h >= 5 and y_line_top > 10:
+                    top_img = img.crop((0, 0, iw, y_line_top))
+                    bottom_img = img.crop((0, y_line_top, iw, ih))
+                    if deg:
+                        if deg == 90 and top_img.size[1] > top_img.size[0]:
+                            top_img = top_img.transpose(Image.Transpose.ROTATE_270)
+                        elif deg == 270 and top_img.size[0] > top_img.size[1]:
+                            top_img = top_img.transpose(Image.Transpose.ROTATE_90)
+                        elif deg == 180:
+                            top_img = top_img.transpose(Image.Transpose.ROTATE_180)
+                    bw, bh = bottom_img.size
+                    if bw > 0 and bh > 0:
+                        bpix = bottom_img.load()
+                        bmin_x, bmin_y, bmax_x, bmax_y = bw, bh, 0, 0
+                        for by in range(bh):
+                            for bx in range(bw):
+                                p = bpix[bx, by]
+                                v = (p if isinstance(p, int) else max(p[:3]))
+                                if v < thresh_b:
+                                    bmin_x, bmin_y = min(bmin_x, bx), min(bmin_y, by)
+                                    bmax_x, bmax_y = max(bmax_x, bx), max(bmax_y, by)
+                        if bmax_x >= bmin_x and bmax_y >= bmin_y and (bmax_x - bmin_x) > 4 and (bmax_y - bmin_y) > 4:
+                            bottom_img = bottom_img.crop((bmin_x, bmin_y, bmax_x + 1, bmax_y + 1))
+                    # Строчка прижата к верху, накладывается на этикетку
+                    new_h = top_img.size[1]
+                    new_w = max(top_img.size[0], bottom_img.size[0])
+                    img = Image.new("RGB", (new_w, new_h), (255, 255, 255))
+                    img.paste(top_img, (0, 0))
+                    img.paste(bottom_img, (0, 0))
+                    iw, ih = img.size
+                    line_at_top = True
+        except Exception:
+            pass
 
     if not line_at_top:
         # Белый пояс не нашли — крутим всё изображение
