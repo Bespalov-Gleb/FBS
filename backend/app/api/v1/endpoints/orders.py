@@ -1673,73 +1673,6 @@ def _wb_sticker_to_pdf(
     except Exception as e:
         logger.warning("WB label: ошибка при поиске горизонтального пояса: %s", e, exc_info=True)
 
-    # Запасной вариант: ищем нижний блок (строчка) и прижимаем к верху
-    # Граница = первая строка снизу, где тёмных пикселей заметно меньше, чем в строчке (относительное падение)
-    if not line_at_top and ih > 20:
-        try:
-            pix = img.load()
-            thresh_b = 252
-            y_line_bottom = None
-            dark_bottom = 0
-            for y in range(ih - 1, -1, -1):
-                dark = sum(1 for x in range(iw) if (pix[x, y] if isinstance(pix[x, y], int) else max(pix[x, y][:3])) < thresh_b)
-                if dark >= 2:
-                    y_line_bottom = y
-                    dark_bottom = dark
-                    break
-            if y_line_bottom is not None and y_line_bottom > 0:
-                # Ищем верх строчки: первая строка снизу, где тёмных < 30% от строчки ИЛИ < 15% ширины
-                limit_relative = max(5, int(dark_bottom * 0.30))
-                limit_absolute = max(10, int(iw * 0.15))
-                y_line_top = None
-                for y in range(y_line_bottom - 1, -1, -1):
-                    dark = sum(1 for x in range(iw) if (pix[x, y] if isinstance(pix[x, y], int) else max(pix[x, y][:3])) < thresh_b)
-                    if dark < limit_relative or dark < limit_absolute:
-                        y_line_top = y + 1
-                        break
-                if y_line_top is None:
-                    # Ни одна строка не прошла — считаем строчку в нижних 12% по высоте
-                    y_line_top = max(1, int(ih * 0.88))
-                line_h = y_line_bottom - y_line_top + 1
-                if line_h <= ih * 0.65 and line_h >= 2 and y_line_top >= 1:
-                    top_img = img.crop((0, 0, iw, y_line_top))
-                    bottom_img = img.crop((0, y_line_top, iw, ih))
-                    if deg:
-                        if deg == 90 and top_img.size[1] > top_img.size[0]:
-                            top_img = top_img.transpose(Image.Transpose.ROTATE_270)
-                        elif deg == 270 and top_img.size[0] > top_img.size[1]:
-                            top_img = top_img.transpose(Image.Transpose.ROTATE_90)
-                        elif deg == 180:
-                            top_img = top_img.transpose(Image.Transpose.ROTATE_180)
-                    bw, bh = bottom_img.size
-                    if bw > 0 and bh > 0:
-                        bpix = bottom_img.load()
-                        bmin_x, bmin_y, bmax_x, bmax_y = bw, bh, 0, 0
-                        for by in range(bh):
-                            for bx in range(bw):
-                                p = bpix[bx, by]
-                                v = (p if isinstance(p, int) else max(p[:3]))
-                                if v < thresh_b:
-                                    bmin_x, bmin_y = min(bmin_x, bx), min(bmin_y, by)
-                                    bmax_x, bmax_y = max(bmax_x, bx), max(bmax_y, by)
-                        if bmax_x >= bmin_x and bmax_y >= bmin_y and (bmax_x - bmin_x) > 4 and (bmax_y - bmin_y) > 4:
-                            bottom_img = bottom_img.crop((bmin_x, bmin_y, bmax_x + 1, bmax_y + 1))
-                    # Строчка прижата к верху, накладывается на этикетку
-                    new_h = top_img.size[1]
-                    new_w = max(top_img.size[0], bottom_img.size[0])
-                    img = Image.new("RGB", (new_w, new_h), (255, 255, 255))
-                    img.paste(top_img, (0, 0))
-                    img.paste(bottom_img, (0, 0))
-                    iw, ih = img.size
-                    line_at_top = True
-                    logger.info("WB label: строчка прижата к верху (поиск нижнего блока снизу)")
-                else:
-                    logger.info("WB label: нижний блок не подошёл — y_line_bottom=%s y_line_top=%s line_h=%s ih=%s", y_line_bottom, y_line_top, line_h, ih)
-            else:
-                logger.info("WB label: нижний блок не найден — y_line_bottom=%s ih=%s iw=%s", y_line_bottom, ih, iw)
-        except Exception as e:
-            logger.warning("WB label: ошибка при поиске нижнего блока: %s", e, exc_info=True)
-
     if not line_at_top:
         # Белый пояс не нашли — крутим всё изображение
         if deg:
@@ -1752,6 +1685,31 @@ def _wb_sticker_to_pdf(
             elif deg == 180:
                 img = img.transpose(Image.Transpose.ROTATE_180)
                 iw, ih = img.size
+
+    # Удалить нижнюю строчку (eb4...): обрезать изображение снизу, чтобы она не попала в печать
+    if not line_at_top and ih > 30 and iw > 10:
+        try:
+            pix = img.load()
+            t = 252
+            y_bottom = None
+            for y in range(ih - 1, -1, -1):
+                dark = sum(1 for x in range(iw) if (pix[x, y] if isinstance(pix[x, y], int) else max(pix[x, y][:3])) < t)
+                if dark >= 3:
+                    y_bottom = y
+                    break
+            if y_bottom is not None and y_bottom > 0:
+                cut_thresh = max(8, int(iw * 0.12))
+                y_cut = None
+                for y in range(y_bottom - 1, -1, -1):
+                    dark = sum(1 for x in range(iw) if (pix[x, y] if isinstance(pix[x, y], int) else max(pix[x, y][:3])) < t)
+                    if dark < cut_thresh:
+                        y_cut = y
+                        break
+                if y_cut is not None and y_cut > ih * 0.5:
+                    img = img.crop((0, 0, iw, y_cut + 1))
+                    iw, ih = img.size
+        except Exception:
+            pass
 
     # Подтянуть всё вверх: если есть большой белый пояс в середине — убрать его, нижний блок прижать к верху (наложение)
     if ih > 30 and iw > 10:
