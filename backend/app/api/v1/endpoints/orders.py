@@ -1543,21 +1543,8 @@ def _wb_sticker_to_pdf(
         "WB FBS label: size %sx%s rotate_setting=%s applied_deg=%s",
         iw, ih, rotate, deg,
     )
-    if deg:
-        # Как Ozon: 90° по ч/с (ROTATE_270). Если WB уже вернул альбом (iw>ih), не крутим — иначе получится портрет
-        if deg == 90:
-            if ih > iw:
-                img = img.transpose(Image.Transpose.ROTATE_270)
-                iw, ih = img.size
-        elif deg == 270:
-            if iw > ih:
-                img = img.transpose(Image.Transpose.ROTATE_90)
-                iw, ih = img.size
-        elif deg == 180:
-            img = img.transpose(Image.Transpose.ROTATE_180)
-            iw, ih = img.size
 
-    # Кроп как у этикетки Ozon: bbox по порогу 250, затем первая строка с тёмным 253
+    # Сначала кроп (без поворота), потом разделение по белому поясу, затем поворот только этикетки; строчку не крутим и кладём в самый верх
     try:
         pix = img.load()
         thresh = 250
@@ -1588,15 +1575,15 @@ def _wb_sticker_to_pdf(
                 continue
             break
         if y_top > 0 and ih - y_top > 15:
-                img = img.crop((0, y_top, iw, ih))
-                iw, ih = img.size
+            img = img.crop((0, y_top, iw, ih))
+            iw, ih = img.size
     except Exception:
         pass
 
-    # Нижняя строчка (WB + алфавитно-цифровой код) часто идёт отдельным блоком — находим белый «пояс» и обрабатываем её так же, как этикетку
+    # Ищем белый пояс: верх = этикетка (её повернём), низ = строчка (без поворота, прижмём к верху страницы)
+    line_at_top = False
     try:
         pix = img.load()
-        thresh = 250
         band_min_rows = 6
         dark_frac = 0.005
         y_band_start = None
@@ -1613,10 +1600,17 @@ def _wb_sticker_to_pdf(
                 y_band_start = None
                 y_band_end = None
         if y_band_start is not None and y_band_end is not None and (y_band_end - y_band_start + 1) >= band_min_rows:
-            # Есть белый пояс: верх — основной блок, низ — строчка
             top_img = img.crop((0, 0, iw, y_band_start))
             bottom_img = img.crop((0, y_band_end + 1, iw, ih))
-            # К нижней части применяем те же настройки: bbox + первая тёмная строка
+            # Поворот только для этикетки (top_img)
+            if deg:
+                if deg == 90 and top_img.size[1] > top_img.size[0]:
+                    top_img = top_img.transpose(Image.Transpose.ROTATE_270)
+                elif deg == 270 and top_img.size[0] > top_img.size[1]:
+                    top_img = top_img.transpose(Image.Transpose.ROTATE_90)
+                elif deg == 180:
+                    top_img = top_img.transpose(Image.Transpose.ROTATE_180)
+            # Строчка (bottom_img) — без поворота, только bbox + первая тёмная строка, прижать
             bw, bh = bottom_img.size
             if bw > 0 and bh > 0:
                 bpix = bottom_img.load()
@@ -1647,16 +1641,30 @@ def _wb_sticker_to_pdf(
                         bottom_img = bottom_img.crop((0, btop, bw, bh))
                 except Exception:
                     pass
-            # Собираем: сверху основной блок, снизу прижатая строчка (малый зазор)
+            # Собираем: строчка в самый верх страницы (без поворота), под нею этикетка
             gap = 4
-            new_h = top_img.size[1] + gap + bottom_img.size[1]
+            new_h = bottom_img.size[1] + gap + top_img.size[1]
             new_w = max(top_img.size[0], bottom_img.size[0])
             img = Image.new("RGB", (new_w, new_h), (255, 255, 255))
-            img.paste(top_img, (0, 0))
-            img.paste(bottom_img, (0, top_img.size[1] + gap))
+            img.paste(bottom_img, (0, 0))
+            img.paste(top_img, (0, bottom_img.size[1] + gap))
             iw, ih = img.size
+            line_at_top = True
     except Exception:
         pass
+
+    if not line_at_top:
+        # Белый пояс не нашли — крутим всё изображение как раньше
+        if deg:
+            if deg == 90 and ih > iw:
+                img = img.transpose(Image.Transpose.ROTATE_270)
+                iw, ih = img.size
+            elif deg == 270 and iw > ih:
+                img = img.transpose(Image.Transpose.ROTATE_90)
+                iw, ih = img.size
+            elif deg == 180:
+                img = img.transpose(Image.Transpose.ROTATE_180)
+                iw, ih = img.size
 
     # Не давать надписи уходить низко: при сильной вытянутости по высоте режем снизу
     if ih > iw * 1.35:
