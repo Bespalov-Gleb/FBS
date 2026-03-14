@@ -1584,7 +1584,7 @@ def _wb_sticker_to_pdf(
     line_at_top = False
     try:
         pix = img.load()
-        band_min_rows = 6
+        band_min_rows = 3
         dark_frac = 0.005
         y_band_start = None
         y_band_end = None
@@ -1657,8 +1657,8 @@ def _wb_sticker_to_pdf(
         try:
             pix = img.load()
             thresh_b = 250
-            dark_frac_b = 0.02
-            # Снизу вверх: первая строка с контентом — низ строчки; идём вверх, пока есть контент — верх строчки
+            dark_frac_b = 0.01
+            # Снизу вверх: первая строка с контентом — низ строчки; вверх только по контенту (до белой строки) — верх строчки
             y_line_bottom = None
             for y in range(ih - 1, -1, -1):
                 dark = sum(1 for x in range(iw) if (pix[x, y] if isinstance(pix[x, y], int) else max(pix[x, y][:3])) < thresh_b)
@@ -1666,17 +1666,16 @@ def _wb_sticker_to_pdf(
                     y_line_bottom = y
                     break
             if y_line_bottom is not None and y_line_bottom > 0:
-                y_line_top = None
-                for y in range(y_line_bottom, -1, -1):
+                y_line_top = y_line_bottom
+                for y in range(y_line_bottom - 1, -1, -1):
                     dark = sum(1 for x in range(iw) if (pix[x, y] if isinstance(pix[x, y], int) else max(pix[x, y][:3])) < thresh_b)
-                    if dark < max(2, int(iw * dark_frac_b)):
-                        y_line_top = y + 1
+                    if dark >= max(2, int(iw * dark_frac_b)):
+                        y_line_top = y
+                    else:
                         break
-                if y_line_top is None:
-                    y_line_top = 0
                 line_h = y_line_bottom - y_line_top + 1
-                # Нижний блок — не больше ~35% высоты (одна строчка), и этикетка выше не пустая
-                if line_h <= ih * 0.35 and line_h >= 5 and y_line_top > 10:
+                # Нижний блок — одна строчка по высоте; выше должен быть контент этикетки
+                if line_h <= ih * 0.4 and line_h >= 5 and y_line_top > 3:
                     top_img = img.crop((0, 0, iw, y_line_top))
                     bottom_img = img.crop((0, y_line_top, iw, ih))
                     if deg:
