@@ -1654,62 +1654,7 @@ def _wb_sticker_to_pdf(
         pass
 
     if not line_at_top:
-        # Горизонтальный белый пояс не нашли — пробуем вертикальный (строчка слева, этикетка справа)
-        try:
-            pix = img.load()
-            thresh = 250
-            band_min_cols = 8
-            dark_frac = 0.005
-            x_band_start = None
-            x_band_end = None
-            for x in range(iw):
-                dark = sum(1 for y in range(ih) if (pix[x, y] if isinstance(pix[x, y], int) else max(pix[x, y][:3])) < thresh)
-                if dark < max(2, int(ih * dark_frac)):
-                    if x_band_start is None:
-                        x_band_start = x
-                    x_band_end = x
-                else:
-                    if x_band_start is not None and (x_band_end - x_band_start + 1) >= band_min_cols:
-                        break
-                    x_band_start = None
-                    x_band_end = None
-            if x_band_start is not None and x_band_end is not None and (x_band_end - x_band_start + 1) >= band_min_cols and x_band_start > iw * 0.1:
-                left_img = img.crop((0, 0, x_band_start, ih))
-                right_img = img.crop((x_band_end + 1, 0, iw, ih))
-                # Строчка слева — без поворота; этикетка справа — крутим по настройке
-                if deg:
-                    if deg == 90 and right_img.size[1] > right_img.size[0]:
-                        right_img = right_img.transpose(Image.Transpose.ROTATE_270)
-                    elif deg == 270 and right_img.size[0] > right_img.size[1]:
-                        right_img = right_img.transpose(Image.Transpose.ROTATE_90)
-                    elif deg == 180:
-                        right_img = right_img.transpose(Image.Transpose.ROTATE_180)
-                # Строчка: только bbox прижать, поворот не применять — изначальное положение, поднимаем к верху
-                lw, lh = left_img.size
-                if lw > 0 and lh > 0:
-                    lpix = left_img.load()
-                    lmin_x, lmin_y, lmax_x, lmax_y = lw, lh, 0, 0
-                    for ly in range(lh):
-                        for lx in range(lw):
-                            p = lpix[lx, ly]
-                            if (p if isinstance(p, int) else max(p[:3])) < thresh:
-                                lmin_x, lmin_y = min(lmin_x, lx), min(lmin_y, ly)
-                                lmax_x, lmax_y = max(lmax_x, lx), max(lmax_y, ly)
-                    if lmax_x >= lmin_x and lmax_y >= lmin_y:
-                        left_img = left_img.crop((lmin_x, lmin_y, lmax_x + 1, lmax_y + 1))
-                gap = 4
-                new_h = left_img.size[1] + gap + right_img.size[1]
-                new_w = max(right_img.size[0], left_img.size[0])
-                img = Image.new("RGB", (new_w, new_h), (255, 255, 255))
-                img.paste(left_img, (0, 0))
-                img.paste(right_img, (0, left_img.size[1] + gap))
-                iw, ih = img.size
-                line_at_top = True
-        except Exception:
-            pass
-
-    if not line_at_top:
-        # Ни горизонтальный, ни вертикальный пояс не нашли — крутим всё изображение
+        # Белый пояс не нашли — крутим всё изображение
         if deg:
             if deg == 90 and ih > iw:
                 img = img.transpose(Image.Transpose.ROTATE_270)
