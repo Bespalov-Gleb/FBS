@@ -1621,7 +1621,16 @@ def _wb_sticker_to_pdf(
     )
     if order_number and str(order_number).strip():
         c.setFont("Helvetica-Bold", 8)
-        c.drawCentredString(frame_w_pt / 2, 2 * mm, str(order_number).strip()[:25])
+        num_text = str(order_number).strip()[:25]
+        if deg == 90:
+            # Надпись разворачиваем так же, как этикетку: 90° по ч/с → текст рисуем с поворотом -90°
+            c.saveState()
+            c.translate(2 * mm, frame_w_pt / 2)
+            c.rotate(-90)
+            c.drawCentredString(0, 0, num_text)
+            c.restoreState()
+        else:
+            c.drawCentredString(frame_w_pt / 2, 2 * mm, num_text)
     c.save()
     buf.seek(0)
     return buf.getvalue()
