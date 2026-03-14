@@ -1532,21 +1532,30 @@ def _wb_sticker_to_pdf(
         rotate = int(rotate) if rotate is not None else 90
     except (TypeError, ValueError):
         rotate = 90
-    # Поворот как у Ozon: 0/90/180/270; при «высокой» картинке и формате 58×40 — 90° по часовой
+    # Точно как у Ozon: 0/90/180/270 из настроек; при формате 58×40 и портрете (ih>iw) — по умолчанию 90
     if rotate in (0, 90, 180, 270):
         deg = rotate
     elif label_width_mm > label_height_mm and ih > iw:
         deg = 90
     else:
         deg = 0
+    logger.info(
+        "WB FBS label: size %sx%s rotate_setting=%s applied_deg=%s",
+        iw, ih, rotate, deg,
+    )
     if deg:
+        # Как Ozon: 90° по ч/с (ROTATE_270). Если WB уже вернул альбом (iw>ih), не крутим — иначе получится портрет
         if deg == 90:
-            img = img.transpose(Image.Transpose.ROTATE_270)
+            if ih > iw:
+                img = img.transpose(Image.Transpose.ROTATE_270)
+                iw, ih = img.size
         elif deg == 270:
-            img = img.transpose(Image.Transpose.ROTATE_90)
+            if iw > ih:
+                img = img.transpose(Image.Transpose.ROTATE_90)
+                iw, ih = img.size
         elif deg == 180:
             img = img.transpose(Image.Transpose.ROTATE_180)
-        iw, ih = img.size
+            iw, ih = img.size
 
     # Кроп как у этикетки Ozon: bbox по порогу 250, затем первая строка с тёмным 253
     try:
@@ -1977,6 +1986,7 @@ async def get_order_label(
         else:
             w, h = width, height
         wb_rotate = (ps.wb_label_rotate if ps.wb_label_rotate is not None else 90) if ps else 90
+        logger.info("WB label: wb_label_rotate=%s (from print_settings)", wb_rotate)
         label_mode = (ps.label_print_mode or "standard_58x40_noscale") if ps else "standard_58x40_noscale"
         async with WildberriesClient(api_key=api_key) as client:
             content = await client.get_order_label(
