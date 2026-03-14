@@ -820,15 +820,21 @@ def _rotate_pdf_via_image(
     if not images:
         return pdf_bytes
 
+    # Как у этикетки ФБС: при 90/270 — лист книжной ориентации (40×58), контент в альбомном виде в верхнем левом углу
     if degrees in (90, 270):
-        page_w_pt = height_mm * mm
-        page_h_pt = width_mm * mm
+        page_w_pt = height_mm * mm   # 40 mm
+        page_h_pt = width_mm * mm    # 58 mm
+        margin_left_pt = 1.0 * mm
+        margin_top_pt = 1.0 * mm
+        usable_w = page_w_pt - margin_left_pt - 1.0 * mm
+        usable_h = page_h_pt - margin_top_pt - 1.0 * mm
     else:
         page_w_pt = width_mm * mm
         page_h_pt = height_mm * mm
-
-    margin_left_pt = 1.0 * mm
-    margin_top_pt = 0
+        margin_left_pt = 1.0 * mm
+        margin_top_pt = 0
+        usable_w = page_w_pt - margin_left_pt
+        usable_h = page_h_pt - margin_top_pt
 
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=(page_w_pt, page_h_pt))
@@ -851,13 +857,11 @@ def _rotate_pdf_via_image(
         iw, ih = img.size
         if iw <= 0 or ih <= 0:
             continue
-        usable_w = page_w_pt - margin_left_pt
-        usable_h = page_h_pt - margin_top_pt
         scale = min(usable_w / iw, usable_h / ih)
         draw_w = iw * scale
         draw_h = ih * scale
         x_place = margin_left_pt
-        y_place = page_h_pt - draw_h
+        y_place = page_h_pt - margin_top_pt - draw_h
         img_buf = io.BytesIO()
         img.save(img_buf, format="PNG")
         img_buf.seek(0)
