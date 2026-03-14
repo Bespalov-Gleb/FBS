@@ -1722,6 +1722,49 @@ def _wb_sticker_to_pdf(
                 img = img.transpose(Image.Transpose.ROTATE_180)
                 iw, ih = img.size
 
+    # Подтянуть всё вверх: если есть большой белый пояс по вертикали в середине — убрать его, нижний блок прижать к верху
+    if ih > 30 and iw > 10:
+        try:
+            pix = img.load()
+            t = 250
+            dark_frac = 0.02
+            best_band_start = None
+            best_band_end = None
+            best_band_len = 0
+            y_start = None
+            y_end = None
+            for y in range(ih):
+                dark = sum(1 for x in range(iw) if (pix[x, y] if isinstance(pix[x, y], int) else max(pix[x, y][:3])) < t)
+                if dark < max(2, int(iw * dark_frac)):
+                    if y_start is None:
+                        y_start = y
+                    y_end = y
+                else:
+                    if y_start is not None and (y_end - y_start + 1) > best_band_len:
+                        band_len = y_end - y_start + 1
+                        if band_len >= max(8, int(ih * 0.08)) and y_start > ih * 0.1 and y_end < ih * 0.9:
+                            best_band_len = band_len
+                            best_band_start = y_start
+                            best_band_end = y_end
+                    y_start = None
+                    y_end = None
+            if y_start is not None and (y_end - y_start + 1) > best_band_len:
+                band_len = y_end - y_start + 1
+                if band_len >= max(8, int(ih * 0.08)) and y_start > ih * 0.1 and y_end < ih * 0.9:
+                    best_band_start = y_start
+                    best_band_end = y_end
+            if best_band_start is not None and best_band_end is not None:
+                top_part = img.crop((0, 0, iw, best_band_start))
+                bottom_part = img.crop((0, best_band_end + 1, iw, ih))
+                new_h = top_part.size[1]
+                new_w = max(top_part.size[0], bottom_part.size[0])
+                img = Image.new("RGB", (new_w, new_h), (255, 255, 255))
+                img.paste(top_part, (0, 0))
+                img.paste(bottom_part, (0, 0))
+                iw, ih = img.size
+        except Exception:
+            pass
+
     # Не давать надписи уходить низко: при сильной вытянутости по высоте режем снизу
     if ih > iw * 1.35:
         max_h = max(int(iw * 1.25), int(ih * 0.82))
