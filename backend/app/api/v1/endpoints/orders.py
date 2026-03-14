@@ -1592,7 +1592,73 @@ def _wb_sticker_to_pdf(
                 iw, ih = img.size
     except Exception:
         pass
-    # Не давать надписи (WB + код) уходить низко: при сильной вытянутости по высоте режем снизу, прижимаем к углу
+
+    # Нижняя строчка (WB + алфавитно-цифровой код) часто идёт отдельным блоком — находим белый «пояс» и обрабатываем её так же, как этикетку
+    try:
+        pix = img.load()
+        thresh = 250
+        band_min_rows = 6
+        dark_frac = 0.005
+        y_band_start = None
+        y_band_end = None
+        for y in range(ih):
+            dark = sum(1 for x in range(iw) if (pix[x, y] if isinstance(pix[x, y], int) else max(pix[x, y][:3])) < thresh)
+            if dark < max(2, int(iw * dark_frac)):
+                if y_band_start is None:
+                    y_band_start = y
+                y_band_end = y
+            else:
+                if y_band_start is not None and (y_band_end - y_band_start + 1) >= band_min_rows:
+                    break
+                y_band_start = None
+                y_band_end = None
+        if y_band_start is not None and y_band_end is not None and (y_band_end - y_band_start + 1) >= band_min_rows:
+            # Есть белый пояс: верх — основной блок, низ — строчка
+            top_img = img.crop((0, 0, iw, y_band_start))
+            bottom_img = img.crop((0, y_band_end + 1, iw, ih))
+            # К нижней части применяем те же настройки: bbox + первая тёмная строка
+            bw, bh = bottom_img.size
+            if bw > 0 and bh > 0:
+                bpix = bottom_img.load()
+                bmin_x, bmin_y, bmax_x, bmax_y = bw, bh, 0, 0
+                for by in range(bh):
+                    for bx in range(bw):
+                        p = bpix[bx, by]
+                        v = (p if isinstance(p, int) else max(p[:3]))
+                        if v < thresh:
+                            bmin_x, bmin_y = min(bmin_x, bx), min(bmin_y, by)
+                            bmax_x, bmax_y = max(bmax_x, bx), max(bmax_y, by)
+                if bmax_x >= bmin_x and bmax_y >= bmin_y and (bmax_x - bmin_x) > 4 and (bmax_y - bmin_y) > 4:
+                    bottom_img = bottom_img.crop((bmin_x, bmin_y, bmax_x + 1, bmax_y + 1))
+                bw, bh = bottom_img.size
+                btop = 0
+                try:
+                    bpix2 = bottom_img.load()
+                    for by in range(bh):
+                        for bx in range(bw):
+                            p = bpix2[bx, by]
+                            if (p if isinstance(p, int) else max(p[:3])) < 253:
+                                btop = by
+                                break
+                        else:
+                            continue
+                        break
+                    if btop > 0 and bh - btop > 5:
+                        bottom_img = bottom_img.crop((0, btop, bw, bh))
+                except Exception:
+                    pass
+            # Собираем: сверху основной блок, снизу прижатая строчка (малый зазор)
+            gap = 4
+            new_h = top_img.size[1] + gap + bottom_img.size[1]
+            new_w = max(top_img.size[0], bottom_img.size[0])
+            img = Image.new("RGB", (new_w, new_h), (255, 255, 255))
+            img.paste(top_img, (0, 0))
+            img.paste(bottom_img, (0, top_img.size[1] + gap))
+            iw, ih = img.size
+    except Exception:
+        pass
+
+    # Не давать надписи уходить низко: при сильной вытянутости по высоте режем снизу
     if ih > iw * 1.35:
         max_h = max(int(iw * 1.25), int(ih * 0.82))
         if max_h < ih:
