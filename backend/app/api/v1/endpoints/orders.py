@@ -716,9 +716,10 @@ def _ozon_fbs_to_standard_label(
         scale = min(usable_w / iw, usable_h / ih)
         draw_w = iw * scale
         draw_h = ih * scale
-        # В ReportLab (x, y) у drawImage — нижний левый угол; чтобы верх контента был у верха страницы: y = frame_h - draw_h
+        # При preserveAspectRatio=True дефолтный anchor='sw' прижимает картинку к низу бокса — сверху белое поле.
+        # anchor='nw': (x,y) = верхний левый угол; прижимаем контент к верху страницы.
         x_place = margin_left_pt
-        y_place = frame_h_pt - draw_h
+        y_place = frame_h_pt  # верх бокса (для anchor='nw' это точка привязки)
 
         img_buf = io.BytesIO()
         img.save(img_buf, format="PNG")
@@ -728,6 +729,7 @@ def _ozon_fbs_to_standard_label(
             ImageReader(img_buf),
             x_place, y_place, width=draw_w, height=draw_h,
             preserveAspectRatio=True,
+            anchor="nw",
         )
 
     c.save()
@@ -852,11 +854,14 @@ def _rotate_pdf_via_image(
         draw_w = iw * scale
         draw_h = ih * scale
         x_place = margin_left_pt
-        y_place = page_h_pt - draw_h
+        y_place = page_h_pt  # верх страницы; anchor='nw' прижмёт картинку к верху
         img_buf = io.BytesIO()
         img.save(img_buf, format="PNG")
         img_buf.seek(0)
-        c.drawImage(ImageReader(img_buf), x_place, y_place, width=draw_w, height=draw_h, preserveAspectRatio=True)
+        c.drawImage(
+            ImageReader(img_buf), x_place, y_place, width=draw_w, height=draw_h,
+            preserveAspectRatio=True, anchor="nw",
+        )
     c.save()
     buf.seek(0)
     return buf.getvalue()
