@@ -519,6 +519,77 @@ def _ozon_fbs_to_png(
     return buf.getvalue()
 
 
+def _ozon_pdf_set_cropbox_to_content(pdf_bytes: bytes, dpi_low: int = 120) -> Optional[bytes]:
+    """
+    Вычислить bbox контента по первому рендеру, установить CropBox в PDF, вернуть новый PDF.
+    pdf2image с use_cropbox=True тогда отдаст уже обрезанную страницу. Без новых зависимостей (pypdf + pdf2image).
+    """
+    import io
+
+    from pypdf import PdfReader, PdfWriter
+    from pypdf.generic import RectangleObject
+    from pdf2image import convert_from_bytes
+
+    try:
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        if not reader.pages:
+            return None
+        page = reader.pages[0]
+        mb = page.mediabox
+        page_w_pt = float(mb.width) if hasattr(mb, "width") else (float(mb.right) - float(mb.left))
+        page_h_pt = float(mb.height) if hasattr(mb, "height") else (float(mb.top) - float(mb.bottom))
+    except Exception as e:
+        logger.debug("Ozon PDF cropbox: could not read PDF: %s", e)
+        return None
+
+    try:
+        low_images = convert_from_bytes(pdf_bytes, dpi=dpi_low, first_page=1, last_page=1)
+        if not low_images:
+            return None
+        img = low_images[0].convert("RGB")
+        iw, ih = img.size
+        if iw <= 0 or ih <= 0:
+            return None
+        pix = img.load()
+        thresh = 250
+        min_x, min_y, max_x, max_y = iw, ih, 0, 0
+        for y in range(ih):
+            for x in range(iw):
+                p = pix[x, y]
+                v = (p if isinstance(p, int) else max(p[:3]))
+                if v < thresh:
+                    min_x, min_y = min(min_x, x), min(min_y, y)
+                    max_x, max_y = max(max_x, x), max(max_y, y)
+        if max_x < min_x or max_y < min_y or (max_x - min_x) < 10 or (max_y - min_y) < 10:
+            return None
+        # Пиксели → пункты PDF (origin в PDF — нижний левый угол; в картинке y=0 — верх)
+        pt_per_px = 72.0 / dpi_low
+        left_pt = min_x * pt_per_px
+        right_pt = (max_x + 1) * pt_per_px
+        top_pt = page_h_pt - min_y * pt_per_px
+        bottom_pt = page_h_pt - (max_y + 1) * pt_per_px
+        # Не выходить за пределы страницы
+        left_pt = max(0, min(left_pt, page_w_pt - 1))
+        right_pt = max(left_pt + 1, min(right_pt, page_w_pt))
+        bottom_pt = max(0, min(bottom_pt, page_h_pt - 1))
+        top_pt = max(bottom_pt + 1, min(top_pt, page_h_pt))
+
+        writer = PdfWriter()
+        writer.add_page(page)
+        writer.pages[0].cropbox = RectangleObject((left_pt, bottom_pt, right_pt, top_pt))
+        buf = io.BytesIO()
+        writer.write(buf)
+        buf.seek(0)
+        logger.info(
+            "Ozon PDF cropbox: set to (%.1f, %.1f, %.1f, %.1f) pt",
+            left_pt, bottom_pt, right_pt, top_pt,
+        )
+        return buf.getvalue()
+    except Exception as e:
+        logger.debug("Ozon PDF cropbox: failed: %s", e)
+        return None
+
+
 def _ozon_fbs_to_standard_label(
     pdf_bytes: bytes,
     width_mm: int = 58,
@@ -528,9 +599,9 @@ def _ozon_fbs_to_standard_label(
 ) -> bytes:
     """
     Этикетка Ozon FBS: не редактируем исходный PDF, а пересоздаём страницу.
-    1) Рендерим PDF в растровую этикетку.
-    2) Поворачиваем и обрезаем белые поля — получаем «контент» этикетки.
-    3) Создаём новый PDF-фрейм 58×40 мм и рисуем этот контент в верхнем левом углу фрейма.
+    1) Опционально: выставляем CropBox по контенту (рендер → bbox → pypdf) и рендерим с use_cropbox=True.
+    2) Поворачиваем и при необходимости подрезаем белые поля.
+    3) Создаём новый PDF-фрейм 58×40 мм и рисуем контент в верхнем левом углу.
     """
     import io
 
@@ -540,14 +611,26 @@ def _ozon_fbs_to_standard_label(
     from reportlab.lib.utils import ImageReader
     from reportlab.pdfgen import canvas
 
+    # Сначала пробуем обрезать страницу на уровне PDF (CropBox), чтобы рендер сразу без полей
+    pdf_to_render = pdf_bytes
+    use_cropbox = False
+    cropped = _ozon_pdf_set_cropbox_to_content(pdf_bytes, dpi_low=120)
+    if cropped:
+        pdf_to_render = cropped
+        use_cropbox = True
+
     dpi_val = max(150, min(dpi, 300))
     try:
-        images = convert_from_bytes(pdf_bytes, dpi=dpi_val, use_pdftocairo=False)
+        images = convert_from_bytes(
+            pdf_to_render, dpi=dpi_val, use_pdftocairo=False, use_cropbox=use_cropbox,
+        )
     except Exception:
         try:
-            images = convert_from_bytes(pdf_bytes, dpi=dpi_val, use_pdftocairo=True)
+            images = convert_from_bytes(
+                pdf_to_render, dpi=dpi_val, use_pdftocairo=True, use_cropbox=use_cropbox,
+            )
         except Exception:
-            images = convert_from_bytes(pdf_bytes, dpi=dpi_val)
+            images = convert_from_bytes(pdf_to_render, dpi=dpi_val)
     if not images:
         raise ValueError("PDF returned no pages")
 
@@ -589,38 +672,39 @@ def _ozon_fbs_to_standard_label(
                 img = img.transpose(Image.Transpose.ROTATE_180)
             iw, ih = img.size
 
-        # Убираем белые поля с картинки — оставляем только контент (для последующего размещения в углу фрейма)
-        from PIL import ImageChops
+        # Убираем белые поля: bbox по порогу «не белый» (max < 250), иначе почти белые пиксели не обрезаются
         try:
-            bg = Image.new(img.mode, img.size, (255, 255, 255))
-            diff = ImageChops.difference(img, bg)
-            bbox = diff.getbbox()
-            if bbox and (bbox[2] - bbox[0]) > 10 and (bbox[3] - bbox[1]) > 10:
-                img = img.crop(bbox)
+            pix = img.load()
+            thresh = 250
+            min_x, min_y, max_x, max_y = iw, ih, 0, 0
+            for y in range(ih):
+                for x in range(iw):
+                    p = pix[x, y]
+                    v = (p if isinstance(p, int) else max(p[:3]))
+                    if v < thresh:
+                        min_x, min_y = min(min_x, x), min(min_y, y)
+                        max_x, max_y = max(max_x, x), max(max_y, y)
+            if max_x >= min_x and max_y >= min_y and (max_x - min_x) > 10 and (max_y - min_y) > 10:
+                img = img.crop((min_x, min_y, max_x + 1, max_y + 1))
                 iw, ih = img.size
         except Exception:
             pass
 
-        # Убираем верхний белый пояс: ищем первую строку с «существенным» контентом (не тонкая рамка)
+        # Первая строка с любым тёмным пикселем — верх контента (убираем оставшийся белый пояс сверху)
         try:
             pix = img.load()
-            white_thresh = 252
-            min_fraction = 0.01  # хотя бы 1% пикселей строки — не белые
+            top_thresh = 253
             y_top = 0
             for y in range(ih):
-                dark_count = 0
                 for x in range(iw):
                     p = pix[x, y]
-                    if isinstance(p, int):
-                        if p < white_thresh:
-                            dark_count += 1
-                    else:
-                        if max(p[:3]) < white_thresh:
-                            dark_count += 1
-                if dark_count >= max(2, iw * min_fraction):
-                    y_top = y
-                    break
-            if y_top > 0 and ih - y_top > 20:
+                    if (p if isinstance(p, int) else max(p[:3])) < top_thresh:
+                        y_top = y
+                        break
+                else:
+                    continue
+                break
+            if y_top > 0 and ih - y_top > 15:
                 img = img.crop((0, y_top, iw, ih))
                 iw, ih = img.size
         except Exception:
