@@ -634,12 +634,14 @@ def _ozon_fbs_to_standard_label(
     if not images:
         raise ValueError("PDF returned no pages")
 
-    # Размер нового фрейма (страницы), который мы создаём с нуля
+    # Размер нового фрейма: ширина фиксирована, высота — по высоте этикетки + отступы (убираем лишнее белое сверху)
     frame_w_pt = width_mm * mm
-    frame_h_pt = height_mm * mm
     margin_left_pt = 1.0 * mm
     margin_top_pt = 0
-    margin_bottom_pt = 2.0 * mm  # отступ снизу — поднимаем рисунок над нижней границей
+    margin_bottom_pt = 2.0 * mm
+    usable_w = frame_w_pt - margin_left_pt
+    # Начальная высота страницы (будет переопределена под каждую этикетку)
+    frame_h_pt = height_mm * mm
 
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=(frame_w_pt, frame_h_pt))
@@ -711,13 +713,13 @@ def _ozon_fbs_to_standard_label(
         except Exception:
             pass
 
-        # Размещение в новом фрейме: слева 1 мм, сверху 0, снизу отступ margin_bottom — рисунок выше низа листа
-        usable_w = frame_w_pt - margin_left_pt
-        usable_h = frame_h_pt - margin_top_pt - margin_bottom_pt
-        scale = min(usable_w / iw, usable_h / ih)
-        draw_w = iw * scale
+        # Масштаб по ширине; высота страницы = высота этикетки + отступы (белая область не больше этикетки)
+        scale = usable_w / iw
+        draw_w = usable_w
         draw_h = ih * scale
-        # (x, y) — нижний левый угол рисунка; низ рисунка на margin_bottom, верх упирается в верх страницы
+        page_h_pt = draw_h + margin_top_pt + margin_bottom_pt
+        c.setPageSize((frame_w_pt, page_h_pt))
+        # (x, y) — нижний левый угол рисунка; низ на margin_bottom, верх у верха страницы
         x_place = margin_left_pt
         y_place = margin_bottom_pt
 
