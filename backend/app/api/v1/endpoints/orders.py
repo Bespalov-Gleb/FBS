@@ -1686,31 +1686,6 @@ def _wb_sticker_to_pdf(
                 img = img.transpose(Image.Transpose.ROTATE_180)
                 iw, ih = img.size
 
-    # Удалить нижнюю строчку (eb4...): обрезать изображение снизу, чтобы она не попала в печать
-    if not line_at_top and ih > 30 and iw > 10:
-        try:
-            pix = img.load()
-            t = 252
-            y_bottom = None
-            for y in range(ih - 1, -1, -1):
-                dark = sum(1 for x in range(iw) if (pix[x, y] if isinstance(pix[x, y], int) else max(pix[x, y][:3])) < t)
-                if dark >= 3:
-                    y_bottom = y
-                    break
-            if y_bottom is not None and y_bottom > 0:
-                cut_thresh = max(8, int(iw * 0.12))
-                y_cut = None
-                for y in range(y_bottom - 1, -1, -1):
-                    dark = sum(1 for x in range(iw) if (pix[x, y] if isinstance(pix[x, y], int) else max(pix[x, y][:3])) < t)
-                    if dark < cut_thresh:
-                        y_cut = y
-                        break
-                if y_cut is not None and y_cut > ih * 0.5:
-                    img = img.crop((0, 0, iw, y_cut + 1))
-                    iw, ih = img.size
-        except Exception:
-            pass
-
     # Подтянуть всё вверх: если есть большой белый пояс в середине — убрать его, нижний блок прижать к верху (наложение)
     if ih > 30 and iw > 10:
         try:
@@ -1756,6 +1731,43 @@ def _wb_sticker_to_pdf(
                 logger.info("WB label: сжатие пояса не сработало — best_band_len=%s ih=%s", best_band_len, ih)
         except Exception as e:
             logger.warning("WB label: ошибка при сжатии белого пояса: %s", e, exc_info=True)
+
+    # Удалить только строку eb4...: найти её область внизу и закрасить белым (без обрезки этикетки)
+    if ih > 40 and iw > 20:
+        try:
+            pix = img.load()
+            t = 252
+            y_bottom = None
+            for y in range(ih - 1, -1, -1):
+                dark = sum(1 for x in range(iw) if (pix[x, y] if isinstance(pix[x, y], int) else max(pix[x, y][:3])) < t)
+                if dark >= 3:
+                    y_bottom = y
+                    break
+            if y_bottom is not None and y_bottom >= int(ih * 0.75):
+                cut_thresh = max(10, int(iw * 0.15))
+                y_top = None
+                for y in range(y_bottom - 1, -1, -1):
+                    dark = sum(1 for x in range(iw) if (pix[x, y] if isinstance(pix[x, y], int) else max(pix[x, y][:3])) < t)
+                    if dark < cut_thresh:
+                        y_top = y + 1
+                        break
+                if y_top is not None:
+                    line_h = y_bottom - y_top + 1
+                    if 4 <= line_h <= int(ih * 0.12) and y_top >= int(ih * 0.75):
+                        strip = img.crop((0, y_top, iw, y_bottom + 1))
+                        spix = strip.load()
+                        sw, sh = strip.size
+                        sx0, sy0, sx1, sy1 = sw, sh, 0, 0
+                        for py in range(sh):
+                            for px in range(sw):
+                                if (spix[px, py] if isinstance(spix[px, py], int) else max(spix[px, py][:3])) < t:
+                                    sx0, sy0 = min(sx0, px), min(sy0, py)
+                                    sx1, sy1 = max(sx1, px), max(sy1, py)
+                        if sx1 >= sx0 and sy1 >= sy0 and (sx1 - sx0) > 4:
+                            patch = Image.new("RGB", (sx1 - sx0 + 1, sy1 - sy0 + 1), (255, 255, 255))
+                            img.paste(patch, (sx0, y_top + sy0))
+        except Exception:
+            pass
 
     # Не давать надписи уходить низко: при сильной вытянутости по высоте режем снизу
     if ih > iw * 1.35:
