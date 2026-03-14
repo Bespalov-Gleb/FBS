@@ -1732,40 +1732,13 @@ def _wb_sticker_to_pdf(
         except Exception as e:
             logger.warning("WB label: ошибка при сжатии белого пояса: %s", e, exc_info=True)
 
-    # Удалить только строку eb4...: найти её область внизу и закрасить белым (без обрезки этикетки)
-    if ih > 40 and iw > 20:
+    # Удалить строку eb4... внизу: закрасить белым фиксированную полосу по низу (строка всегда у самого края, этикетка выше)
+    if ih > 50 and iw > 20:
         try:
-            pix = img.load()
-            t = 252
-            y_bottom = None
-            for y in range(ih - 1, -1, -1):
-                dark = sum(1 for x in range(iw) if (pix[x, y] if isinstance(pix[x, y], int) else max(pix[x, y][:3])) < t)
-                if dark >= 3:
-                    y_bottom = y
-                    break
-            if y_bottom is not None and y_bottom >= int(ih * 0.75):
-                cut_thresh = max(10, int(iw * 0.15))
-                y_top = None
-                for y in range(y_bottom - 1, -1, -1):
-                    dark = sum(1 for x in range(iw) if (pix[x, y] if isinstance(pix[x, y], int) else max(pix[x, y][:3])) < t)
-                    if dark < cut_thresh:
-                        y_top = y + 1
-                        break
-                if y_top is not None:
-                    line_h = y_bottom - y_top + 1
-                    if 4 <= line_h <= int(ih * 0.12) and y_top >= int(ih * 0.75):
-                        strip = img.crop((0, y_top, iw, y_bottom + 1))
-                        spix = strip.load()
-                        sw, sh = strip.size
-                        sx0, sy0, sx1, sy1 = sw, sh, 0, 0
-                        for py in range(sh):
-                            for px in range(sw):
-                                if (spix[px, py] if isinstance(spix[px, py], int) else max(spix[px, py][:3])) < t:
-                                    sx0, sy0 = min(sx0, px), min(sy0, py)
-                                    sx1, sy1 = max(sx1, px), max(sy1, py)
-                        if sx1 >= sx0 and sy1 >= sy0 and (sx1 - sx0) > 4:
-                            patch = Image.new("RGB", (sx1 - sx0 + 1, sy1 - sy0 + 1), (255, 255, 255))
-                            img.paste(patch, (sx0, y_top + sy0))
+            strip_h = min(55, max(28, int(ih * 0.07)))
+            y0 = ih - strip_h
+            patch = Image.new("RGB", (iw, strip_h), (255, 255, 255))
+            img.paste(patch, (0, y0))
         except Exception:
             pass
 
