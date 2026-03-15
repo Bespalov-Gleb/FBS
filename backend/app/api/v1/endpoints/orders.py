@@ -1580,7 +1580,7 @@ def _wb_sticker_to_pdf(
     except Exception:
         pass
 
-    # Снизу вверх: первая небелая строка — низ строчки; поднимаемся до первой чисто белой строки; эту область вырезаем
+    # Снизу вверх: первая небелая строка — низ строчки; поднимаемся до первой «белой» строки (в нижней половине картинки — это зазор); вырезаем строчку
     if ih > 30 and iw > 10:
         try:
             pix = img.load()
@@ -1596,15 +1596,18 @@ def _wb_sticker_to_pdf(
                     break
             if y_line_bottom is not None and y_line_bottom > 0:
                 y_white = None
-                white_ok = max(3, int(iw * 0.008))
+                white_ok = max(8, int(iw * 0.02))
                 for y in range(y_line_bottom - 1, -1, -1):
+                    if y < int(ih * 0.45):
+                        break
                     dark = sum(1 for x in range(iw) if (pix[x, y] if isinstance(pix[x, y], int) else max(pix[x, y][:3])) < thresh)
                     if dark <= white_ok:
                         y_white = y
                         break
-                if y_white is not None and y_white >= int(ih * 0.15):
+                if y_white is not None and y_white >= int(ih * 0.5):
                     img = img.crop((0, 0, iw, y_white + 1))
                     iw, ih = img.size
+                    logger.info("WB label: строчка вырезана снизу (y_white=%s y_line_bottom=%s)", y_white, y_line_bottom)
         except Exception:
             pass
 
