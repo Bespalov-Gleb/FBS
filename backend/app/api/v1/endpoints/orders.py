@@ -1580,51 +1580,28 @@ def _wb_sticker_to_pdf(
     except Exception:
         pass
 
-    # Строчка в PNG WB — внизу (большие y), этикетка сверху. Режем снизу: оставляем только верх (этикетка).
-    # 40 мм = 400 px при 10 px/мм. Не резать этикетку — только строчку (≈8–10 мм).
-    WB_CUT_BOTTOM_MM = 10
-    scale_y = ih / float(label_height_mm)
-    cut_bottom_px = int(WB_CUT_BOTTOM_MM * scale_y)
-    if cut_bottom_px > 0 and cut_bottom_px < ih - 50:
-        new_ih = ih - cut_bottom_px
-        img = img.crop((0, 0, iw, new_ih))
-        iw, ih = img.size
-        logger.info("WB label: срезано снизу %s мм = %s px (строчка)", WB_CUT_BOTTOM_MM, cut_bottom_px)
-
-    # Снизу вверх: первая небелая строка — низ строчки; поднимаемся до первой «белой» строки (зазор); вырезаем строчку
-    if ih > 30 and iw > 10:
+    # Строчка (eb4...) внизу по координатам. Ищем её по пику плотности тёмных пикселей в нижней части, режем сразу над ней.
+    if ih > 80 and iw > 10:
         try:
             pix = img.load()
-            thresh = 250
-            y_line_bottom = None
-            for y in range(ih - 1, -1, -1):
-                for x in range(iw):
-                    v = pix[x, y] if isinstance(pix[x, y], int) else max(pix[x, y][:3])
-                    if v < thresh:
-                        y_line_bottom = y
-                        break
-                if y_line_bottom is not None:
-                    break
-            if y_line_bottom is not None and y_line_bottom > 0:
-                y_white = None
-                # В зазоре могут быть почти белые пиксели (248–249) — считаем «тёмными» только явно тёмные (< 220)
-                dark_thresh_white = 220
-                white_ok = max(10, int(iw * 0.02))
-                y_min_search = int(ih * 0.40)
-                for y in range(y_line_bottom - 1, y_min_search - 1, -1):
-                    dark = sum(1 for x in range(iw) if (pix[x, y] if isinstance(pix[x, y], int) else max(pix[x, y][:3])) < dark_thresh_white)
-                    if dark <= white_ok:
-                        y_white = y
-                        break
-                # Режем только если белая строка в нижней половине (не из середины этикетки)
-                if y_white is not None and y_white >= int(ih * 0.5):
-                    img = img.crop((0, 0, iw, y_white + 1))
+            thresh = 200  # только явно тёмные (текст строчки)
+            y_start = int(ih * 0.50)  # ищем пик только в нижней половине (не трогаем этикетку)
+            best_y = None
+            best_dark = 0
+            for y in range(y_start, ih):
+                dark = sum(1 for x in range(iw) if (pix[x, y] if isinstance(pix[x, y], int) else max(pix[x, y][:3])) < thresh)
+                if dark > best_dark:
+                    best_dark = dark
+                    best_y = y
+            # Строка с пиком — центр строчки. Режем на 10 строк выше (оставляем зазор, не режем этикетку)
+            if best_y is not None and best_dark > iw * 0.02 and best_y > 60:
+                crop_y = best_y - 10
+                if crop_y > int(ih * 0.45):
+                    img = img.crop((0, 0, iw, crop_y))
                     iw, ih = img.size
-                    logger.info("WB label: строчка вырезана снизу (y_white=%s y_line_bottom=%s)", y_white, y_line_bottom)
-                else:
-                    logger.info("WB label: строчка снизу не вырезана — y_line_bottom=%s y_white=%s white_ok=%s ih=%s", y_line_bottom, y_white, white_ok, ih)
+                    logger.info("WB label: строчка вырезана по пику (y_peak=%s crop_y=%s)", best_y, crop_y)
         except Exception as e:
-            logger.warning("WB label: ошибка при вырезе строчки снизу: %s", e)
+            logger.warning("WB label: ошибка при вырезе строчки по пику: %s", e)
 
     # Ищем белый пояс: верх = этикетка (её повернём), низ = строчка (без поворота, прижмём к верху страницы)
     # Берём самый широкий пояс в нижней половине картинки (между этикеткой и строчкой), а не первый попавшийся
