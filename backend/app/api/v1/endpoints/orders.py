@@ -1580,30 +1580,6 @@ def _wb_sticker_to_pdf(
     except Exception:
         pass
 
-    # Строчка (eb4...) — только в самом низу PNG. Пик ищем только в последних 15% строк, иначе попадаем на низ QR/штрихкодов.
-    # PDF: на страницу рисуется только эта img, строчка не добавляется отдельно — она внутри PNG от WB.
-    if ih > 80 and iw > 10:
-        try:
-            pix = img.load()
-            thresh = 200  # только явно тёмные (текст строчки)
-            y_from = int(ih * 0.85)  # только нижние 15% — там строчка, не этикетка
-            best_y = None
-            best_dark = 0
-            for y in range(y_from, ih):
-                dark = sum(1 for x in range(iw) if (pix[x, y] if isinstance(pix[x, y], int) else max(pix[x, y][:3])) < thresh)
-                if dark > best_dark:
-                    best_dark = dark
-                    best_y = y
-            # Пик в нижней полосе = строчка. Режем сразу над нею (несколько строк выше пика)
-            if best_y is not None and best_dark > iw * 0.01 and best_y > y_from:
-                crop_y = best_y - 8
-                if crop_y > int(ih * 0.5):
-                    img = img.crop((0, 0, iw, crop_y))
-                    iw, ih = img.size
-                    logger.info("WB label: строчка вырезана по пику в нижних 15%% (y_peak=%s crop_y=%s)", best_y, crop_y)
-        except Exception as e:
-            logger.warning("WB label: ошибка при вырезе строчки по пику: %s", e)
-
     # Ищем белый пояс: верх = этикетка (её повернём), низ = строчка (без поворота, прижмём к верху страницы)
     # Берём самый широкий пояс в нижней половине картинки (между этикеткой и строчкой), а не первый попавшийся
     line_at_top = False
