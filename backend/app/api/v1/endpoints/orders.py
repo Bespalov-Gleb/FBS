@@ -1580,15 +1580,16 @@ def _wb_sticker_to_pdf(
     except Exception:
         pass
 
-    # Фиксированно отрезаем сверху полосу (строчка в PNG WB — вверху по координатам). 40 мм = 400 px при 10 px/мм.
-    # Режем верх — сколько мм убрать, подбор (5–15 мм).
-    WB_CUT_TOP_MM = 12
+    # Строчка в PNG WB — внизу (большие y), этикетка сверху. Режем снизу: оставляем только верх (этикетка).
+    # 40 мм = 400 px при 10 px/мм. Сколько мм отрезать снизу — подбор (10–15 мм).
+    WB_CUT_BOTTOM_MM = 14
     scale_y = ih / float(label_height_mm)
-    cut_top_px = int(WB_CUT_TOP_MM * scale_y)
-    if cut_top_px > 0 and cut_top_px < ih - 30:
-        img = img.crop((0, cut_top_px, iw, ih))
+    cut_bottom_px = int(WB_CUT_BOTTOM_MM * scale_y)
+    if cut_bottom_px > 0 and cut_bottom_px < ih - 50:
+        new_ih = ih - cut_bottom_px
+        img = img.crop((0, 0, iw, new_ih))
         iw, ih = img.size
-        logger.info("WB label: срезано сверху %s мм = %s px (строчка)", WB_CUT_TOP_MM, cut_top_px)
+        logger.info("WB label: срезано снизу %s мм = %s px (строчка)", WB_CUT_BOTTOM_MM, cut_bottom_px)
 
     # Снизу вверх: первая небелая строка — низ строчки; поднимаемся до первой «белой» строки (зазор); вырезаем строчку
     if ih > 30 and iw > 10:
