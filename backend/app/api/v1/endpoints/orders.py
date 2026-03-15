@@ -1580,6 +1580,16 @@ def _wb_sticker_to_pdf(
     except Exception:
         pass
 
+    # Фиксированная высота этикетки (без строчки): 40 мм = 400 px при масштабе 10 px/мм (58×40 мм → 580×400).
+    # Подбираем высоту в мм — только эта полоса пойдёт дальше, строчка внизу отрезается.
+    WB_LABEL_STRIP_HEIGHT_MM = 15  # подбор: 12–20 мм, 40 мм = вся картинка
+    scale_y = ih / float(label_height_mm)  # px per mm
+    label_strip_px = int(WB_LABEL_STRIP_HEIGHT_MM * scale_y)
+    if label_strip_px < ih and label_strip_px > 20:
+        img = img.crop((0, 0, iw, label_strip_px))
+        iw, ih = img.size
+        logger.info("WB label: фиксированная высота этикетки %s мм = %s px", WB_LABEL_STRIP_HEIGHT_MM, ih)
+
     # Снизу вверх: первая небелая строка — низ строчки; поднимаемся до первой «белой» строки (зазор); вырезаем строчку
     if ih > 30 and iw > 10:
         try:
@@ -1711,13 +1721,7 @@ def _wb_sticker_to_pdf(
         logger.warning("WB label: ошибка при поиске горизонтального пояса: %s", e, exc_info=True)
 
     if not line_at_top:
-        # Белый пояс не нашли — оставляем только верхние 20% (строчка и пустота снизу вырезаются), затем поворот
-        keep_frac = 0.20
-        new_h = max(60, int(ih * keep_frac))
-        if new_h < ih:
-            img = img.crop((0, 0, iw, new_h))
-            iw, ih = img.size
-            logger.info("WB label: оставлено только верхние %.0f%% (ih=%s)", keep_frac * 100, ih)
+        # Белый пояс не нашли — крутим всё изображение
         if deg:
             if deg == 90 and ih > iw:
                 img = img.transpose(Image.Transpose.ROTATE_270)
