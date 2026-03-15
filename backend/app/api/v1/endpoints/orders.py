@@ -1580,7 +1580,7 @@ def _wb_sticker_to_pdf(
     except Exception:
         pass
 
-    # Снизу вверх: первая небелая строка — низ строчки; поднимаемся до первой «белой» строки (в нижней половине картинки — это зазор); вырезаем строчку
+    # Снизу вверх: первая небелая строка — низ строчки; поднимаемся до первой «белой» строки (зазор); вырезаем строчку
     if ih > 30 and iw > 10:
         try:
             pix = img.load()
@@ -1596,20 +1596,23 @@ def _wb_sticker_to_pdf(
                     break
             if y_line_bottom is not None and y_line_bottom > 0:
                 y_white = None
-                white_ok = max(8, int(iw * 0.02))
-                for y in range(y_line_bottom - 1, -1, -1):
-                    if y < int(ih * 0.45):
-                        break
+                # Зазор между этикеткой и строчкой может иметь артефакты — допускаем до ~5% тёмных пикселей в строке
+                white_ok = max(15, int(iw * 0.05))
+                y_min_search = int(ih * 0.40)
+                for y in range(y_line_bottom - 1, y_min_search - 1, -1):
                     dark = sum(1 for x in range(iw) if (pix[x, y] if isinstance(pix[x, y], int) else max(pix[x, y][:3])) < thresh)
                     if dark <= white_ok:
                         y_white = y
                         break
+                # Режем только если белая строка в нижней половине (не из середины этикетки)
                 if y_white is not None and y_white >= int(ih * 0.5):
                     img = img.crop((0, 0, iw, y_white + 1))
                     iw, ih = img.size
                     logger.info("WB label: строчка вырезана снизу (y_white=%s y_line_bottom=%s)", y_white, y_line_bottom)
-        except Exception:
-            pass
+                else:
+                    logger.info("WB label: строчка снизу не вырезана — y_line_bottom=%s y_white=%s white_ok=%s ih=%s", y_line_bottom, y_white, white_ok, ih)
+        except Exception as e:
+            logger.warning("WB label: ошибка при вырезе строчки снизу: %s", e)
 
     # Ищем белый пояс: верх = этикетка (её повернём), низ = строчка (без поворота, прижмём к верху страницы)
     # Берём самый широкий пояс в нижней половине картинки (между этикеткой и строчкой), а не первый попавшийся
