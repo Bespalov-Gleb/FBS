@@ -1659,6 +1659,8 @@ def _wb_sticker_to_pdf(
                         bottom_img = bottom_img.crop((0, btop, bw, bh))
                 except Exception:
                     pass
+            # Поворот только строчки на 180°
+            bottom_img = bottom_img.transpose(Image.Transpose.ROTATE_180)
             # Собираем: этикетка по размеру; строчка прижата к верху и накладывается на этикетку
             new_h = top_img.size[1]
             new_w = max(top_img.size[0], bottom_img.size[0])
@@ -1685,6 +1687,34 @@ def _wb_sticker_to_pdf(
             elif deg == 180:
                 img = img.transpose(Image.Transpose.ROTATE_180)
                 iw, ih = img.size
+
+    # Поворот только строчки (нижний блок) на 180° — когда горизонтальный пояс не сработал, ищем полосу внизу и крутим только её
+    if not line_at_top and ih > 40 and iw > 20:
+        try:
+            pix = img.load()
+            t = 252
+            y_bottom = None
+            for y in range(ih - 1, -1, -1):
+                dark = sum(1 for x in range(iw) if (pix[x, y] if isinstance(pix[x, y], int) else max(pix[x, y][:3])) < t)
+                if dark >= 3:
+                    y_bottom = y
+                    break
+            if y_bottom is not None and y_bottom >= int(ih * 0.7):
+                white_thresh = max(15, int(iw * 0.20))
+                y_top = None
+                for y in range(y_bottom - 1, -1, -1):
+                    dark = sum(1 for x in range(iw) if (pix[x, y] if isinstance(pix[x, y], int) else max(pix[x, y][:3])) < t)
+                    if dark < white_thresh:
+                        y_top = y + 1
+                        break
+                if y_top is not None:
+                    strip_h = y_bottom - y_top + 1
+                    if 6 <= strip_h <= int(ih * 0.15) and y_top >= int(ih * 0.7):
+                        strip = img.crop((0, y_top, iw, y_bottom + 1))
+                        strip = strip.transpose(Image.Transpose.ROTATE_180)
+                        img.paste(strip, (0, y_top))
+        except Exception:
+            pass
 
     # Подтянуть всё вверх: если есть большой белый пояс в середине — убрать его, нижний блок прижать к верху (наложение)
     if ih > 30 and iw > 10:
