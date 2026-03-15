@@ -1688,31 +1688,14 @@ def _wb_sticker_to_pdf(
                 img = img.transpose(Image.Transpose.ROTATE_180)
                 iw, ih = img.size
 
-    # Поворот только строчки (нижний блок) на 180° — когда горизонтальный пояс не сработал, ищем полосу внизу и крутим только её
-    if not line_at_top and ih > 40 and iw > 20:
+    # Поворот только строчки на 180° — без поиска границы: фиксированная полоса в самом низу (строчка всегда там), крутим и вставляем обратно
+    if not line_at_top and ih > 50 and iw > 20:
         try:
-            pix = img.load()
-            t = 252
-            y_bottom = None
-            for y in range(ih - 1, -1, -1):
-                dark = sum(1 for x in range(iw) if (pix[x, y] if isinstance(pix[x, y], int) else max(pix[x, y][:3])) < t)
-                if dark >= 3:
-                    y_bottom = y
-                    break
-            if y_bottom is not None and y_bottom >= int(ih * 0.7):
-                white_thresh = max(15, int(iw * 0.20))
-                y_top = None
-                for y in range(y_bottom - 1, -1, -1):
-                    dark = sum(1 for x in range(iw) if (pix[x, y] if isinstance(pix[x, y], int) else max(pix[x, y][:3])) < t)
-                    if dark < white_thresh:
-                        y_top = y + 1
-                        break
-                if y_top is not None:
-                    strip_h = y_bottom - y_top + 1
-                    if 6 <= strip_h <= int(ih * 0.15) and y_top >= int(ih * 0.7):
-                        strip = img.crop((0, y_top, iw, y_bottom + 1))
-                        strip = strip.transpose(Image.Transpose.ROTATE_180)
-                        img.paste(strip, (0, y_top))
+            strip_h = min(45, max(22, int(ih * 0.06)))
+            y0 = ih - strip_h
+            strip = img.crop((0, y0, iw, ih))
+            strip = strip.transpose(Image.Transpose.ROTATE_180)
+            img.paste(strip, (0, y0))
         except Exception:
             pass
 
