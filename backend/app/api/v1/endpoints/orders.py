@@ -1596,11 +1596,12 @@ def _wb_sticker_to_pdf(
                     break
             if y_line_bottom is not None and y_line_bottom > 0:
                 y_white = None
-                # Зазор между этикеткой и строчкой может иметь артефакты — допускаем до ~5% тёмных пикселей в строке
-                white_ok = max(15, int(iw * 0.05))
+                # В зазоре могут быть почти белые пиксели (248–249) — считаем «тёмными» только явно тёмные (< 220)
+                dark_thresh_white = 220
+                white_ok = max(10, int(iw * 0.02))
                 y_min_search = int(ih * 0.40)
                 for y in range(y_line_bottom - 1, y_min_search - 1, -1):
-                    dark = sum(1 for x in range(iw) if (pix[x, y] if isinstance(pix[x, y], int) else max(pix[x, y][:3])) < thresh)
+                    dark = sum(1 for x in range(iw) if (pix[x, y] if isinstance(pix[x, y], int) else max(pix[x, y][:3])) < dark_thresh_white)
                     if dark <= white_ok:
                         y_white = y
                         break
