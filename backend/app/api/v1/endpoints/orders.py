@@ -1581,8 +1581,8 @@ def _wb_sticker_to_pdf(
         pass
 
     # Строчка в PNG WB — внизу (большие y), этикетка сверху. Режем снизу: оставляем только верх (этикетка).
-    # 40 мм = 400 px при 10 px/мм. Сколько мм отрезать снизу — подбор (10–15 мм).
-    WB_CUT_BOTTOM_MM = 14
+    # 40 мм = 400 px при 10 px/мм. Не резать этикетку — только строчку (≈8–10 мм).
+    WB_CUT_BOTTOM_MM = 10
     scale_y = ih / float(label_height_mm)
     cut_bottom_px = int(WB_CUT_BOTTOM_MM * scale_y)
     if cut_bottom_px > 0 and cut_bottom_px < ih - 50:
