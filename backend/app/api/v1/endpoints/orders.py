@@ -1580,26 +1580,27 @@ def _wb_sticker_to_pdf(
     except Exception:
         pass
 
-    # Строчка (eb4...) внизу по координатам. Ищем её по пику плотности тёмных пикселей в нижней части, режем сразу над ней.
+    # Строчка (eb4...) — только в самом низу PNG. Пик ищем только в последних 15% строк, иначе попадаем на низ QR/штрихкодов.
+    # PDF: на страницу рисуется только эта img, строчка не добавляется отдельно — она внутри PNG от WB.
     if ih > 80 and iw > 10:
         try:
             pix = img.load()
             thresh = 200  # только явно тёмные (текст строчки)
-            y_start = int(ih * 0.50)  # ищем пик только в нижней половине (не трогаем этикетку)
+            y_from = int(ih * 0.85)  # только нижние 15% — там строчка, не этикетка
             best_y = None
             best_dark = 0
-            for y in range(y_start, ih):
+            for y in range(y_from, ih):
                 dark = sum(1 for x in range(iw) if (pix[x, y] if isinstance(pix[x, y], int) else max(pix[x, y][:3])) < thresh)
                 if dark > best_dark:
                     best_dark = dark
                     best_y = y
-            # Строка с пиком — центр строчки. Режем на 10 строк выше (оставляем зазор, не режем этикетку)
-            if best_y is not None and best_dark > iw * 0.02 and best_y > 60:
-                crop_y = best_y - 10
-                if crop_y > int(ih * 0.45):
+            # Пик в нижней полосе = строчка. Режем сразу над нею (несколько строк выше пика)
+            if best_y is not None and best_dark > iw * 0.01 and best_y > y_from:
+                crop_y = best_y - 8
+                if crop_y > int(ih * 0.5):
                     img = img.crop((0, 0, iw, crop_y))
                     iw, ih = img.size
-                    logger.info("WB label: строчка вырезана по пику (y_peak=%s crop_y=%s)", best_y, crop_y)
+                    logger.info("WB label: строчка вырезана по пику в нижних 15%% (y_peak=%s crop_y=%s)", best_y, crop_y)
         except Exception as e:
             logger.warning("WB label: ошибка при вырезе строчки по пику: %s", e)
 
@@ -1790,9 +1791,6 @@ def _wb_sticker_to_pdf(
         x_place, y_place, width=draw_w, height=draw_h,
         preserveAspectRatio=True,
     )
-    if order_number and str(order_number).strip():
-        c.setFont("Helvetica-Bold", 8)
-        c.drawCentredString(frame_w_pt / 2, 2 * mm, str(order_number).strip()[:25])
     c.save()
     buf.seek(0)
     return buf.getvalue()
