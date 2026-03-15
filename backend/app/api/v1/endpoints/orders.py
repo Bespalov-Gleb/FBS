@@ -1711,7 +1711,13 @@ def _wb_sticker_to_pdf(
         logger.warning("WB label: ошибка при поиске горизонтального пояса: %s", e, exc_info=True)
 
     if not line_at_top:
-        # Белый пояс не нашли — крутим всё изображение
+        # Белый пояс не нашли — оставляем только верхние 20% (строчка и пустота снизу вырезаются), затем поворот
+        keep_frac = 0.20
+        new_h = max(60, int(ih * keep_frac))
+        if new_h < ih:
+            img = img.crop((0, 0, iw, new_h))
+            iw, ih = img.size
+            logger.info("WB label: оставлено только верхние %.0f%% (ih=%s)", keep_frac * 100, ih)
         if deg:
             if deg == 90 and ih > iw:
                 img = img.transpose(Image.Transpose.ROTATE_270)
