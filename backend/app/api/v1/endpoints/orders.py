@@ -1580,6 +1580,15 @@ def _wb_sticker_to_pdf(
     except Exception:
         pass
 
+    # До любых поворотов вырезать строчку (eb4...) снизу — обрезать полосу по низу, чтобы она не участвовала в дальнейшей обработке
+    if ih > 60 and iw > 20:
+        try:
+            strip_h = min(35, max(20, int(ih * 0.06)))
+            img = img.crop((0, 0, iw, ih - strip_h))
+            iw, ih = img.size
+        except Exception:
+            pass
+
     # Ищем белый пояс: верх = этикетка (её повернём), низ = строчка (без поворота, прижмём к верху страницы)
     # Берём самый широкий пояс в нижней половине картинки (между этикеткой и строчкой), а не первый попавшийся
     line_at_top = False
@@ -1687,17 +1696,6 @@ def _wb_sticker_to_pdf(
             elif deg == 180:
                 img = img.transpose(Image.Transpose.ROTATE_180)
                 iw, ih = img.size
-
-    # Поворот только строчки на 180° — без поиска границы: фиксированная полоса в самом низу (строчка всегда там), крутим и вставляем обратно
-    if not line_at_top and ih > 50 and iw > 20:
-        try:
-            strip_h = min(45, max(22, int(ih * 0.06)))
-            y0 = ih - strip_h
-            strip = img.crop((0, y0, iw, ih))
-            strip = strip.transpose(Image.Transpose.ROTATE_180)
-            img.paste(strip, (0, y0))
-        except Exception:
-            pass
 
     # Подтянуть всё вверх: если есть большой белый пояс в середине — убрать его, нижний блок прижать к верху (наложение)
     if ih > 30 and iw > 10:
