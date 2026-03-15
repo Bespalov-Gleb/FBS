@@ -1580,12 +1580,30 @@ def _wb_sticker_to_pdf(
     except Exception:
         pass
 
-    # До любых поворотов вырезать строчку (eb4...) снизу — обрезать полосу по низу, чтобы она не участвовала в дальнейшей обработке
-    if ih > 60 and iw > 20:
+    # Снизу вверх: первая небелая строка — низ строчки; поднимаемся до первой чисто белой строки; эту область вырезаем
+    if ih > 30 and iw > 10:
         try:
-            strip_h = min(35, max(20, int(ih * 0.06)))
-            img = img.crop((0, 0, iw, ih - strip_h))
-            iw, ih = img.size
+            pix = img.load()
+            thresh = 250
+            y_line_bottom = None
+            for y in range(ih - 1, -1, -1):
+                for x in range(iw):
+                    v = pix[x, y] if isinstance(pix[x, y], int) else max(pix[x, y][:3])
+                    if v < thresh:
+                        y_line_bottom = y
+                        break
+                if y_line_bottom is not None:
+                    break
+            if y_line_bottom is not None and y_line_bottom > 0:
+                y_white = None
+                for y in range(y_line_bottom - 1, -1, -1):
+                    dark = sum(1 for x in range(iw) if (pix[x, y] if isinstance(pix[x, y], int) else max(pix[x, y][:3])) < thresh)
+                    if dark <= 1:
+                        y_white = y
+                        break
+                if y_white is not None and y_white >= int(ih * 0.15):
+                    img = img.crop((0, 0, iw, y_white + 1))
+                    iw, ih = img.size
         except Exception:
             pass
 
