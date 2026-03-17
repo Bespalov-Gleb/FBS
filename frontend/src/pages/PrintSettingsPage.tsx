@@ -281,7 +281,7 @@ export default function PrintSettingsPage() {
                     }}
                     inputProps={{ min: 1, max: 1.5, step: 0.05 }}
                     sx={{ maxWidth: 120 }}
-                    helperText="Рост вправо и вниз от левого верхнего угла. Обрезка справа и снизу."
+                    helperText="Расширение страницы PDF вместе с этикеткой. При печати принтер уменьшит — контент заполнит стикер."
                   />
                 </Box>
               )}

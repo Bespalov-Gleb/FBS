@@ -636,12 +636,14 @@ def _ozon_fbs_to_standard_label(
     if not images:
         raise ValueError("PDF returned no pages")
 
-    # Лист книжной ориентации (40×58 мм): этикетка в альбомном виде прижата к верхнему левому углу
-    # width_mm×height_mm = 58×40 (альбом этикетки) → страница 40×58 (книжная)
+    # Лист книжной ориентации (40×58 мм): этикетка в альбомном виде прижата к верхнему левому углу.
+    # scale_factor > 1: страница PDF и контент расширяются вместе — принтер при печати уменьшит,
+    # и контент заполнит физический стикер 58×40 вместо мелкого отпечатка по центру.
     page_width_mm = height_mm
     page_height_mm = width_mm
-    frame_w_pt = page_width_mm * mm
-    frame_h_pt = page_height_mm * mm
+    sf = max(1.0, float(scale_factor))
+    frame_w_pt = page_width_mm * mm * sf
+    frame_h_pt = page_height_mm * mm * sf
     margin_left_pt = 1.0 * mm
     margin_top_pt = 1.0 * mm
     usable_w = frame_w_pt - margin_left_pt - 1.0 * mm
@@ -718,9 +720,9 @@ def _ozon_fbs_to_standard_label(
         except Exception:
             pass
 
-        # Вписать этикетку в область страницы, прижать к верхнему левому углу (ReportLab: y=0 — низ)
-        # scale_factor > 1: увеличение вправо и вниз, обрезка по правой и нижней границе
-        scale = min(usable_w / iw, usable_h / ih) * scale_factor
+        # Вписать этикетку в область страницы, прижать к верхнему левому углу (ReportLab: y=0 — низ).
+        # Страница уже расширена scale_factor — контент заполняет её без обрезки.
+        scale = min(usable_w / iw, usable_h / ih)
         draw_w = iw * scale
         draw_h = ih * scale
         x_place = margin_left_pt
@@ -1744,18 +1746,20 @@ def _wb_sticker_to_pdf(
             img = img.crop((0, 0, iw, max_h))
             iw, ih = img.size
 
-    # Лист книжной ориентации 40×58 (как Ozon), прижать к верхнему левому углу
+    # Лист книжной ориентации 40×58 (как Ozon), прижать к верхнему левому углу.
+    # scale_factor > 1: страница PDF и контент расширяются вместе — принтер при печати уменьшит,
+    # и контент заполнит физический стикер вместо мелкого отпечатка.
     page_width_mm = label_height_mm
     page_height_mm = label_width_mm
-    frame_w_pt = page_width_mm * mm
-    frame_h_pt = page_height_mm * mm
+    sf = max(1.0, float(scale_factor))
+    frame_w_pt = page_width_mm * mm * sf
+    frame_h_pt = page_height_mm * mm * sf
     margin_left_pt = 1.0 * mm
     margin_top_pt = 1.0 * mm
     usable_w = frame_w_pt - margin_left_pt - 1.0 * mm
     usable_h = frame_h_pt - margin_top_pt - 1.0 * mm
 
-    # scale_factor > 1: увеличение вправо и вниз, обрезка по правой и нижней границе
-    scale = min(usable_w / iw, usable_h / ih) * scale_factor
+    scale = min(usable_w / iw, usable_h / ih)
     draw_w = iw * scale
     draw_h = ih * scale
     x_place = margin_left_pt
