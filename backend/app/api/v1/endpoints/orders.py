@@ -597,6 +597,7 @@ def _ozon_fbs_to_standard_label(
     height_mm: int = 40,
     rotate: int = 90,
     dpi: int = 203,
+    scale_factor: float = 1.0,
 ) -> bytes:
     """
     Этикетка Ozon FBS: не редактируем исходный PDF, а пересоздаём страницу.
@@ -718,7 +719,8 @@ def _ozon_fbs_to_standard_label(
             pass
 
         # Вписать этикетку в область страницы, прижать к верхнему левому углу (ReportLab: y=0 — низ)
-        scale = min(usable_w / iw, usable_h / ih)
+        # scale_factor > 1: увеличение вправо и вниз, обрезка по правой и нижней границе
+        scale = min(usable_w / iw, usable_h / ih) * scale_factor
         draw_w = iw * scale
         draw_h = ih * scale
         x_place = margin_left_pt
@@ -1511,6 +1513,7 @@ def _wb_sticker_to_pdf(
     order_number: str | None = None,
     rotate: int = 90,
     top_margin_mm: float = 6.0,
+    scale_factor: float = 1.0,
 ) -> bytes:
     """
     Конвертировать PNG-стикер WB в PDF — та же логика, что у этикетки Ozon:
@@ -1751,7 +1754,8 @@ def _wb_sticker_to_pdf(
     usable_w = frame_w_pt - margin_left_pt - 1.0 * mm
     usable_h = frame_h_pt - margin_top_pt - 1.0 * mm
 
-    scale = min(usable_w / iw, usable_h / ih)
+    # scale_factor > 1: увеличение вправо и вниз, обрезка по правой и нижней границе
+    scale = min(usable_w / iw, usable_h / ih) * scale_factor
     draw_w = iw * scale
     draw_h = ih * scale
     x_place = margin_left_pt
@@ -2087,12 +2091,15 @@ async def get_order_label(
                 ozon_rot = _ps.ozon_label_rotate if _ps.ozon_label_rotate is not None else 90
                 printer_dpi = _ps.printer_dpi or 203
                 label_mode = _ps.label_print_mode or "standard_58x40_noscale"
+                scale_factor = float(_ps.label_scale_factor) if _ps.label_scale_factor is not None else 1.0
             else:
                 w_mm, h_mm, ozon_rot, printer_dpi = 58, 40, 90, 203
                 label_mode = "standard_58x40_noscale"
+                scale_factor = 1.0
         except Exception:
             w_mm, h_mm, ozon_rot, printer_dpi = 58, 40, 90, 203
             label_mode = "standard_58x40_noscale"
+            scale_factor = 1.0
         try:
             if format == "png":
                 content = _ozon_fbs_to_png(content, width_mm=w_mm, height_mm=h_mm, rotate=ozon_rot)
@@ -2111,6 +2118,7 @@ async def get_order_label(
                 # noscale: поворот только через PIL в _ozon_fbs_to_standard_label (pypdf ненадёжен с PDF Ozon)
                 content = _ozon_fbs_to_standard_label(
                     content, width_mm=w_mm, height_mm=h_mm, rotate=ozon_rot, dpi=printer_dpi,
+                    scale_factor=scale_factor,
                 )
         except Exception as _re:
             logger.warning("Ozon FBS to standard label failed: %s", _re, exc_info=True)
@@ -2131,6 +2139,7 @@ async def get_order_label(
         else:
             w, h = width, height
         wb_rotate = (ps.wb_label_rotate if ps.wb_label_rotate is not None else 90) if ps else 90
+        scale_factor = float(ps.label_scale_factor) if ps and ps.label_scale_factor is not None else 1.0
         logger.info("WB label: wb_label_rotate=%s (from print_settings)", wb_rotate)
         label_mode = (ps.label_print_mode or "standard_58x40_noscale") if ps else "standard_58x40_noscale"
         async with WildberriesClient(api_key=api_key) as client:
@@ -2161,6 +2170,7 @@ async def get_order_label(
             content = _wb_sticker_to_pdf(
                 content, label_width_mm=w, label_height_mm=h,
                 order_number=order_num, rotate=wb_rotate,
+                scale_factor=scale_factor,
             )
         return Response(
             content=content,

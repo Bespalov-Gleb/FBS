@@ -48,6 +48,7 @@ class PrintSettingsResponse(BaseModel):
     printer_dpi: Optional[int] = None  # 203 или 300 — DPI принтера
     print_scale: Optional[str] = None  # fit | shrink | noscale — для SumatraPDF
     label_print_mode: Optional[str] = None  # as_is_fit | standard_58x40_noscale — путь печати этикеток
+    label_scale_factor: Optional[float] = None  # 1.0–1.5 — увеличение этикетки вправо/вниз (noscale)
     ozon_labels: Optional[dict] = None     # {width_mm, height_mm, rotate}
     wb_labels: Optional[dict] = None       # {width_mm, height_mm, rotate}
     kiz_labels: Optional[dict] = None      # {width_mm, height_mm, rotate}
@@ -64,6 +65,7 @@ class PrintSettingsUpdate(BaseModel):
     printer_dpi: Optional[int] = None  # 203 или 300
     print_scale: Optional[str] = None  # fit | shrink | noscale
     label_print_mode: Optional[str] = None  # as_is_fit | standard_58x40_noscale
+    label_scale_factor: Optional[float] = None  # 1.0–1.5 — увеличение этикетки вправо/вниз
     ozon_labels: Optional[OzonLabelsSchema] = None
     wb_labels: Optional[WbLabelsSchema] = None
     kiz_labels: Optional[KizLabelsSchema] = None
@@ -114,6 +116,7 @@ def get_print_settings(
             printer_dpi=203,
             print_scale="fit",
             label_print_mode="standard_58x40_noscale",
+            label_scale_factor=1.0,
             ozon_labels={"width_mm": 58, "height_mm": 40, "rotate": 90},
             wb_labels={"width_mm": 58, "height_mm": 40, "rotate": 90},
             kiz_labels={"width_mm": 40, "height_mm": 35, "rotate": 0},
@@ -128,6 +131,7 @@ def get_print_settings(
         printer_dpi=ps.printer_dpi or 203,
         print_scale=ps.print_scale or "fit",
         label_print_mode=ps.label_print_mode or "standard_58x40_noscale",
+        label_scale_factor=float(ps.label_scale_factor) if ps.label_scale_factor is not None else 1.0,
         ozon_labels=_ozon_labels_from_ps(ps),
         wb_labels=_wb_labels_from_ps(ps),
         kiz_labels=_kiz_labels_from_ps(ps),
@@ -192,6 +196,9 @@ def update_print_settings(
     if data.label_print_mode is not None:
         if data.label_print_mode in ("as_is_fit", "standard_58x40_noscale"):
             ps.label_print_mode = data.label_print_mode
+    if data.label_scale_factor is not None:
+        v = float(data.label_scale_factor)
+        ps.label_scale_factor = max(1.0, min(v, 1.5))
     db.commit()
     db.refresh(ps)
     return PrintSettingsResponse(
@@ -203,6 +210,7 @@ def update_print_settings(
         printer_dpi=ps.printer_dpi or 203,
         print_scale=ps.print_scale or "fit",
         label_print_mode=ps.label_print_mode or "standard_58x40_noscale",
+        label_scale_factor=float(ps.label_scale_factor) if ps.label_scale_factor is not None else 1.0,
         ozon_labels=_ozon_labels_from_ps(ps),
         wb_labels=_wb_labels_from_ps(ps),
         kiz_labels=_kiz_labels_from_ps(ps),

@@ -1,7 +1,7 @@
 """
 Модель настроек печати (Диспетчер печати)
 """
-from sqlalchemy import Column, ForeignKey, Integer, String, Text
+from sqlalchemy import Column, Float, ForeignKey, Integer, String, Text
 
 from app.models.base import BaseModel
 
@@ -55,3 +55,8 @@ class PrintSettings(BaseModel):
     # as_is_fit — этикетки от маркетплейсов без обработки, агенту fit
     # standard_58x40_noscale — на листе 58×40 мм, агенту noscale (по умолчанию)
     label_print_mode = Column(String(30), nullable=True, default="standard_58x40_noscale")
+
+    # Коэффициент увеличения этикетки (1.0 — без увеличения, до 1.5).
+    # Увеличение вправо и вниз от левого верхнего угла. Обрезка по правой и нижней границе.
+    # Для режима standard_58x40_noscale.
+    label_scale_factor = Column(Float, nullable=True, default=1.0)

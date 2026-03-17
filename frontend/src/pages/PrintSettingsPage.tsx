@@ -55,6 +55,7 @@ export default function PrintSettingsPage() {
   const [kizRotate, setKizRotate] = useState(0);
 
   const [labelPrintMode, setLabelPrintMode] = useState<'as_is_fit' | 'standard_58x40_noscale'>('standard_58x40_noscale');
+  const [labelScaleFactor, setLabelScaleFactor] = useState(1.0);
   const [autoPrint, setAutoPrint] = useState(true);
   const [autoPrintKiz, setAutoPrintKiz] = useState(true);
   const [agentAvailable, setAgentAvailable] = useState(false);
@@ -83,6 +84,7 @@ export default function PrintSettingsPage() {
       setKizHeight(settings.kiz_labels?.height_mm ?? 35);
       setKizRotate(settings.kiz_labels?.rotate ?? 0);
       setLabelPrintMode(settings.label_print_mode === 'as_is_fit' ? 'as_is_fit' : 'standard_58x40_noscale');
+      setLabelScaleFactor(settings.label_scale_factor ?? 1.0);
       setAutoPrint(settings.auto_print_on_click !== false);
       setAutoPrintKiz(settings.auto_print_kiz_duplicate !== false);
     }
@@ -110,6 +112,7 @@ export default function PrintSettingsPage() {
         barcode_labels: { rotate: barcodeRotate },
         kiz_labels: { width_mm: kizWidth, height_mm: kizHeight, rotate: kizRotate },
         label_print_mode: labelPrintMode,
+        label_scale_factor: labelScaleFactor,
         auto_print_on_click: autoPrint,
         auto_print_kiz_duplicate: autoPrintKiz,
       }),
@@ -264,6 +267,24 @@ export default function PrintSettingsPage() {
                   Стандартный: этикетки ресайзятся на 58×40, печать 100%. Как есть: без обработки, принтер масштабирует (fit).
                 </Typography>
               </FormControl>
+
+              {labelPrintMode === 'standard_58x40_noscale' && (
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                  <Typography variant="body2">Увеличение этикетки (1.0–1.5)</Typography>
+                  <TextField
+                    type="number"
+                    size="small"
+                    value={labelScaleFactor}
+                    onChange={(e) => {
+                      const v = parseFloat(e.target.value);
+                      if (!Number.isNaN(v)) setLabelScaleFactor(Math.max(1, Math.min(1.5, v)));
+                    }}
+                    inputProps={{ min: 1, max: 1.5, step: 0.05 }}
+                    sx={{ maxWidth: 120 }}
+                    helperText="Рост вправо и вниз от левого верхнего угла. Обрезка справа и снизу."
+                  />
+                </Box>
+              )}
 
               <Divider />
 

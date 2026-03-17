@@ -93,6 +93,8 @@ export interface PrintSettings {
   printer_dpi?: number;  // 203 или 300 — DPI принтера
   /** as_is_fit — этикетки от маркетплейсов без обработки, агенту fit; standard_58x40_noscale — лист 58×40, noscale */
   label_print_mode?: 'as_is_fit' | 'standard_58x40_noscale';
+  /** 1.0–1.5 — коэффициент увеличения этикетки вправо/вниз (для noscale) */
+  label_scale_factor?: number;
   ozon_labels?: LabelSizeWithRotate;
   wb_labels?: LabelSizeWithRotate;
   kiz_labels?: LabelSizeWithRotate;
