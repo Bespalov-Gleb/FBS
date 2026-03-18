@@ -236,7 +236,7 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
   };
 
   return (
-    <Dialog open={!!order} onClose={onClose} maxWidth="md" fullWidth disableRestoreFocus sx={{ '& .MuiDialog-paper': { maxWidth: 720 } }}>
+    <Dialog open={!!order} onClose={onClose} maxWidth="lg" fullWidth disableRestoreFocus sx={{ '& .MuiDialog-paper': { maxWidth: 920 } }}>
       <DialogTitle>{displayId}</DialogTitle>
       <DialogContent>
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
