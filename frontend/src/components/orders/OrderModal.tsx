@@ -236,7 +236,7 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
   };
 
   return (
-    <Dialog open={!!order} onClose={onClose} maxWidth="md" fullWidth disableRestoreFocus>
+    <Dialog open={!!order} onClose={onClose} maxWidth="sm" fullWidth disableRestoreFocus sx={{ '& .MuiDialog-paper': { maxWidth: 520 } }}>
       <DialogTitle>{displayId}</DialogTitle>
       <DialogContent>
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
@@ -257,15 +257,14 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
                         component="img"
                         src={getProductImageUrl(p.image_url)!}
                         alt={p.name}
-                        sx={{ width: 56, height: 56, objectFit: 'cover', borderRadius: 1, flexShrink: 0 }}
+                        sx={{ width: 72, height: 72, objectFit: 'cover', borderRadius: 1, flexShrink: 0 }}
                       />
                     )}
                     <Box sx={{ flex: 1, minWidth: 0 }}>
-                      <Typography variant="body2"><strong>{p.offer_id}</strong></Typography>
-                      <Typography variant="body2" color="text.secondary">{p.name}</Typography>
-                      <Typography variant="caption" color={p.size ? 'text.primary' : 'text.disabled'}>
-                        Размер: {p.size || '—'}
+                      <Typography variant="body2" sx={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}>
+                        <strong>{p.offer_id}</strong>
                       </Typography>
+                      <Typography variant="body2" color="text.secondary">{p.name}</Typography>
                       <Typography
                         variant="caption"
                         sx={{ color: order.quantity >= 2 ? palette.accent.red : 'inherit', fontWeight: order.quantity >= 2 ? 600 : 400 }}
@@ -286,8 +285,8 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
                   alt={order.product_name}
                   onError={() => setImageError(true)}
                   sx={{
-                    width: 80,
-                    height: 80,
+                    width: 108,
+                    height: 108,
                     objectFit: 'cover',
                     borderRadius: 1,
                     flexShrink: 0,
@@ -295,18 +294,23 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
                 />
               )}
               <Box sx={{ flex: 1, minWidth: 0 }}>
-                <Typography variant="body1">
+                <Typography
+                  variant="body1"
+                  sx={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}
+                >
                   <strong>Артикул:</strong> {order.article}
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
                   {order.product_name}
                 </Typography>
-                <Typography variant="body2">
-                  <strong>Размер:</strong>{' '}
-                  <Box component="span" color={order.size ? 'text.primary' : 'text.disabled'}>
-                    {order.size || '—'}
-                  </Box>
-                </Typography>
+                {order.marketplace_type !== 'ozon' && (
+                  <Typography variant="body2">
+                    <strong>Размер:</strong>{' '}
+                    <Box component="span" color={order.size ? 'text.primary' : 'text.disabled'}>
+                      {order.size || '—'}
+                    </Box>
+                  </Typography>
+                )}
               <Typography variant="body2">
                 <strong>Количество:</strong>{' '}
                 <Box component="span" sx={{ color: order.quantity >= 2 ? palette.accent.red : 'inherit', fontWeight: 600 }}>

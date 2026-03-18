@@ -21,13 +21,16 @@ function ProductRow({ product, highlightQuantity }: { product: OrderProduct; hig
           src={imgUrl}
           alt={product.name}
           onError={() => setImgErr(true)}
-          sx={{ width: 56, height: 56, objectFit: 'cover', borderRadius: 1, flexShrink: 0 }}
+          sx={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 1, flexShrink: 0 }}
         />
       )}
       <Box sx={{ flex: 1, minWidth: 0 }}>
-        <Typography variant="caption" color="text.primary" sx={{ lineHeight: 1.3, display: 'block' }}>
-          {product.name || product.offer_id}
-          {product.size && ` • ${product.size}`}
+        <Typography
+          variant="caption"
+          color="text.primary"
+          sx={{ lineHeight: 1.3, display: 'block', wordBreak: 'break-word' }}
+        >
+          {product.offer_id || product.name}
         </Typography>
         <Typography
           variant="caption"
@@ -119,8 +122,8 @@ export default function OrderCard({ order, onClick }: OrderCardProps) {
                 alt={order.product_name}
                 onError={() => setImageError(true)}
                 sx={{
-                  width: 64,
-                  height: 64,
+                  width: 80,
+                  height: 80,
                   objectFit: 'cover',
                   borderRadius: 1,
                   flexShrink: 0,
@@ -140,12 +143,16 @@ export default function OrderCard({ order, onClick }: OrderCardProps) {
                   sx={{ fontSize: '0.6rem', height: 18, '& .MuiChip-label': { px: 0.75 } }}
                 />
               </Box>
-              <Typography variant="caption" color="text.primary" sx={{ fontWeight: 500, display: 'block' }}>
+              <Typography
+                variant="caption"
+                color="text.primary"
+                sx={{ fontWeight: 500, display: 'block', wordBreak: 'break-word', overflowWrap: 'anywhere' }}
+              >
                 {order.article}
               </Typography>
-              <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', wordBreak: 'break-word' }}>
                 {order.product_name}
-                {order.size && ` • ${order.size}`}
+                {order.marketplace_type !== 'ozon' && order.size && ` • ${order.size}`}
               </Typography>
               <Box sx={{ display: 'flex', gap: 0.5, mt: 0.5, flexWrap: 'wrap', alignItems: 'center' }}>
               <Typography

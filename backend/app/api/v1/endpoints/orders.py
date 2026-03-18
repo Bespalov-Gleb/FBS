@@ -2116,16 +2116,18 @@ async def get_order_label(
                         "Pragma": "no-cache",
                     },
                 )
-            if label_mode == "as_is_fit":
-                content = _rotate_pdf(content, 90)  # Повернуть в альбом: ширина > высоты, этикетка в углу
-            else:
-                # noscale: поворот только через PIL в _ozon_fbs_to_standard_label (pypdf ненадёжен с PDF Ozon)
-                content = _ozon_fbs_to_standard_label(
-                    content, width_mm=w_mm, height_mm=h_mm, rotate=ozon_rot, dpi=printer_dpi,
-                    scale_factor=scale_factor,
-                )
+            # Всегда размещаем этикетку на листе правильного размера (58×40) — без A4.
+            # Не возвращаем сырой PDF от Ozon (A4) при ошибке — поднимаем исключение.
+            content = _ozon_fbs_to_standard_label(
+                content, width_mm=w_mm, height_mm=h_mm, rotate=ozon_rot, dpi=printer_dpi,
+                scale_factor=scale_factor,
+            )
         except Exception as _re:
             logger.warning("Ozon FBS to standard label failed: %s", _re, exc_info=True)
+            raise HTTPException(
+                500,
+                detail="Не удалось сформировать этикетку 58×40. Проверьте pdf2image/poppler. Ошибка: " + str(_re),
+            ) from _re
         return Response(
             content=content,
             media_type="application/pdf",
@@ -2168,14 +2170,12 @@ async def get_order_label(
                     "Pragma": "no-cache",
                 },
             )
-        if label_mode == "as_is_fit":
-            content = _wb_sticker_to_pdf_as_is(content)
-        else:
-            content = _wb_sticker_to_pdf(
-                content, label_width_mm=w, label_height_mm=h,
-                order_number=order_num, rotate=wb_rotate,
-                scale_factor=scale_factor,
-            )
+        # Всегда размещаем этикетку на листе правильного размера (58×40) — без A4
+        content = _wb_sticker_to_pdf(
+            content, label_width_mm=w, label_height_mm=h,
+            order_number=order_num, rotate=wb_rotate,
+            scale_factor=scale_factor,
+        )
         return Response(
             content=content,
             media_type="application/pdf",
