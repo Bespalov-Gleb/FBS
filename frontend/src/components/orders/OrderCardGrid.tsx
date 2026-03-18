@@ -17,7 +17,7 @@ export default function OrderCardGrid({ orders, completedOrders = [], onOrderCli
       <Box
         sx={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+          gridTemplateColumns: { xs: 'repeat(2, 1fr)', sm: 'repeat(3, 1fr)', md: 'repeat(4, 1fr)' },
           gap: 1.5,
         }}
       >
@@ -47,7 +47,7 @@ export default function OrderCardGrid({ orders, completedOrders = [], onOrderCli
           <Box
             sx={{
               display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+              gridTemplateColumns: { xs: 'repeat(2, 1fr)', sm: 'repeat(3, 1fr)', md: 'repeat(4, 1fr)' },
               gap: 1.5,
             }}
           >
