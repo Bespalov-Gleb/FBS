@@ -257,7 +257,7 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
                         component="img"
                         src={getProductImageUrl(p.image_url)!}
                         alt={p.name}
-                        sx={{ width: 72, height: 72, objectFit: 'cover', borderRadius: 1, flexShrink: 0 }}
+                        sx={{ width: 90, height: 90, objectFit: 'cover', borderRadius: 1, flexShrink: 0 }}
                       />
                     )}
                     <Box sx={{ flex: 1, minWidth: 0 }}>
@@ -285,8 +285,8 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
                   alt={order.product_name}
                   onError={() => setImageError(true)}
                   sx={{
-                    width: 108,
-                    height: 108,
+                    width: 130,
+                    height: 130,
                     objectFit: 'cover',
                     borderRadius: 1,
                     flexShrink: 0,
