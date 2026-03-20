@@ -1431,7 +1431,12 @@ def _wrap_text(text: str, max_chars: int = 28) -> list[str]:
     return lines
 
 
-def _create_barcode_drawing(code: str, bar_width: float = 0.25, hide_text: bool = False):
+def _create_barcode_drawing(
+    code: str,
+    bar_width: float = 0.25,
+    hide_text: bool = False,
+    bar_height: Optional[float] = None,
+):
     """
     Создать Drawing со штрихкодом (reportlab). EAN13 для 13 цифр, иначе Code128.
     hide_text: для EAN13 убрать встроенные цифры (чтобы рисовать свои с нужным отступом).
@@ -1441,6 +1446,8 @@ def _create_barcode_drawing(code: str, bar_width: float = 0.25, hide_text: bool 
     code = str(code).strip()
     if len(code) == 13 and code.isdigit():
         kwargs: dict = {"value": code[:12], "barWidth": bar_width}
+        if bar_height is not None:
+            kwargs["barHeight"] = bar_height
         if hide_text:
             kwargs["humanReadable"] = 0
         try:
@@ -1448,7 +1455,10 @@ def _create_barcode_drawing(code: str, bar_width: float = 0.25, hide_text: bool 
         except TypeError:
             kwargs.pop("humanReadable", None)
             return createBarcodeDrawing("EAN13", **kwargs)
-    return createBarcodeDrawing("Code128", value=code, barWidth=bar_width)
+    kwargs = {"value": code, "barWidth": bar_width}
+    if bar_height is not None:
+        kwargs["barHeight"] = bar_height
+    return createBarcodeDrawing("Code128", **kwargs)
 
 
 def _is_ean13(code: str) -> bool:
@@ -1481,8 +1491,13 @@ def _generate_product_barcode_pdf(
 
     display_code = ozn_code or barcode_value
     is_ean = _is_ean13(barcode_value)
+    is_ozon_code = str(display_code).strip().upper().startswith("OZN")
+    # Для Ozon делаем выше столбцы штрихкода, чтобы визуально стал крупнее.
+    target_bar_height = 27 * mm if is_ozon_code and not is_ean else None
     # EAN13: скрываем встроенные цифры, рисуем свои с отступом
-    bc_product = _create_barcode_drawing(barcode_value, bar_width=0.4, hide_text=is_ean)
+    bc_product = _create_barcode_drawing(
+        barcode_value, bar_width=0.4, hide_text=is_ean, bar_height=target_bar_height,
+    )
     bw1, bh1 = bc_product.width, bc_product.height
 
     label_w = label_width_mm * mm
@@ -1570,7 +1585,11 @@ def _generate_multi_product_barcode_pdf(
             c.showPage()
         display_code = ozn_code or barcode_value
         is_ean = _is_ean13(barcode_value)
-        bc_product = _create_barcode_drawing(barcode_value, bar_width=0.4, hide_text=is_ean)
+        is_ozon_code = str(display_code).strip().upper().startswith("OZN")
+        target_bar_height = 27 * mm if is_ozon_code and not is_ean else None
+        bc_product = _create_barcode_drawing(
+            barcode_value, bar_width=0.4, hide_text=is_ean, bar_height=target_bar_height,
+        )
         bw1, bh1 = bc_product.width, bc_product.height
         scale1 = min((label_w - 2 * margin) / bw1, available_h_for_barcode / bh1)
         draw_w = bw1 * scale1
