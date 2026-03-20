@@ -683,10 +683,10 @@ def _ozon_fbs_to_standard_label(
                 img = img.transpose(Image.Transpose.ROTATE_180)
             iw, ih = img.size
 
-        # Убираем белые поля: bbox по порогу «не белый».
+        # Убираем белые поля: bbox по порогу «не белый» (чтобы контент не разъезжался).
         try:
             pix = img.load()
-            thresh = 245
+            thresh = 250
             min_x, min_y, max_x, max_y = iw, ih, 0, 0
             for y in range(ih):
                 for x in range(iw):
@@ -704,7 +704,7 @@ def _ozon_fbs_to_standard_label(
         # Первая строка с любым тёмным пикселем — верх контента
         try:
             pix = img.load()
-            top_thresh = 250
+            top_thresh = 253
             y_top = 0
             for y in range(ih):
                 for x in range(iw):
@@ -721,13 +721,14 @@ def _ozon_fbs_to_standard_label(
         except Exception:
             pass
 
-        # Максимально заполнить область страницы (cover) и центрировать.
+        # Вписать в область страницы (fit) и прижать к верхнему левому углу,
+        # чтобы принтер не обрезал края на носкейле.
         # Страница уже расширена scale_factor — вместе с ней увеличивается и контент.
-        scale = max(usable_w / iw, usable_h / ih)
+        scale = min(usable_w / iw, usable_h / ih)
         draw_w = iw * scale
         draw_h = ih * scale
-        x_place = (frame_w_pt - draw_w) / 2
-        y_place = (frame_h_pt - draw_h) / 2
+        x_place = margin_left_pt
+        y_place = frame_h_pt - margin_top_pt - draw_h
 
         img_buf = io.BytesIO()
         img.save(img_buf, format="PNG")

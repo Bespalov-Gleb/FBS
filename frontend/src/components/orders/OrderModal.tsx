@@ -72,7 +72,7 @@ interface OrderModalProps {
 
 const KIZ_MAX_LENGTH = 31;
 
-export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate = true, labelFormat: labelFormatProp, labelPrintMode, agentAvailable = false, defaultPrinter, onClose, onComplete }: OrderModalProps) {
+export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate = true, labelFormat: labelFormatProp, agentAvailable = false, defaultPrinter, onClose, onComplete }: OrderModalProps) {
   const kizCount = order?.quantity ?? 1;
   const [kizCodes, setKizCodes] = useState<string[]>(() => Array.from({ length: kizCount }, () => ''));
   const [completing, setCompleting] = useState(false);
@@ -166,10 +166,9 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
   const labelFormat = agentAvailable ? 'pdf' : (order.marketplace_type === 'ozon' ? 'pdf' : 'svg');
   const labelWidth = labelFormatProp === '80mm' ? 80 : 58;
 
-  const labelPrintScale = labelPrintMode === 'as_is_fit' ? 'fit' as const : 'noscale' as const;
-  // Для печати FBS этикеток через агент: поворачиваем содержимое, чтобы оно занимало весь стикер.
-  const labelPrintSettingsAgent =
-    labelPrintScale === 'noscale' ? 'noscale,landscape' : 'fit,landscape';
+  // Вариант 1: агент печатает строго `noscale`, без поворота/переопределения ориентации.
+  // Поворот и увеличение делаем в формировании PDF (backend), чтобы MediaBox/размер страницы не сбивался.
+  const labelPrintSettingsAgent = 'noscale' as const;
   const handlePrint = async () => {
     setError(null);
 

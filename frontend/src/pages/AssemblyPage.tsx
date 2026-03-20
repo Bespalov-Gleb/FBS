@@ -180,20 +180,16 @@ export default function AssemblyPage() {
     }
   };
 
-  const labelPrintScale = printSettings?.label_print_mode === 'as_is_fit' ? 'fit' as const : 'noscale' as const;
-  // Для печати FBS этикеток через агент: поворачиваем содержимое, чтобы оно занимало весь стикер.
-  const labelPrintSettingsAgent = labelPrintScale === 'noscale' ? 'noscale,landscape' : 'fit,landscape';
+  // Вариант 1: агент печатает строго `noscale`, без поворота/переопределения ориентации.
+  // Поворот и увеличение делаем в формировании PDF (backend), чтобы MediaBox/размер страницы не сбивался.
+  const labelPrintSettingsAgent = 'noscale' as const;
   const printBlob = async (
     blob: Blob,
     options?: {
       noFallback?: boolean;
       printScale?:
         | 'fit'
-        | 'noscale'
-        | 'fit,landscape'
-        | 'noscale,landscape'
-        | 'fit,portrait'
-        | 'noscale,portrait';
+        | 'noscale';
     },
   ) => {
     const scale = options?.printScale ?? 'noscale';
