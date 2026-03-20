@@ -72,8 +72,33 @@ exit /b 1
 :sumatra_done
 echo   SumatraPDF скопирован в dist\
 
-REM 4. Сборка установщика (Inno Setup)
-echo [4/4] Сборка установщика...
+REM 4. Копирование Poppler (pdftocairo + DLL) в dist\poppler\bin
+echo [4/5] Поиск Poppler (pdftocairo)...
+if exist "dist\poppler" rmdir /s /q "dist\poppler" 2>nul
+set POPPLER_BIN=
+if exist "poppler\bin\pdftocairo.exe" set POPPLER_BIN=poppler\bin
+if not defined POPPLER_BIN if exist "poppler-25.12.0\Library\bin\pdftocairo.exe" set POPPLER_BIN=poppler-25.12.0\Library\bin
+if not defined POPPLER_BIN if exist "..\fbs-print-agent\poppler\bin\pdftocairo.exe" set POPPLER_BIN=..\fbs-print-agent\poppler\bin
+if not defined POPPLER_BIN if exist "..\fbs-print-agent\poppler-25.12.0\Library\bin\pdftocairo.exe" set POPPLER_BIN=..\fbs-print-agent\poppler-25.12.0\Library\bin
+
+if defined POPPLER_BIN (
+    mkdir "dist\poppler\bin" >nul 2>&1
+    xcopy /E /I /Y "%POPPLER_BIN%\*" "dist\poppler\bin\" >nul
+    if exist "dist\poppler\bin\pdftocairo.exe" (
+        echo   Poppler скопирован в dist\poppler\bin\
+    ) else (
+        echo   ПРЕДУПРЕЖДЕНИЕ: Poppler найден, но pdftocairo.exe не скопировался.
+    )
+) else (
+    echo   ПРЕДУПРЕЖДЕНИЕ: Poppler ^(pdftocairo.exe^) не найден.
+    echo   GDI-ветка печати PDF будет отключена, агент откатится на SumatraPDF.
+    echo   Ожидаемые пути:
+    echo     - fbs-print-agent\poppler\bin\pdftocairo.exe
+    echo     - fbs-print-agent\poppler-25.12.0\Library\bin\pdftocairo.exe
+)
+
+REM 5. Сборка установщика (Inno Setup)
+echo [5/5] Сборка установщика...
 set ISCC=
 if exist "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" set ISCC=C:\Program Files (x86)\Inno Setup 6\ISCC.exe
 if exist "C:\Program Files\Inno Setup 6\ISCC.exe" set ISCC=C:\Program Files\Inno Setup 6\ISCC.exe

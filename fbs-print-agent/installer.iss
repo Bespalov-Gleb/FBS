@@ -36,6 +36,8 @@ Name: "startupicon"; Description: "Запускать при входе в Windo
 Source: "dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "run-agent.vbs"; DestDir: "{app}"; Flags: ignoreversion
 Source: "dist\SumatraPDF.exe"; DestDir: "{app}"; Flags: ignoreversion
+; Poppler (pdftocairo + DLL), чтобы GDI-печать PDF работала без внешних зависимостей
+Source: "dist\poppler\bin\*"; DestDir: "{app}\poppler\bin"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 ; Ярлыки запускают run-agent.vbs через wscript (обход ошибки 193 на некоторых системах)

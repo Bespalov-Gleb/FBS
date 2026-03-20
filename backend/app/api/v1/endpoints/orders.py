@@ -560,23 +560,21 @@ def _ozon_fbs_to_png(
     if iw <= 0 or ih <= 0:
         raise ValueError("Invalid image dimensions")
 
-    # `rotate` у интерфейса: 0 обычно означает "без ручной правки", но нам важно
-    # автоматически привести картинку к альбомному стикеру (58×40), иначе будет "вертикально и пусто".
-    # Поэтому: 90/180/270 — как задано, 0 — авто-выбор по ориентации исходника.
+    # rotate=0: авто-поворот только если целевая этикетка альбомная (58x40)
+    # и исходник портретный, чтобы убрать "вертикальную" печать.
     if rotate in (90, 180, 270):
         deg = rotate
     elif rotate == 0:
-        # UI "0° без поворота" у нас фактически означает "не вручную — приведи под альбомный стикер".
-        deg = 90 if width_mm > height_mm else 0
+        deg = 90 if (width_mm > height_mm and ih > iw) else 0
     else:
         deg = 0
     if deg:
-        # Важно: PIL ROTATE_* — это поворот против/по часовой в системе координат изображения.
-        # Под альбомный стикер 58×40 при deg=90 контент должен стать горизонтальным.
+        # UI: 90/270 — по часовой.
+        # PIL: ROTATE_90 — против ч/с, ROTATE_270 — по ч/с.
         if deg == 90:
-            img = img.transpose(PILImage.Transpose.ROTATE_90)
-        elif deg == 270:
             img = img.transpose(PILImage.Transpose.ROTATE_270)
+        elif deg == 270:
+            img = img.transpose(PILImage.Transpose.ROTATE_90)
         elif deg == 180:
             img = img.transpose(PILImage.Transpose.ROTATE_180)
         iw, ih = img.size
@@ -760,10 +758,13 @@ def _ozon_fbs_to_standard_label(
         if idx == 0:
             _fbs_debug_save_pil(debug_job_key, "02_render", "render_before_crops.png", img)
 
-        # rotate — это поворот в градусах (0/90/180/270) “как есть”.
+        # rotate=0: авто-поворот под альбомную этикетку 58x40,
+        # если исходник портретный.
         deg: Optional[int]
-        if rotate in (0, 90, 180, 270):
+        if rotate in (90, 180, 270):
             deg = int(rotate)
+        elif rotate == 0:
+            deg = 90 if (width_mm > height_mm and ih > iw) else 0
         else:
             deg = 0
         logger.info(

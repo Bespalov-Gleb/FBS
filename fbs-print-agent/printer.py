@@ -139,9 +139,67 @@ def _render_pdf_to_png_via_pdftocairo(pdf_path: str, dpi: int, out_dir: str) -> 
     Рендер PDF в набор PNG файлов через poppler (pdftocairo).
     Возвращает отсортированные пути к PNG.
     """
-    pdftocairo = shutil.which("pdftocairo")
+    def _find_pdftocairo() -> Optional[str]:
+        # 1) если в PATH — берём оттуда
+        p = shutil.which("pdftocairo") or shutil.which("pdftocairo.exe")
+        if p:
+            return p
+
+        # 2) ищем рядом с агентом (портативная версия)
+        try:
+            from config import BASE_DIR
+        except Exception:
+            BASE_DIR = ""
+
+        candidate_names = [
+            "pdftocairo.exe",
+            "pdftocairo",
+        ]
+
+        candidate_paths = []
+        if BASE_DIR:
+            candidate_paths.extend(
+                [
+                    os.path.join(BASE_DIR, "pdftocairo.exe"),
+                    os.path.join(BASE_DIR, "pdftocairo"),
+                    os.path.join(BASE_DIR, "tools", "pdftocairo.exe"),
+                    os.path.join(BASE_DIR, "tools", "pdftocairo"),
+                    os.path.join(BASE_DIR, "poppler", "bin", "pdftocairo.exe"),
+                    os.path.join(BASE_DIR, "poppler", "bin", "pdftocairo"),
+                    os.path.join(BASE_DIR, "SumatraPDF", "pdftocairo.exe"),
+                    os.path.join(BASE_DIR, "SumatraPDF", "pdftocairo"),
+                ]
+            )
+
+            # 3) небольшой обход директории агента (до ~глубины 4)
+            try:
+                base_norm = os.path.normpath(BASE_DIR)
+                for root, _, files in os.walk(BASE_DIR):
+                    try:
+                        rel = os.path.relpath(root, base_norm)
+                    except Exception:
+                        rel = "."
+                    depth = 0 if rel == "." else len(rel.split(os.sep))
+                    if depth > 4:
+                        # дальше не углубляемся
+                        continue
+                    for name in candidate_names:
+                        if name in files:
+                            return os.path.join(root, name)
+            except Exception:
+                pass
+
+        for cp in candidate_paths:
+            if cp and os.path.isfile(cp):
+                return cp
+        return None
+
+    pdftocairo = _find_pdftocairo()
     if not pdftocairo:
-        raise RuntimeError("pdftocairo not found in PATH")
+        raise RuntimeError(
+            "pdftocairo not found (PATH и рядом с агентом). "
+            "Проверь, что pdftocairo.exe присутствует рядом с exe агента или в его подпапках."
+        )
 
     base = os.path.join(out_dir, "page")
     # pdftocairo создаёт page-1.png, page-2.png, ...
@@ -194,12 +252,12 @@ def _print_images_via_gdi(image_paths: list[str], printer_name: Optional[str]) -
         imageable_w = _get_device_caps(hdc, HORZRES)
         imageable_h = _get_device_caps(hdc, VERTRES)
 
-        win32print.StartDoc(hPrinter, ("FBS Print Agent", None))
+        printerDC.StartDoc("FBS Print Agent")
         for img_path in image_paths:
             img = Image.open(img_path).convert("RGB")
             dib = ImageWin.Dib(img)
 
-            win32print.StartPage(hPrinter)
+            printerDC.StartPage()
             # Центрируем страницу внутри imageable area, чтобы не "прилипало" к углу.
             if imageable_w > 0 and imageable_h > 0:
                 left = offset_x + max(0, (imageable_w - img.width) // 2)
@@ -216,9 +274,9 @@ def _print_images_via_gdi(image_paths: list[str], printer_name: Optional[str]) -
                     top + img.height,
                 ),
             )
-            win32print.EndPage(hPrinter)
+            printerDC.EndPage()
 
-        win32print.EndDoc(hPrinter)
+        printerDC.EndDoc()
         return True
     except Exception as e:
         _log_print_error(f"GDI print failed: {e}")
