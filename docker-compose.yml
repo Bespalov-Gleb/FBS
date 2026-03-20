@@ -49,6 +49,9 @@ services:
     environment:
       DEBUG: ${DEBUG:-true}
       ENVIRONMENT: ${ENVIRONMENT:-development}
+      # Для сохранения промежуточных файлов генерации этикеток/штрихкодов.
+      # Значение подхватывается с хоста: FBS_PRINT_DEBUG=1
+      FBS_PRINT_DEBUG: ${FBS_PRINT_DEBUG:-0}
       POSTGRES_SERVER: postgres
       POSTGRES_USER: ${POSTGRES_USER:-fbs_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fbs_password}
@@ -83,6 +86,7 @@ services:
     environment:
       DEBUG: ${DEBUG:-true}
       ENVIRONMENT: ${ENVIRONMENT:-development}
+      FBS_PRINT_DEBUG: ${FBS_PRINT_DEBUG:-0}
       POSTGRES_SERVER: postgres
       POSTGRES_USER: ${POSTGRES_USER:-fbs_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fbs_password}

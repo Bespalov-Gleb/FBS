@@ -10,6 +10,8 @@ services:
     environment:
       DEBUG: "false"
       ENVIRONMENT: production
+      # Прокинуть в контейнер для сохранения промежуточных файлов.
+      FBS_PRINT_DEBUG: ${FBS_PRINT_DEBUG:-0}
     volumes:
       - backend_logs:/app/logs
 
