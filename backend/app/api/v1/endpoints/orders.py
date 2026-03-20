@@ -738,10 +738,10 @@ def _ozon_fbs_to_standard_label(
     sf = max(1.0, float(scale_factor))
     frame_w_pt = page_width_mm * mm * sf
     frame_h_pt = page_height_mm * mm * sf
-    # Без фиксированных полей — чтобы контент занимал весь лист.
-    margin_left_pt = 0.0 * mm
+    # Маленький технологический отступ слева, чтобы печать не прилипала к кромке.
+    margin_left_pt = 1.0 * mm
     margin_top_pt = 0.0 * mm
-    usable_w = frame_w_pt
+    usable_w = max(1.0, frame_w_pt - margin_left_pt)
     usable_h = frame_h_pt
 
     buf = io.BytesIO()
@@ -1497,8 +1497,9 @@ def _generate_product_barcode_pdf(
     # Рисуем так, чтобы блок (штрихкод + цифры) занимал почти всю высоту этикетки и был центрирован.
     # top_offset_mm используем как "смещение вверх" (для Ozon), чтобы не обрезать верхние элементы.
     digits_font_size = 12
-    digits_gap = 8 * mm
-    digits_reserved = digits_gap + 2 * mm
+    # Делаем штрихкод крупнее: уменьшаем резерв снизу под подпись.
+    digits_gap = 5 * mm
+    digits_reserved = digits_gap + 1 * mm
 
     available_h_for_barcode = label_h - 2 * margin - digits_reserved
     if available_h_for_barcode <= 0:
@@ -1556,8 +1557,9 @@ def _generate_multi_product_barcode_pdf(
     top_offset = top_offset_mm * mm
     x0 = margin
     digits_font_size = 12
-    digits_gap = 8 * mm
-    digits_reserved = digits_gap + 2 * mm
+    # Делаем штрихкод крупнее: уменьшаем резерв снизу под подпись.
+    digits_gap = 5 * mm
+    digits_reserved = digits_gap + 1 * mm
 
     available_h_for_barcode = label_h - 2 * margin - digits_reserved
     if available_h_for_barcode <= 0:
@@ -1940,10 +1942,10 @@ def _wb_sticker_to_pdf(
     sf = max(1.0, float(scale_factor))
     frame_w_pt = page_width_mm * mm * sf
     frame_h_pt = page_height_mm * mm * sf
-    # Без фиксированных полей — чтобы контент занимал весь лист.
-    margin_left_pt = 0.0 * mm
+    # Маленький технологический отступ слева, чтобы печать не прилипала к кромке.
+    margin_left_pt = 1.0 * mm
     margin_top_pt = 0.0 * mm
-    usable_w = frame_w_pt
+    usable_w = max(1.0, frame_w_pt - margin_left_pt)
     usable_h = frame_h_pt
 
     scale = min(usable_w / iw, usable_h / ih)
