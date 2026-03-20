@@ -1517,12 +1517,14 @@ def _generate_product_barcode_pdf(
         available_h_for_barcode = label_h - 2 * margin
 
     scale_fit_reserved = min((label_w - 2 * margin) / bw1, available_h_for_barcode / bh1)
-    # Пропорциональное увеличение Ozon-штрихкода от исходного размера:
-    # единый коэффициент на X и Y, без отдельного "растягивания" по осям.
-    ozon_scale_boost = 1.18 if is_ozon_code and not is_ean else 1.0
-    # Ограничиваем только геометрией всей этикетки (без обрезания по краям листа).
-    scale_limit_page = min((label_w - 2 * margin) / bw1, (label_h - 2 * margin) / bh1)
-    scale1 = min(scale_fit_reserved * ozon_scale_boost, scale_limit_page)
+    # WORKING: пропорционально увеличиваем Ozon относительно базового fit.
+    # Без прежнего "верхнего зажима", который обнулял эффект.
+    ozon_scale_boost = 1.22 if is_ozon_code and not is_ean else 1.0
+    scale1 = scale_fit_reserved * ozon_scale_boost
+    # Защита от выхода за лист (58x40), но не от "резерва подписи" — чтобы рост реально был виден.
+    scale_page_limit = min((label_w - 2 * margin) / bw1, (label_h - 2 * margin) / bh1)
+    if scale1 > scale_page_limit:
+        scale1 = scale_page_limit
     draw_w = bw1 * scale1
     draw_h = bh1 * scale1
 
@@ -1535,7 +1537,8 @@ def _generate_product_barcode_pdf(
     renderPDF.draw(bc_product, c, 0, 0)
     c.restoreState()
 
-    ty = max(margin, barcode_bottom - digits_gap)
+    # Небольшой минус к gap, чтобы подпись не "отталкивала" увеличенный штрихкод.
+    ty = max(margin, barcode_bottom - max(2 * mm, digits_gap - 1 * mm))
     c.setFont("Helvetica-Bold", digits_font_size)
     c.drawCentredString(label_w / 2, ty, str(display_code)[:20])
 
@@ -1591,9 +1594,11 @@ def _generate_multi_product_barcode_pdf(
         bc_product = _create_barcode_drawing(barcode_value, bar_width=0.4, hide_text=is_ean)
         bw1, bh1 = bc_product.width, bc_product.height
         scale_fit_reserved = min((label_w - 2 * margin) / bw1, available_h_for_barcode / bh1)
-        ozon_scale_boost = 1.18 if is_ozon_code and not is_ean else 1.0
-        scale_limit_page = min((label_w - 2 * margin) / bw1, (label_h - 2 * margin) / bh1)
-        scale1 = min(scale_fit_reserved * ozon_scale_boost, scale_limit_page)
+        ozon_scale_boost = 1.22 if is_ozon_code and not is_ean else 1.0
+        scale1 = scale_fit_reserved * ozon_scale_boost
+        scale_page_limit = min((label_w - 2 * margin) / bw1, (label_h - 2 * margin) / bh1)
+        if scale1 > scale_page_limit:
+            scale1 = scale_page_limit
         draw_w = bw1 * scale1
         draw_h = bh1 * scale1
 
@@ -1605,7 +1610,7 @@ def _generate_multi_product_barcode_pdf(
         renderPDF.draw(bc_product, c, 0, 0)
         c.restoreState()
 
-        ty = max(margin, barcode_bottom - digits_gap)
+        ty = max(margin, barcode_bottom - max(2 * mm, digits_gap - 1 * mm))
         c.setFont("Helvetica-Bold", digits_font_size)
         c.drawCentredString(label_w / 2, ty, str(display_code)[:20])
 
