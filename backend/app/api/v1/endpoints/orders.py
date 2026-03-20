@@ -514,14 +514,17 @@ def _ozon_fbs_to_png(
     # Целевой размер в пикселях: 100% от 58×40 мм при 96 DPI (превью)
     MM_TO_INCH = 1 / 25.4
     DPI = 96
-    target_w_pt = (width_mm * MM_TO_INCH * DPI)
-    target_h_pt = (height_mm * MM_TO_INCH * DPI)
-    scale = min(target_w_pt / iw, target_h_pt / ih, 1.0)
+    target_w = int(width_mm * MM_TO_INCH * DPI)
+    target_h = int(height_mm * MM_TO_INCH * DPI)
+    # cover: не оставляем "половину стикера пустой", и поворот не делает контент мелким
+    scale = max(target_w / iw, target_h / ih)
     new_w = int(iw * scale)
     new_h = int(ih * scale)
     img = img.resize((new_w, new_h), PILImage.Resampling.LANCZOS)
-    out = PILImage.new("RGB", (new_w, new_h), (255, 255, 255))
-    out.paste(img, (0, 0))
+    out = PILImage.new("RGB", (target_w, target_h), (255, 255, 255))
+    x_off = (target_w - new_w) // 2
+    y_off = (target_h - new_h) // 2
+    out.paste(img, (x_off, y_off))
     buf = io.BytesIO()
     out.save(buf, format="PNG")
     buf.seek(0)
@@ -730,14 +733,14 @@ def _ozon_fbs_to_standard_label(
         except Exception:
             pass
 
-        # Вписать в область страницы (fit) и прижать к верхнему левому углу,
-        # чтобы принтер не обрезал края на носкейле.
-        # Страница уже расширена scale_factor — вместе с ней увеличивается и контент.
-        scale = min(usable_w / iw, usable_h / ih)
+        # Заполнить область страницы (cover): поворот не должен приводить к "мелкости",
+        # поэтому используем max вместо min.
+        scale = max(usable_w / iw, usable_h / ih)
         draw_w = iw * scale
         draw_h = ih * scale
-        x_place = margin_left_pt
-        y_place = frame_h_pt - margin_top_pt - draw_h
+        # Центрирование обеспечивает стабильную позицию контента при разных поворотах.
+        x_place = (frame_w_pt - draw_w) / 2
+        y_place = (frame_h_pt - draw_h) / 2
 
         img_buf = io.BytesIO()
         img.save(img_buf, format="PNG")
