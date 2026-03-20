@@ -2,6 +2,7 @@
 API endpoints для заказов и синхронизации
 """
 from typing import List, Optional
+import os
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -458,6 +459,76 @@ def kiz_export(
 MM_TO_PT = 2.834645669  # 1 мм = 2.834645669 pt (PDF points)
 
 
+def _fbs_debug_enabled() -> bool:
+    """Включить сохранение промежуточных файлов: FBS_PRINT_DEBUG=1."""
+    return os.environ.get("FBS_PRINT_DEBUG", "").strip() not in ("", "0", "false", "False")
+
+
+def _fbs_debug_root() -> str:
+    """Корневая папка для отладки в %APPDATA%."""
+    return os.path.join(os.environ.get("APPDATA", ""), "fbs-print-debug")
+
+
+def _fbs_debug_dir(job_key: str) -> str:
+    """
+    Папка для конкретного типа печати:
+    - ozon_fbs
+    - wb_fbs
+    - ozon_barcode
+    - wb_barcode
+    """
+    path = os.path.join(_fbs_debug_root(), job_key)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _fbs_debug_write_bytes(job_key: str, stage: str, filename: str, data: bytes) -> None:
+    if not _fbs_debug_enabled():
+        return
+    try:
+        d = _fbs_debug_dir(job_key)
+        path = os.path.join(d, f"{stage}_{filename}")
+        with open(path, "wb") as f:
+            f.write(data)
+    except Exception:
+        # не ломаем печать из-за отладки
+        pass
+
+
+def _fbs_debug_write_text(job_key: str, stage: str, filename: str, text: str) -> None:
+    if not _fbs_debug_enabled():
+        return
+    try:
+        d = _fbs_debug_dir(job_key)
+        path = os.path.join(d, f"{stage}_{filename}")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+    except Exception:
+        pass
+
+
+def _fbs_debug_write_json(job_key: str, stage: str, filename: str, obj: object) -> None:
+    import json
+    if not _fbs_debug_enabled():
+        return
+    try:
+        _fbs_debug_write_text(job_key, stage, filename, json.dumps(obj, ensure_ascii=False, indent=2))
+    except Exception:
+        pass
+
+
+def _fbs_debug_save_pil(job_key: str, stage: str, filename: str, img) -> None:
+    """img — PIL.Image.Image"""
+    if not _fbs_debug_enabled():
+        return
+    try:
+        d = _fbs_debug_dir(job_key)
+        path = os.path.join(d, f"{stage}_{filename}")
+        img.save(path, format="PNG")
+    except Exception:
+        pass
+
+
 def _ozon_fbs_to_png(
     pdf_bytes: bytes,
     width_mm: int = 58,
@@ -516,14 +587,14 @@ def _ozon_fbs_to_png(
     DPI = 96
     target_w = int(width_mm * MM_TO_INCH * DPI)
     target_h = int(height_mm * MM_TO_INCH * DPI)
-    # cover: не оставляем "половину стикера пустой", и поворот не делает контент мелким
-    scale = max(target_w / iw, target_h / ih)
+    # fit: не выходим за границы этикетки и не делаем контент "порезанным"
+    scale = min(target_w / iw, target_h / ih)
     new_w = int(iw * scale)
     new_h = int(ih * scale)
     img = img.resize((new_w, new_h), PILImage.Resampling.LANCZOS)
     out = PILImage.new("RGB", (target_w, target_h), (255, 255, 255))
-    x_off = (target_w - new_w) // 2
-    y_off = (target_h - new_h) // 2
+    x_off = 0
+    y_off = 0
     out.paste(img, (x_off, y_off))
     buf = io.BytesIO()
     out.save(buf, format="PNG")
@@ -624,6 +695,9 @@ def _ozon_fbs_to_standard_label(
     from reportlab.lib.utils import ImageReader
     from reportlab.pdfgen import canvas
 
+    debug_job_key = "ozon_fbs"
+    _fbs_debug_write_bytes(debug_job_key, "00_input", "input.pdf", pdf_bytes)
+
     # Сначала пробуем обрезать страницу на уровне PDF (CropBox), чтобы рендер сразу без полей
     pdf_to_render = pdf_bytes
     use_cropbox = False
@@ -631,6 +705,8 @@ def _ozon_fbs_to_standard_label(
     if cropped:
         pdf_to_render = cropped
         use_cropbox = True
+
+    _fbs_debug_write_bytes(debug_job_key, "01_pdf_to_render", "pdf_to_render.pdf", pdf_to_render)
 
     dpi_val = max(150, min(dpi, 300))
     try:
@@ -672,6 +748,9 @@ def _ozon_fbs_to_standard_label(
         if iw <= 0 or ih <= 0:
             continue
 
+        if idx == 0:
+            _fbs_debug_save_pil(debug_job_key, "02_render", "render_before_crops.png", img)
+
         # rotate — это поворот в градусах (0/90/180/270) “как есть”.
         deg: Optional[int]
         if rotate in (0, 90, 180, 270):
@@ -702,6 +781,9 @@ def _ozon_fbs_to_standard_label(
         except Exception:
             pass
 
+        if idx == 0:
+            _fbs_debug_save_pil(debug_job_key, "03_after_white_bbox_crop", "after_white_bbox.png", img)
+
         # Первая строка с любым тёмным пикселем — верх контента
         try:
             pix = img.load()
@@ -722,10 +804,14 @@ def _ozon_fbs_to_standard_label(
         except Exception:
             pass
 
+        if idx == 0:
+            _fbs_debug_save_pil(debug_job_key, "04_after_top_strip_crop", "after_top_strip.png", img)
+
         # Зафиксировать scale до поворота:
         # после поворота iw/ih меняются местами, но scale должен оставаться тем же,
         # иначе поворот визуально “меняет размер”.
-        scale = max(usable_w / iw, usable_h / ih)
+        # fit: чтобы контент не выходил за границы 58×40 и не "порезался"
+        scale = min(usable_w / iw, usable_h / ih)
 
         # Теперь применяем поворот (как есть).
         if deg:
@@ -739,11 +825,23 @@ def _ozon_fbs_to_standard_label(
                 img = img.transpose(Image.Transpose.ROTATE_180)
             iw, ih = img.size
 
+        if idx == 0:
+            _fbs_debug_save_pil(debug_job_key, "05_after_rotation", "after_rotation.png", img)
+
         draw_w = iw * scale
         draw_h = ih * scale
-        # Центрирование обеспечивает стабильную позицию контента при разных поворотах.
-        x_place = (frame_w_pt - draw_w) / 2
-        y_place = (frame_h_pt - draw_h) / 2
+        # Прижать к верхнему левому углу (ожидание "на весь стикер").
+        x_place = margin_left_pt
+        y_place = frame_h_pt - margin_top_pt - draw_h
+
+        if idx == 0:
+            try:
+                scaled_w = max(1, int(iw * scale))
+                scaled_h = max(1, int(ih * scale))
+                img_scaled = img.resize((scaled_w, scaled_h), Image.Resampling.LANCZOS)
+                _fbs_debug_save_pil(debug_job_key, "06_scaled_for_draw", "scaled.png", img_scaled)
+            except Exception:
+                pass
 
         img_buf = io.BytesIO()
         img.save(img_buf, format="PNG")
@@ -757,7 +855,22 @@ def _ozon_fbs_to_standard_label(
 
     c.save()
     buf.seek(0)
-    return buf.getvalue()
+    content = buf.getvalue()
+    _fbs_debug_write_bytes(debug_job_key, "07_output", "output.pdf", content)
+    _fbs_debug_write_json(
+        debug_job_key,
+        "98_meta",
+        "meta.json",
+        {
+            "width_mm": width_mm,
+            "height_mm": height_mm,
+            "rotate": rotate,
+            "dpi": dpi,
+            "scale_factor": scale_factor,
+            "debug": "ozon_fbs_to_standard_label",
+        },
+    )
+    return content
 
 
 def _rotate_pdf(pdf_bytes: bytes, degrees: int) -> bytes:
@@ -928,7 +1041,21 @@ def _rotate_pdf_via_image(
         )
     c.save()
     buf.seek(0)
-    return buf.getvalue()
+    content = buf.getvalue()
+    _fbs_debug_write_bytes(debug_job_key, "07_output", "output.pdf", content)
+    _fbs_debug_write_json(
+        debug_job_key,
+        "98_meta",
+        "meta.json",
+        {
+            "label_width_mm": label_width_mm,
+            "label_height_mm": label_height_mm,
+            "rotate": rotate,
+            "scale_factor": scale_factor,
+            "debug": "wb_sticker_to_pdf",
+        },
+    )
+    return content
 
 
 def _generate_kiz_label_pdf(kiz_full: str, kiz_31: str, width_mm: int = 40, height_mm: int = 35) -> bytes:
@@ -1568,6 +1695,9 @@ def _wb_sticker_to_pdf(
     from reportlab.lib.utils import ImageReader
     from reportlab.pdfgen import canvas
 
+    debug_job_key = "wb_fbs"
+    _fbs_debug_write_bytes(debug_job_key, "00_input", "input.png", image_bytes)
+
     img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     iw, ih = img.size
     if iw <= 0 or ih <= 0:
@@ -1606,6 +1736,8 @@ def _wb_sticker_to_pdf(
             iw, ih = img.size
     except Exception:
         pass
+
+    _fbs_debug_save_pil(debug_job_key, "01_after_white_bbox_crop", "after_white_bbox.png", img)
     try:
         pix = img.load()
         top_thresh = 253
@@ -1624,6 +1756,8 @@ def _wb_sticker_to_pdf(
             iw, ih = img.size
     except Exception:
         pass
+
+    _fbs_debug_save_pil(debug_job_key, "02_after_top_strip_crop", "after_top_strip.png", img)
 
     # Ищем белый пояс: верх = этикетка (её повернём), низ = строчка (без поворота, прижмём к верху страницы)
     # Берём самый широкий пояс в нижней половине картинки (между этикеткой и строчкой), а не первый попавшийся
@@ -1715,6 +1849,7 @@ def _wb_sticker_to_pdf(
             iw, ih = img.size
             line_at_top = True
             logger.info("WB label: строчка прижата к верху (горизонтальный белый пояс)")
+            _fbs_debug_save_pil(debug_job_key, "03_after_line_split_merge", "after_line_split_merge.png", img)
         else:
             logger.info("WB label: горизонтальный пояс не сработал — bands=%s best_start=%s ih=%s iw=%s", len(bands), best_start, ih, iw)
     except Exception as e:
@@ -1779,6 +1914,8 @@ def _wb_sticker_to_pdf(
         except Exception as e:
             logger.warning("WB label: ошибка при сжатии белого пояса: %s", e, exc_info=True)
 
+    _fbs_debug_save_pil(debug_job_key, "04_after_final_trims", "after_final_trims.png", img)
+
     # Не давать надписи уходить низко: при сильной вытянутости по высоте режем снизу
     if ih > iw * 1.35:
         max_h = max(int(iw * 1.25), int(ih * 0.82))
@@ -1806,6 +1943,18 @@ def _wb_sticker_to_pdf(
     x_place = margin_left_pt
     y_place = frame_h_pt - margin_top_pt - draw_h
 
+    # debug: что реально идёт на отрисовку (в виде PIL-рисунка, приблизительно в px)
+    try:
+        scaled_w = max(1, int(iw * scale))
+        scaled_h = max(1, int(ih * scale))
+        img_scaled = img.resize((scaled_w, scaled_h), Image.Resampling.LANCZOS)
+        _fbs_debug_save_pil(debug_job_key, "05_scaled_for_draw", "scaled.png", img_scaled)
+    except Exception:
+        pass
+
+    # Источник изображения, который ReportLab масштабирует при drawImage(...)
+    _fbs_debug_save_pil(debug_job_key, "06_pdf_draw_source", "source.png", img)
+
     img_buf = io.BytesIO()
     img.save(img_buf, format="PNG")
     img_buf.seek(0)
@@ -1818,7 +1967,21 @@ def _wb_sticker_to_pdf(
     )
     c.save()
     buf.seek(0)
-    return buf.getvalue()
+    content = buf.getvalue()
+    _fbs_debug_write_bytes(debug_job_key, "07_output", "output.pdf", content)
+    _fbs_debug_write_json(
+        debug_job_key,
+        "98_meta",
+        "meta.json",
+        {
+            "label_width_mm": label_width_mm,
+            "label_height_mm": label_height_mm,
+            "rotate": rotate,
+            "scale_factor": scale_factor,
+            "debug": "wb_sticker_to_pdf",
+        },
+    )
+    return content
 
 
 def _add_product_name_to_barcode(image_bytes: bytes, product_name: str) -> bytes:
@@ -2037,6 +2200,21 @@ async def get_order_barcodes_pdf(
     # Ozon: отступ сверху 5 мм — не обрезало принтером. WB: без отступа — обычное центрирование
     top_offset = _BARCODE_TOP_OFFSET_MM if mp.type == MarketplaceType.OZON else 0
     pdf_bytes = _generate_multi_product_barcode_pdf(items, label_width_mm=label_width, top_offset_mm=top_offset)
+
+    debug_job_key = "ozon_barcode" if mp.type == MarketplaceType.OZON else "wb_barcode"
+    _fbs_debug_write_json(
+        debug_job_key,
+        "00_params",
+        "params.json",
+        {
+            "order_id": order_id,
+            "label_width_mm": label_width,
+            "top_offset_mm": top_offset,
+            "items_count": len(items),
+            "barcode_rotate_setting": None if mp.type != MarketplaceType.OZON else ps_barcode.barcode_rotate,
+        },
+    )
+    _fbs_debug_write_bytes(debug_job_key, "01_unrotated", "barcode.pdf", pdf_bytes)
     # Ozon OZN-штрихкоды: поворот из настроек (90 по умолчанию). WB EAN13 — без поворота
     barcode_rotate = 90 if mp.type == MarketplaceType.OZON else 0
     if mp.type == MarketplaceType.OZON and ps_barcode and ps_barcode.barcode_rotate is not None:
@@ -2054,6 +2232,17 @@ async def get_order_barcodes_pdf(
                 pdf_bytes = _rotate_pdf(pdf_bytes, barcode_rotate)
             except Exception as e2:
                 logger.warning("Barcode rotate pypdf also failed: %s", e2)
+
+    _fbs_debug_write_bytes(debug_job_key, "02_after_rotate", "barcode.pdf", pdf_bytes)
+    _fbs_debug_write_json(
+        debug_job_key,
+        "98_meta",
+        "meta.json",
+        {
+            "barcode_rotate": barcode_rotate,
+            "debug": "get_order_barcodes_pdf",
+        },
+    )
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
