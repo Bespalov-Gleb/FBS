@@ -1492,13 +1492,8 @@ def _generate_product_barcode_pdf(
     display_code = ozn_code or barcode_value
     is_ean = _is_ean13(barcode_value)
     is_ozon_code = str(display_code).strip().upper().startswith("OZN")
-    # Для Ozon делаем выше столбцы штрихкода, чтобы визуально стал крупнее.
-    target_bar_height = 27 * mm if is_ozon_code and not is_ean else None
-    target_bar_width = 0.52 if is_ozon_code and not is_ean else 0.4
     # EAN13: скрываем встроенные цифры, рисуем свои с отступом
-    bc_product = _create_barcode_drawing(
-        barcode_value, bar_width=target_bar_width, hide_text=is_ean, bar_height=target_bar_height,
-    )
+    bc_product = _create_barcode_drawing(barcode_value, bar_width=0.4, hide_text=is_ean)
     bw1, bh1 = bc_product.width, bc_product.height
 
     label_w = label_width_mm * mm
@@ -1521,7 +1516,13 @@ def _generate_product_barcode_pdf(
     if available_h_for_barcode <= 0:
         available_h_for_barcode = label_h - 2 * margin
 
-    scale1 = min((label_w - 2 * margin) / bw1, available_h_for_barcode / bh1)
+    scale_fit_reserved = min((label_w - 2 * margin) / bw1, available_h_for_barcode / bh1)
+    # Пропорциональное увеличение Ozon-штрихкода от исходного размера:
+    # единый коэффициент на X и Y, без отдельного "растягивания" по осям.
+    ozon_scale_boost = 1.18 if is_ozon_code and not is_ean else 1.0
+    # Ограничиваем только геометрией всей этикетки (без обрезания по краям листа).
+    scale_limit_page = min((label_w - 2 * margin) / bw1, (label_h - 2 * margin) / bh1)
+    scale1 = min(scale_fit_reserved * ozon_scale_boost, scale_limit_page)
     draw_w = bw1 * scale1
     draw_h = bh1 * scale1
 
@@ -1587,13 +1588,12 @@ def _generate_multi_product_barcode_pdf(
         display_code = ozn_code or barcode_value
         is_ean = _is_ean13(barcode_value)
         is_ozon_code = str(display_code).strip().upper().startswith("OZN")
-        target_bar_height = 27 * mm if is_ozon_code and not is_ean else None
-        target_bar_width = 0.52 if is_ozon_code and not is_ean else 0.4
-        bc_product = _create_barcode_drawing(
-            barcode_value, bar_width=target_bar_width, hide_text=is_ean, bar_height=target_bar_height,
-        )
+        bc_product = _create_barcode_drawing(barcode_value, bar_width=0.4, hide_text=is_ean)
         bw1, bh1 = bc_product.width, bc_product.height
-        scale1 = min((label_w - 2 * margin) / bw1, available_h_for_barcode / bh1)
+        scale_fit_reserved = min((label_w - 2 * margin) / bw1, available_h_for_barcode / bh1)
+        ozon_scale_boost = 1.18 if is_ozon_code and not is_ean else 1.0
+        scale_limit_page = min((label_w - 2 * margin) / bw1, (label_h - 2 * margin) / bh1)
+        scale1 = min(scale_fit_reserved * ozon_scale_boost, scale_limit_page)
         draw_w = bw1 * scale1
         draw_h = bh1 * scale1
 
