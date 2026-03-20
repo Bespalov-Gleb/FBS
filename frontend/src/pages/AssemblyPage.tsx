@@ -229,7 +229,11 @@ export default function AssemblyPage() {
           } else {
             // Оба окна открываем синхронно в рамках жеста пользователя (иначе блокирует popup)
             if (barcodesBlob) openBlobInNewWindow(barcodesBlob);
-            openBlobInNewWindow(labelBlob);
+            if (labelBlob) {
+              openBlobInNewWindow(labelBlob, { forceAnchor: true });
+            } else {
+              setSnackbar({ message: 'ФБС этикетка не сформировалась (labelBlob пустой)' });
+            }
           }
         } catch {
           // игнорируем ошибки печати

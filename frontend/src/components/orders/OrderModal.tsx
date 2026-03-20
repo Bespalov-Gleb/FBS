@@ -186,7 +186,11 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
       } else {
         // Оба окна открываем синхронно в рамках жеста пользователя (иначе блокирует popup)
         if (barcodesBlob) openBlobInNewWindow(barcodesBlob);
-        openBlobInNewWindow(blob);
+        if (blob) {
+          openBlobInNewWindow(blob, { forceAnchor: true });
+        } else {
+          setError('ФБС этикетка не сформировалась (blob пустой)');
+        }
       }
     } catch (err: unknown) {
       const msg = await extractErrorMessage(err);

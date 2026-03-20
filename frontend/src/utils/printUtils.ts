@@ -4,9 +4,22 @@
  */
 export function openBlobInNewWindow(
   blob: Blob,
-  options?: { triggerPrint?: boolean }
+  options?: { triggerPrint?: boolean; forceAnchor?: boolean }
 ): void {
   const url = URL.createObjectURL(blob);
+  if (options?.forceAnchor) {
+    // Для второго окна иногда надёжнее открывать через anchor, чтобы не упиралось в popup-blocker.
+    const a = document.createElement('a');
+    a.href = url;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+    return;
+  }
+
   const win = window.open(url, '_blank', 'noopener,noreferrer');
   if (win) {
     win.focus();
