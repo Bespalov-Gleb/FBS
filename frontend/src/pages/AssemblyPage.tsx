@@ -25,7 +25,7 @@ import { marketplacesApi } from '../api/marketplaces';
 import { warehousesApi } from '../api/warehouses';
 import { printSettingsApi } from '../api/printSettings';
 import { isPrintAgentAvailable, printViaAgent } from '../api/printAgent';
-import { loadBlobIntoWindow, openBlankWindow, openBlobInNewWindow } from '../utils/printUtils';
+import { openBlobInNewWindow, openBlobInSameTab } from '../utils/printUtils';
 import type { Order } from '../types/api';
 import type { RootState } from '../store';
 
@@ -200,12 +200,7 @@ export default function AssemblyPage() {
       return;
     }
 
-    // Чтобы popup-loader браузера не блокировал второе окно,
-    // открываем 2 пустых окна синхронно до любых await.
     const shouldAutoPrint = printSettings?.auto_print_on_click !== false;
-    const needPopups = shouldAutoPrint && !agentAvailable;
-    const barcodesWin = needPopups ? openBlankWindow() : null;
-    const labelWin = needPopups ? openBlankWindow() : null;
 
     try {
       await ordersApi.claim(order.id);
@@ -234,17 +229,9 @@ export default function AssemblyPage() {
             if (barcodesBlob) await printBlob(barcodesBlob, { printScale: 'noscale' });
             await printBlob(labelBlob, { noFallback: !!barcodesBlob, printScale: labelPrintScale });
           } else {
-            // Оба окна открываем синхронно в рамках жеста пользователя (иначе блокирует popup)
-            if (barcodesBlob) {
-              // Если окно удалось создать — подставляем blob в него.
-              // Иначе — пробуем стандартное открытие.
-              loadBlobIntoWindow(barcodesWin, barcodesBlob);
-              if (!barcodesWin) openBlobInNewWindow(barcodesBlob);
-            }
-            if (labelBlob) {
-              loadBlobIntoWindow(labelWin, labelBlob);
-              if (!labelWin) openBlobInNewWindow(labelBlob);
-            } else {
+            if (barcodesBlob) openBlobInNewWindow(barcodesBlob);
+            if (labelBlob) openBlobInSameTab(labelBlob);
+            else {
               setSnackbar({ message: 'ФБС этикетка не сформировалась (labelBlob пустой)' });
             }
           }
