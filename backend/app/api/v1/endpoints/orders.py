@@ -480,9 +480,16 @@ def _ozon_fbs_to_png(
     if iw <= 0 or ih <= 0:
         raise ValueError("Invalid image dimensions")
 
-    # Поворот по настройке: всегда применяем при deg != 0 (как в _ozon_fbs_to_standard_label),
-    # иначе превью не совпадает с PDF при рендере pdf2image в альбоме (iw > ih).
-    deg = rotate if (rotate and rotate % 90 == 0) else (90 if rotate else 0)
+    # `rotate` у интерфейса: 0 обычно означает "без ручной правки", но нам важно
+    # автоматически привести картинку к альбомному стикеру (58×40), иначе будет "вертикально и пусто".
+    # Поэтому: 90/180/270 — как задано, 0 — авто-выбор по ориентации исходника.
+    if rotate in (90, 180, 270):
+        deg = rotate
+    elif rotate == 0:
+        # UI "0° без поворота" у нас фактически означает "не вручную — приведи под альбомный стикер".
+        deg = 90 if width_mm > height_mm else 0
+    else:
+        deg = 0
     if deg:
         # Как в _ozon_fbs_to_standard_label: 90° = по часовой (текст горизонтальный на альбоме)
         if deg == 90:
@@ -661,12 +668,13 @@ def _ozon_fbs_to_standard_label(
         if iw <= 0 or ih <= 0:
             continue
 
-        # Поворот растра по настройке (0 / 90 / 180 / 270; при портрете и альбомном стикере — 90 по умолчанию)
+        # Поворот растра по настройке.
+        # Важно: `rotate=0` не "не поворачивать", а приводить исходник к альбомному стикеру (58×40).
         deg: Optional[int]
-        if rotate in (0, 90, 180, 270):
+        if rotate in (90, 180, 270):
             deg = rotate
-        elif width_mm > height_mm and ih > iw:
-            deg = 90
+        elif rotate == 0:
+            deg = 90 if width_mm > height_mm else 0
         else:
             deg = 0
         logger.info(

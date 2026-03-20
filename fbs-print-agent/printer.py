@@ -2,10 +2,12 @@
 Логика печати: PDF и PNG через SumatraPDF (PDF напрямую, PNG через конвертацию в PDF)
 """
 import os
+import glob
 import subprocess
 import tempfile
 from typing import Optional
 from pathlib import Path
+import shutil
 
 import img2pdf
 
@@ -85,6 +87,142 @@ def _print_pdf_with_printer(
         return False
 
 
+def _get_printer_dc_info(printer_name: Optional[str]) -> tuple[int, int, int, int]:
+    """
+    Получить (dpi_x, dpi_y, offset_x, offset_y) для выбранного принтера.
+    offset_* берём из PHYSICALOFFSET* чтобы изображения не уезжали из-за полей драйвера.
+    """
+    import win32print
+    import win32ui
+    import win32gui
+
+    # LOGPIXELSX/LOGPIXELSY/PHYSICALOFFSETX/PHYSICALOFFSETY numeric values from WinGDI:
+    LOGPIXELSX = 88
+    LOGPIXELSY = 90
+    PHYSICALOFFSETX = 112
+    PHYSICALOFFSETY = 113
+
+    hPrinter = win32print.OpenPrinter(printer_name) if printer_name else win32print.OpenPrinter(win32print.GetDefaultPrinter())
+    try:
+        printerDC = win32ui.CreateDC()
+        printerDC.CreatePrinterDC(printer_name or win32print.GetDefaultPrinter())
+        hdc = printerDC.GetSafeHdc()
+        dpi_x = int(win32gui.GetDeviceCaps(hdc, LOGPIXELSX) or 0)
+        dpi_y = int(win32gui.GetDeviceCaps(hdc, LOGPIXELSY) or 0)
+        offset_x = int(win32gui.GetDeviceCaps(hdc, PHYSICALOFFSETX) or 0)
+        offset_y = int(win32gui.GetDeviceCaps(hdc, PHYSICALOFFSETY) or 0)
+        try:
+            printerDC.DeleteDC()
+        except Exception:
+            pass
+        return dpi_x, dpi_y, offset_x, offset_y
+    finally:
+        try:
+            win32print.ClosePrinter(hPrinter)
+        except Exception:
+            pass
+
+
+def _render_pdf_to_png_via_pdftocairo(pdf_path: str, dpi: int, out_dir: str) -> list[str]:
+    """
+    Рендер PDF в набор PNG файлов через poppler (pdftocairo).
+    Возвращает отсортированные пути к PNG.
+    """
+    pdftocairo = shutil.which("pdftocairo")
+    if not pdftocairo:
+        raise RuntimeError("pdftocairo not found in PATH")
+
+    base = os.path.join(out_dir, "page")
+    # pdftocairo создаёт page-1.png, page-2.png, ...
+    cmd = [pdftocairo, "-png", "-r", str(dpi), pdf_path, base]
+    result = subprocess.run(cmd, capture_output=True)
+    if result.returncode != 0:
+        err = (result.stderr or result.stdout or b"").decode("utf-8", errors="ignore").strip()
+        raise RuntimeError(f"pdftocairo failed: {err}")
+
+    pngs = sorted(glob.glob(os.path.join(out_dir, "page-*.png")))
+    if not pngs:
+        raise RuntimeError("pdftocairo produced no PNG files")
+    return pngs
+
+
+def _print_images_via_gdi(image_paths: list[str], printer_name: Optional[str]) -> bool:
+    """
+    Печать растровых изображений через Win32 GDI без SumatraPDF.
+    Рисуем image в прямоугольник указанного размера (в device pixels).
+    """
+    import win32print
+    import win32ui
+
+    # Pillow on Windows provides ImageWin for fast GDI drawing.
+    from PIL import Image, ImageWin
+
+    default_printer = printer_name or win32print.GetDefaultPrinter()
+    if not default_printer:
+        return False
+
+    hPrinter = win32print.OpenPrinter(default_printer)
+    printerDC = None
+    try:
+        printerDC = win32ui.CreateDC()
+        printerDC.CreatePrinterDC(default_printer)
+        hdc = printerDC.GetSafeHdc()
+
+        # Получаем поля/смещения
+        dpi_x, dpi_y, offset_x, offset_y = _get_printer_dc_info(default_printer)
+
+        win32print.StartDoc(hPrinter, ("FBS Print Agent", None))
+        for img_path in image_paths:
+            img = Image.open(img_path).convert("RGB")
+            dib = ImageWin.Dib(img)
+
+            win32print.StartPage(hPrinter)
+            # Рисуем в (offset_x, offset_y) с размером image.width/height в device pixels
+            # чтобы драйвер не масштабировал "Fit to page".
+            dib.draw(
+                hdc,
+                (
+                    offset_x,
+                    offset_y,
+                    offset_x + img.width,
+                    offset_y + img.height,
+                ),
+            )
+            win32print.EndPage(hPrinter)
+
+        win32print.EndDoc(hPrinter)
+        return True
+    except Exception as e:
+        _log_print_error(f"GDI print failed: {e}")
+        return False
+    finally:
+        try:
+            if printerDC:
+                printerDC.DeleteDC()
+        except Exception:
+            pass
+        try:
+            win32print.ClosePrinter(hPrinter)
+        except Exception:
+            pass
+
+
+def _print_pdf_via_gdi(pdf_path: str, printer: Optional[str], print_settings: Optional[str] = None) -> bool:
+    """
+    Кардинальный режим печати: PDF -> PNG (pdftocairo) -> Win32 GDI.
+    Используется, чтобы SumatraPDF/драйвер не "пересобирали" компоновку.
+    """
+    try:
+        dpi_x, dpi_y, _, _ = _get_printer_dc_info(printer)
+        dpi = dpi_x if dpi_x > 0 else 203
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pngs = _render_pdf_to_png_via_pdftocairo(pdf_path, dpi=int(dpi), out_dir=tmpdir)
+            return _print_images_via_gdi(pngs, printer)
+    except Exception as e:
+        _log_print_error(f"PDF via GDI failed: {e}")
+        return False
+
+
 def _log_print_error(msg: str) -> None:
     """Записать ошибку печати в лог для диагностики."""
     try:
@@ -152,6 +290,11 @@ def print_document(
                 _log_print_info(
                     f"Print job: printer={printer!r} print_settings={print_settings!r} input_mime={mime!r} pdf={f.name}"
                 )
+                # Кардинально: печатаем через GDI, чтобы не зависеть от SumatraPDF компоновки.
+                # Если вдруг GDI/рендер через pdftocairo недоступны — автоматически откатимся на Sumatra.
+                ok = _print_pdf_via_gdi(f.name, printer, print_settings=print_settings)
+                if ok:
+                    return True
                 return _print_pdf_with_printer(f.name, printer, print_settings)
             elif mime in ("image/png", "image/jpeg", "image/jpg"):
                 ext = ".png" if "png" in mime else ".jpg"
@@ -164,6 +307,9 @@ def print_document(
                     os.unlink(img_path)
                 except OSError:
                     pass
+                ok = _print_pdf_via_gdi(pdf_path, printer, print_settings=print_settings)
+                if ok:
+                    return True
                 return _print_pdf_with_printer(pdf_path, printer, print_settings)
             else:
                 return False
