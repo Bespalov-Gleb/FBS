@@ -1498,11 +1498,18 @@ def _generate_product_barcode_pdf(
     display_code = ozn_code or barcode_value
     is_ean = _is_ean13(barcode_value)
     is_ozon_code = str(display_code).strip().upper().startswith("OZN")
+    is_wb_barcode = is_ean and not is_ozon_code
+    # Раздельная геометрия по маркетплейсам:
+    # - Ozon (OZN...): оставляем базовую геометрию, quiet=False.
+    # - WB (EAN13): делаем чуть ниже, но шире.
+    wb_bar_width = 0.52 if is_wb_barcode else 0.4
+    wb_bar_height = (14 * mm) if is_wb_barcode else None
     # EAN13: скрываем встроенные цифры, рисуем свои с отступом
     bc_product = _create_barcode_drawing(
         barcode_value,
-        bar_width=0.4,
+        bar_width=wb_bar_width,
         hide_text=is_ean,
+        bar_height=wb_bar_height,
         quiet=False if is_ozon_code and not is_ean else None,
     )
     bw1, bh1 = bc_product.width, bc_product.height
@@ -1601,10 +1608,14 @@ def _generate_multi_product_barcode_pdf(
         display_code = ozn_code or barcode_value
         is_ean = _is_ean13(barcode_value)
         is_ozon_code = str(display_code).strip().upper().startswith("OZN")
+        is_wb_barcode = is_ean and not is_ozon_code
+        wb_bar_width = 0.52 if is_wb_barcode else 0.4
+        wb_bar_height = (14 * mm) if is_wb_barcode else None
         bc_product = _create_barcode_drawing(
             barcode_value,
-            bar_width=0.4,
+            bar_width=wb_bar_width,
             hide_text=is_ean,
+            bar_height=wb_bar_height,
             quiet=False if is_ozon_code and not is_ean else None,
         )
         bw1, bh1 = bc_product.width, bc_product.height
