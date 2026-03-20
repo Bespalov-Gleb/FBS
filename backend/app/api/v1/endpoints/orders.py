@@ -817,13 +817,7 @@ def _ozon_fbs_to_standard_label(
         if idx == 0:
             _fbs_debug_save_pil(debug_job_key, "04_after_top_strip_crop", "after_top_strip.png", img)
 
-        # Зафиксировать scale до поворота:
-        # после поворота iw/ih меняются местами, но scale должен оставаться тем же,
-        # иначе поворот визуально “меняет размер”.
-        # fit: чтобы контент не выходил за границы 58×40 и не "порезался"
-        scale = min(usable_w / iw, usable_h / ih)
-
-        # Теперь применяем поворот (как есть).
+        # Применяем поворот, затем считаем масштаб уже для финальной ориентации.
         if deg:
             # UI: 90/270 — по часовой.
             # PIL: ROTATE_90 — против ч/с, ROTATE_270 — по ч/с.
@@ -837,6 +831,11 @@ def _ozon_fbs_to_standard_label(
 
         if idx == 0:
             _fbs_debug_save_pil(debug_job_key, "05_after_rotation", "after_rotation.png", img)
+
+        # fit: не выходим за границы 58×40 и не режем контент.
+        # Важно считать scale после поворота, иначе при авто-rotate (0 -> 90)
+        # этикетка становится заметно меньше по ширине.
+        scale = min(usable_w / iw, usable_h / ih)
 
         draw_w = iw * scale
         draw_h = ih * scale
