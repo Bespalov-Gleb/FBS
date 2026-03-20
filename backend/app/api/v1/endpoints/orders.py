@@ -491,11 +491,12 @@ def _ozon_fbs_to_png(
     else:
         deg = 0
     if deg:
-        # Как в _ozon_fbs_to_standard_label: 90° = по часовой (текст горизонтальный на альбоме)
+        # Важно: PIL ROTATE_* — это поворот против/по часовой в системе координат изображения.
+        # Под альбомный стикер 58×40 при deg=90 контент должен стать горизонтальным.
         if deg == 90:
-            img = img.transpose(PILImage.Transpose.ROTATE_270)
-        elif deg == 270:
             img = img.transpose(PILImage.Transpose.ROTATE_90)
+        elif deg == 270:
+            img = img.transpose(PILImage.Transpose.ROTATE_270)
         elif deg == 180:
             img = img.transpose(PILImage.Transpose.ROTATE_180)
         iw, ih = img.size
@@ -684,9 +685,9 @@ def _ozon_fbs_to_standard_label(
         if deg:
             # PIL: ROTATE_90 = 90° против ч/с, ROTATE_270 = 90° по ч/с. Ozon присылает портрет; для альбома 58×40 нужен поворот по часовой → текст горизонтальный.
             if deg == 90:
-                img = img.transpose(Image.Transpose.ROTATE_270)
-            elif deg == 270:
                 img = img.transpose(Image.Transpose.ROTATE_90)
+            elif deg == 270:
+                img = img.transpose(Image.Transpose.ROTATE_270)
             elif deg == 180:
                 img = img.transpose(Image.Transpose.ROTATE_180)
             iw, ih = img.size
