@@ -25,7 +25,7 @@ import { marketplacesApi } from '../api/marketplaces';
 import { warehousesApi } from '../api/warehouses';
 import { printSettingsApi } from '../api/printSettings';
 import { isPrintAgentAvailable, printViaAgent } from '../api/printAgent';
-import { openBlobInNewWindow } from '../utils/printUtils';
+import { loadBlobIntoWindow, openBlankWindow, openBlobInNewWindow } from '../utils/printUtils';
 import type { Order } from '../types/api';
 import type { RootState } from '../store';
 
@@ -199,11 +199,18 @@ export default function AssemblyPage() {
       setSelectedOrder(order);
       return;
     }
+
+    // Чтобы popup-loader браузера не блокировал второе окно,
+    // открываем 2 пустых окна синхронно до любых await.
+    const shouldAutoPrint = printSettings?.auto_print_on_click !== false;
+    const needPopups = shouldAutoPrint && !agentAvailable;
+    const barcodesWin = needPopups ? openBlankWindow() : null;
+    const labelWin = needPopups ? openBlankWindow() : null;
+
     try {
       await ordersApi.claim(order.id);
       setSelectedOrder(order);
       // ТЗ: при клике печатать 2 этикетки (если включено в диспетчере)
-      const shouldAutoPrint = printSettings?.auto_print_on_click !== false;
       if (shouldAutoPrint) {
         // PDF при агенте — точный размер 58×40 мм, печать 100% (noscale)
         const labelFormat = agentAvailable ? 'pdf' : (order.marketplace_type === 'ozon' ? 'pdf' : 'svg');
@@ -228,9 +235,15 @@ export default function AssemblyPage() {
             await printBlob(labelBlob, { noFallback: !!barcodesBlob, printScale: labelPrintScale });
           } else {
             // Оба окна открываем синхронно в рамках жеста пользователя (иначе блокирует popup)
-            if (barcodesBlob) openBlobInNewWindow(barcodesBlob);
+            if (barcodesBlob) {
+              // Если окно удалось создать — подставляем blob в него.
+              // Иначе — пробуем стандартное открытие.
+              loadBlobIntoWindow(barcodesWin, barcodesBlob);
+              if (!barcodesWin) openBlobInNewWindow(barcodesBlob);
+            }
             if (labelBlob) {
-              openBlobInNewWindow(labelBlob, { forceAnchor: true });
+              loadBlobIntoWindow(labelWin, labelBlob);
+              if (!labelWin) openBlobInNewWindow(labelBlob);
             } else {
               setSnackbar({ message: 'ФБС этикетка не сформировалась (labelBlob пустой)' });
             }

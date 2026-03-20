@@ -15,7 +15,7 @@ import LocalPrintshop from '@mui/icons-material/LocalPrintshop';
 import type { Order, Marketplace } from '../../types/api';
 import { ordersApi } from '../../api/orders';
 import { printViaAgent } from '../../api/printAgent';
-import { openBlobInNewWindow } from '../../utils/printUtils';
+import { loadBlobIntoWindow, openBlankWindow, openBlobInNewWindow } from '../../utils/printUtils';
 import { getProductImageUrl } from '../../api/client';
 import { palette } from '../../theme/theme';
 
@@ -169,6 +169,13 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
   const labelPrintScale = labelPrintMode === 'as_is_fit' ? 'fit' as const : 'noscale' as const;
   const handlePrint = async () => {
     setError(null);
+
+    // Для режима без агента: открываем два пустых окна синхронно до await,
+    // чтобы popup-blocker не убил второе окно.
+    const shouldOpenPopups = !agentAvailable;
+    const barcodesWin = shouldOpenPopups ? openBlankWindow() : null;
+    const labelWin = shouldOpenPopups ? openBlankWindow() : null;
+
     try {
       const lw = labelFormatProp === '80mm' ? 80 : 58;
       // Загружаем оба blob одновременно; при выключенном агенте открываем окна синхронно
@@ -184,10 +191,15 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
         if (barcodesBlob) await printViaAgent(barcodesBlob, defaultPrinter, 'noscale');
         await printViaAgent(blob, defaultPrinter, labelPrintScale);
       } else {
-        // Оба окна открываем синхронно в рамках жеста пользователя (иначе блокирует popup)
-        if (barcodesBlob) openBlobInNewWindow(barcodesBlob);
+        // Если окна создались — подставляем в них blob URL.
+        // Если окно не создалось — пробуем стандартное открытие.
+        if (barcodesBlob) {
+          loadBlobIntoWindow(barcodesWin, barcodesBlob);
+          if (!barcodesWin) openBlobInNewWindow(barcodesBlob);
+        }
         if (blob) {
-          openBlobInNewWindow(blob, { forceAnchor: true });
+          loadBlobIntoWindow(labelWin, blob);
+          if (!labelWin) openBlobInNewWindow(blob, { forceAnchor: true });
         } else {
           setError('ФБС этикетка не сформировалась (blob пустой)');
         }
