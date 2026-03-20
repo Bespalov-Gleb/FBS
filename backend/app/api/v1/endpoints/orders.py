@@ -672,29 +672,18 @@ def _ozon_fbs_to_standard_label(
         if iw <= 0 or ih <= 0:
             continue
 
-        # Поворот растра по настройке.
-        # Важно: `rotate=0` не "не поворачивать", а приводить исходник к альбомному стикеру (58×40).
+        # rotate — это поворот в градусах (0/90/180/270) “как есть”.
         deg: Optional[int]
-        if rotate in (90, 180, 270):
-            deg = rotate
-        elif rotate == 0:
-            deg = 90 if width_mm > height_mm else 0
+        if rotate in (0, 90, 180, 270):
+            deg = int(rotate)
         else:
             deg = 0
         logger.info(
             "Ozon FBS label: page %s size %sx%s rotate_setting=%s applied_deg=%s",
             idx + 1, iw, ih, rotate, deg,
         )
-        if deg:
-            # PIL: ROTATE_90 = 90° против ч/с, ROTATE_270 = 90° по ч/с. Ozon присылает портрет; для альбома 58×40 нужен поворот по часовой → текст горизонтальный.
-            if deg == 90:
-                img = img.transpose(Image.Transpose.ROTATE_90)
-            elif deg == 270:
-                img = img.transpose(Image.Transpose.ROTATE_270)
-            elif deg == 180:
-                img = img.transpose(Image.Transpose.ROTATE_180)
-            iw, ih = img.size
-
+        # Важно: сначала кропаем/обрезаем белые поля и верхний пояс,
+        # и только потом поворачиваем, чтобы поворот не влиял на масштаб/кроп.
         # Убираем белые поля: bbox по порогу «не белый» (чтобы контент не разъезжался).
         try:
             pix = img.load()
@@ -733,9 +722,23 @@ def _ozon_fbs_to_standard_label(
         except Exception:
             pass
 
-        # Заполнить область страницы (cover): поворот не должен приводить к "мелкости",
-        # поэтому используем max вместо min.
+        # Зафиксировать scale до поворота:
+        # после поворота iw/ih меняются местами, но scale должен оставаться тем же,
+        # иначе поворот визуально “меняет размер”.
         scale = max(usable_w / iw, usable_h / ih)
+
+        # Теперь применяем поворот (как есть).
+        if deg:
+            # UI: 90/270 — по часовой.
+            # PIL: ROTATE_90 — против ч/с, ROTATE_270 — по ч/с.
+            if deg == 90:
+                img = img.transpose(Image.Transpose.ROTATE_270)
+            elif deg == 270:
+                img = img.transpose(Image.Transpose.ROTATE_90)
+            elif deg == 180:
+                img = img.transpose(Image.Transpose.ROTATE_180)
+            iw, ih = img.size
+
         draw_w = iw * scale
         draw_h = ih * scale
         # Центрирование обеспечивает стабильную позицию контента при разных поворотах.

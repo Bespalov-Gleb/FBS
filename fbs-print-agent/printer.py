@@ -153,6 +153,7 @@ def _print_images_via_gdi(image_paths: list[str], printer_name: Optional[str]) -
     """
     import win32print
     import win32ui
+    import win32gui
 
     # Pillow on Windows provides ImageWin for fast GDI drawing.
     from PIL import Image, ImageWin
@@ -168,8 +169,12 @@ def _print_images_via_gdi(image_paths: list[str], printer_name: Optional[str]) -
         printerDC.CreatePrinterDC(default_printer)
         hdc = printerDC.GetSafeHdc()
 
-        # Получаем поля/смещения
+        # Получаем поля/смещения и размер печатаемой (imageable) области.
         dpi_x, dpi_y, offset_x, offset_y = _get_printer_dc_info(default_printer)
+        HORZRES = 8
+        VERTRES = 10
+        imageable_w = int(win32gui.GetDeviceCaps(hdc, HORZRES) or 0)
+        imageable_h = int(win32gui.GetDeviceCaps(hdc, VERTRES) or 0)
 
         win32print.StartDoc(hPrinter, ("FBS Print Agent", None))
         for img_path in image_paths:
@@ -177,15 +182,20 @@ def _print_images_via_gdi(image_paths: list[str], printer_name: Optional[str]) -
             dib = ImageWin.Dib(img)
 
             win32print.StartPage(hPrinter)
-            # Рисуем в (offset_x, offset_y) с размером image.width/height в device pixels
-            # чтобы драйвер не масштабировал "Fit to page".
+            # Центрируем страницу внутри imageable area, чтобы не "прилипало" к углу.
+            if imageable_w > 0 and imageable_h > 0:
+                left = offset_x + max(0, (imageable_w - img.width) // 2)
+                top = offset_y + max(0, (imageable_h - img.height) // 2)
+            else:
+                left = offset_x
+                top = offset_y
             dib.draw(
                 hdc,
                 (
-                    offset_x,
-                    offset_y,
-                    offset_x + img.width,
-                    offset_y + img.height,
+                    left,
+                    top,
+                    left + img.width,
+                    top + img.height,
                 ),
             )
             win32print.EndPage(hPrinter)
@@ -281,8 +291,7 @@ def _print_pdf_via_gdi(
         dpi = dpi_x if dpi_x > 0 else 203
         with tempfile.TemporaryDirectory() as tmpdir:
             pngs = _render_pdf_to_png_via_pdftocairo(pdf_path, dpi=int(dpi), out_dir=tmpdir)
-            if job_type == "fbs":
-                pngs = _maybe_rotate_fbs_pngs(pngs, tmpdir)
+            # Для FBS больше не делаем автоповорот: доверяем ориентации, которую формирует backend в PDF.
             return _print_images_via_gdi(pngs, printer)
     except Exception as e:
         _log_print_error(f"PDF via GDI failed: {e}")
