@@ -94,7 +94,18 @@ def _get_printer_dc_info(printer_name: Optional[str]) -> tuple[int, int, int, in
     """
     import win32print
     import win32ui
-    import win32gui
+    import ctypes
+
+    def _get_device_caps(hdc: int, cap_index: int) -> int:
+        """
+        pywin32 не всегда имеет win32gui.GetDeviceCaps.
+        Используем ctypes на gdi32, чтобы функция работала стабильно.
+        """
+        try:
+            v = ctypes.windll.gdi32.GetDeviceCaps(int(hdc), int(cap_index))
+            return int(v or 0)
+        except Exception:
+            return 0
 
     # LOGPIXELSX/LOGPIXELSY/PHYSICALOFFSETX/PHYSICALOFFSETY numeric values from WinGDI:
     LOGPIXELSX = 88
@@ -107,10 +118,10 @@ def _get_printer_dc_info(printer_name: Optional[str]) -> tuple[int, int, int, in
         printerDC = win32ui.CreateDC()
         printerDC.CreatePrinterDC(printer_name or win32print.GetDefaultPrinter())
         hdc = printerDC.GetSafeHdc()
-        dpi_x = int(win32gui.GetDeviceCaps(hdc, LOGPIXELSX) or 0)
-        dpi_y = int(win32gui.GetDeviceCaps(hdc, LOGPIXELSY) or 0)
-        offset_x = int(win32gui.GetDeviceCaps(hdc, PHYSICALOFFSETX) or 0)
-        offset_y = int(win32gui.GetDeviceCaps(hdc, PHYSICALOFFSETY) or 0)
+        dpi_x = _get_device_caps(hdc, LOGPIXELSX)
+        dpi_y = _get_device_caps(hdc, LOGPIXELSY)
+        offset_x = _get_device_caps(hdc, PHYSICALOFFSETX)
+        offset_y = _get_device_caps(hdc, PHYSICALOFFSETY)
         try:
             printerDC.DeleteDC()
         except Exception:
@@ -153,7 +164,7 @@ def _print_images_via_gdi(image_paths: list[str], printer_name: Optional[str]) -
     """
     import win32print
     import win32ui
-    import win32gui
+    import ctypes
 
     # Pillow on Windows provides ImageWin for fast GDI drawing.
     from PIL import Image, ImageWin
@@ -173,8 +184,15 @@ def _print_images_via_gdi(image_paths: list[str], printer_name: Optional[str]) -
         dpi_x, dpi_y, offset_x, offset_y = _get_printer_dc_info(default_printer)
         HORZRES = 8
         VERTRES = 10
-        imageable_w = int(win32gui.GetDeviceCaps(hdc, HORZRES) or 0)
-        imageable_h = int(win32gui.GetDeviceCaps(hdc, VERTRES) or 0)
+        def _get_device_caps(hdc2: int, cap_index: int) -> int:
+            try:
+                v = ctypes.windll.gdi32.GetDeviceCaps(int(hdc2), int(cap_index))
+                return int(v or 0)
+            except Exception:
+                return 0
+
+        imageable_w = _get_device_caps(hdc, HORZRES)
+        imageable_h = _get_device_caps(hdc, VERTRES)
 
         win32print.StartDoc(hPrinter, ("FBS Print Agent", None))
         for img_path in image_paths:

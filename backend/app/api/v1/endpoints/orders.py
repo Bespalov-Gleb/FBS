@@ -460,8 +460,17 @@ MM_TO_PT = 2.834645669  # 1 мм = 2.834645669 pt (PDF points)
 
 
 def _fbs_debug_enabled() -> bool:
-    """Включить сохранение промежуточных файлов: FBS_PRINT_DEBUG=1."""
-    return os.environ.get("FBS_PRINT_DEBUG", "").strip() not in ("", "0", "false", "False")
+    """
+    Включить сохранение промежуточных файлов.
+
+    По умолчанию включено (FBS_PRINT_DEBUG не задан):
+    - выключить можно только явно: FBS_PRINT_DEBUG=0/false.
+    """
+    raw = os.environ.get("FBS_PRINT_DEBUG")
+    if raw is None:
+        return True
+    s = str(raw).strip().lower()
+    return s not in ("", "0", "false", "off", "no")
 
 
 def _fbs_debug_root() -> str:
