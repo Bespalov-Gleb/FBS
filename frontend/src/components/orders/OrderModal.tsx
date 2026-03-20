@@ -167,6 +167,9 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
   const labelWidth = labelFormatProp === '80mm' ? 80 : 58;
 
   const labelPrintScale = labelPrintMode === 'as_is_fit' ? 'fit' as const : 'noscale' as const;
+  // Для печати FBS этикеток через агент: поворачиваем содержимое, чтобы оно занимало весь стикер.
+  const labelPrintSettingsAgent =
+    labelPrintScale === 'noscale' ? 'noscale,landscape' : 'fit,landscape';
   const handlePrint = async () => {
     setError(null);
 
@@ -183,7 +186,7 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
       ]);
       if (agentAvailable) {
         if (barcodesBlob) await printViaAgent(barcodesBlob, defaultPrinter, 'noscale');
-        await printViaAgent(blob, defaultPrinter, labelPrintScale);
+        await printViaAgent(blob, defaultPrinter, labelPrintSettingsAgent);
       } else {
         if (barcodesBlob) openBlobInNewWindow(barcodesBlob);
         if (blob) openBlobInSameTab(blob);

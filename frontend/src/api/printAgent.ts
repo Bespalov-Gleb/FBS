@@ -48,7 +48,14 @@ const PRINT_TIMEOUT_MS = 60000; // 60 сек — печать может зан�
 export async function printViaAgent(
   blob: Blob,
   printer?: string,
-  printSettings?: 'noscale' | 'shrink' | 'fit',
+  printSettings?:
+    | 'noscale'
+    | 'shrink'
+    | 'fit'
+    | 'noscale,landscape'
+    | 'fit,landscape'
+    | 'noscale,portrait'
+    | 'fit,portrait',
 ): Promise<boolean> {
   try {
     const base64 = await blobToBase64(blob);

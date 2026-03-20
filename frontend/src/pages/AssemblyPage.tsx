@@ -181,9 +181,20 @@ export default function AssemblyPage() {
   };
 
   const labelPrintScale = printSettings?.label_print_mode === 'as_is_fit' ? 'fit' as const : 'noscale' as const;
+  // Для печати FBS этикеток через агент: поворачиваем содержимое, чтобы оно занимало весь стикер.
+  const labelPrintSettingsAgent = labelPrintScale === 'noscale' ? 'noscale,landscape' : 'fit,landscape';
   const printBlob = async (
     blob: Blob,
-    options?: { noFallback?: boolean; printScale?: 'fit' | 'noscale' },
+    options?: {
+      noFallback?: boolean;
+      printScale?:
+        | 'fit'
+        | 'noscale'
+        | 'fit,landscape'
+        | 'noscale,landscape'
+        | 'fit,portrait'
+        | 'noscale,portrait';
+    },
   ) => {
     const scale = options?.printScale ?? 'noscale';
     if (agentAvailable) {
@@ -227,7 +238,7 @@ export default function AssemblyPage() {
           ]);
           if (agentAvailable) {
             if (barcodesBlob) await printBlob(barcodesBlob, { printScale: 'noscale' });
-            await printBlob(labelBlob, { noFallback: !!barcodesBlob, printScale: labelPrintScale });
+            await printBlob(labelBlob, { noFallback: !!barcodesBlob, printScale: labelPrintSettingsAgent });
           } else {
             if (barcodesBlob) openBlobInNewWindow(barcodesBlob);
             if (labelBlob) openBlobInSameTab(labelBlob);

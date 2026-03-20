@@ -87,7 +87,12 @@ def print_job(req: PrintRequest):
     # Принтер: из запроса (сайт передаёт из настроек пользователя) или env/конфиг
     printer_name = req.printer or config.DEFAULT_PRINTER or None
     mime = req.mime or "application/pdf"
-    print_settings_val = req.print_settings if req.print_settings in ("noscale", "shrink", "fit") else None
+    allowed_tokens = {"noscale", "shrink", "fit", "portrait", "landscape"}
+    print_settings_val = None
+    if req.print_settings:
+        tokens = [t.strip().lower() for t in req.print_settings.split(",") if t.strip()]
+        if tokens and all(t in allowed_tokens for t in tokens):
+            print_settings_val = req.print_settings
     ok = printer.print_document(data, mime, printer_name, print_settings=print_settings_val)
     print_journal.log_print(printer_name, mime, len(data), ok, None if ok else "Print failed")
     if not ok:

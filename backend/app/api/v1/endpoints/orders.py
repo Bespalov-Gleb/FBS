@@ -940,7 +940,7 @@ def _generate_kiz_label_pdf(kiz_full: str, kiz_31: str, width_mm: int = 40, heig
     label_h = height_mm * mm
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=(label_w, label_h))
-    margin = 2 * mm
+    margin = 1 * mm
 
     # DataMatrix размер
     scale = (dm_size_mm * mm) / max(dm.width, dm.height)
@@ -1339,14 +1339,14 @@ def _generate_product_barcode_pdf(
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=pagesize)
     h = label_h
-    margin = 2 * mm
+    margin = 1 * mm
     top_offset = top_offset_mm * mm
     x0 = margin
     y0 = h - margin - top_offset
 
-    scale1 = min((label_w - 2 * margin) / bw1, 25 * mm / bh1, 2.2)
+    scale1 = min((label_w - 2 * margin) / bw1, 32 * mm / bh1, 3.0)
     c.saveState()
-    c.translate(x0 + (label_w - bw1 * scale1) / 2, y0 - bh1 * scale1 - 2 * mm)
+    c.translate(x0 + (label_w - bw1 * scale1) / 2, y0 - bh1 * scale1 - 1 * mm)
     c.scale(scale1, scale1)
     renderPDF.draw(bc_product, c, 0, 0)
     c.restoreState()
@@ -1398,11 +1398,11 @@ def _generate_multi_product_barcode_pdf(
         is_ean = _is_ean13(barcode_value)
         bc_product = _create_barcode_drawing(barcode_value, bar_width=0.4, hide_text=is_ean)
         bw1, bh1 = bc_product.width, bc_product.height
-        scale1 = min((label_w - 2 * margin) / bw1, 25 * mm / bh1, 2.2)
+        scale1 = min((label_w - 2 * margin) / bw1, 32 * mm / bh1, 3.0)
         h = label_h
         y0 = h - margin - top_offset
         c.saveState()
-        c.translate(x0 + (label_w - bw1 * scale1) / 2, y0 - bh1 * scale1 - 2 * mm)
+        c.translate(x0 + (label_w - bw1 * scale1) / 2, y0 - bh1 * scale1 - 1 * mm)
         c.scale(scale1, scale1)
         renderPDF.draw(bc_product, c, 0, 0)
         c.restoreState()
