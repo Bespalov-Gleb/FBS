@@ -637,7 +637,7 @@ def _ozon_fbs_to_standard_label(
         raise ValueError("PDF returned no pages")
 
     # Лист альбомной ориентации: ширина×высота = width_mm×height_mm (например 58×40).
-    # Этикетка прижата к верхнему левому углу.
+    # Рисуем контент так, чтобы он максимально заполнял стикер.
     # scale_factor > 1: страница PDF и контент расширяются вместе.
     page_width_mm = width_mm
     page_height_mm = height_mm
@@ -683,10 +683,10 @@ def _ozon_fbs_to_standard_label(
                 img = img.transpose(Image.Transpose.ROTATE_180)
             iw, ih = img.size
 
-        # Убираем белые поля: bbox по порогу «не белый» (max < 250), иначе почти белые пиксели не обрезаются
+        # Убираем белые поля: bbox по порогу «не белый».
         try:
             pix = img.load()
-            thresh = 250
+            thresh = 245
             min_x, min_y, max_x, max_y = iw, ih, 0, 0
             for y in range(ih):
                 for x in range(iw):
@@ -701,10 +701,10 @@ def _ozon_fbs_to_standard_label(
         except Exception:
             pass
 
-        # Первая строка с любым тёмным пикселем — верх контента (убираем оставшийся белый пояс сверху)
+        # Первая строка с любым тёмным пикселем — верх контента
         try:
             pix = img.load()
-            top_thresh = 253
+            top_thresh = 250
             y_top = 0
             for y in range(ih):
                 for x in range(iw):
@@ -721,13 +721,13 @@ def _ozon_fbs_to_standard_label(
         except Exception:
             pass
 
-        # Вписать этикетку в область страницы, прижать к верхнему левому углу (ReportLab: y=0 — низ).
-        # Страница уже расширена scale_factor — контент заполняет её без обрезки.
-        scale = min(usable_w / iw, usable_h / ih)
+        # Максимально заполнить область страницы (cover) и центрировать.
+        # Страница уже расширена scale_factor — вместе с ней увеличивается и контент.
+        scale = max(usable_w / iw, usable_h / ih)
         draw_w = iw * scale
         draw_h = ih * scale
-        x_place = margin_left_pt
-        y_place = frame_h_pt - margin_top_pt - draw_h
+        x_place = (frame_w_pt - draw_w) / 2
+        y_place = (frame_h_pt - draw_h) / 2
 
         img_buf = io.BytesIO()
         img.save(img_buf, format="PNG")
@@ -1342,19 +1342,32 @@ def _generate_product_barcode_pdf(
     margin = 1 * mm
     top_offset = top_offset_mm * mm
     x0 = margin
-    y0 = h - margin - top_offset
+    # Рисуем так, чтобы блок (штрихкод + цифры) занимал почти всю высоту этикетки и был центрирован.
+    # top_offset_mm используем как "смещение вверх" (для Ozon), чтобы не обрезать верхние элементы.
+    digits_font_size = 12
+    digits_gap = 8 * mm
+    digits_reserved = digits_gap + 2 * mm
 
-    scale1 = min((label_w - 2 * margin) / bw1, 32 * mm / bh1, 3.0)
+    available_h_for_barcode = label_h - 2 * margin - digits_reserved
+    if available_h_for_barcode <= 0:
+        available_h_for_barcode = label_h - 2 * margin
+
+    scale1 = min((label_w - 2 * margin) / bw1, available_h_for_barcode / bh1)
+    draw_w = bw1 * scale1
+    draw_h = bh1 * scale1
+
+    barcode_left = margin + (label_w - 2 * margin - draw_w) / 2
+    barcode_bottom = margin + digits_reserved + (available_h_for_barcode - draw_h) / 2 + top_offset
+
     c.saveState()
-    c.translate(x0 + (label_w - bw1 * scale1) / 2, y0 - bh1 * scale1 - 1 * mm)
+    c.translate(barcode_left, barcode_bottom)
     c.scale(scale1, scale1)
     renderPDF.draw(bc_product, c, 0, 0)
     c.restoreState()
 
-    # Отступ 10 мм между штрихкодом и цифрами (для EAN13 важнее — избежать наложения)
-    ty = y0 - bh1 * scale1 - 10 * mm
-    c.setFont("Helvetica-Bold", 10)
-    c.drawCentredString(x0 + label_w / 2, ty, str(display_code)[:20])
+    ty = max(margin, barcode_bottom - digits_gap)
+    c.setFont("Helvetica-Bold", digits_font_size)
+    c.drawCentredString(label_w / 2, ty, str(display_code)[:20])
 
     c.save()
     buf.seek(0)
@@ -1387,9 +1400,16 @@ def _generate_multi_product_barcode_pdf(
     pagesize = (label_w, label_h)
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=pagesize)
-    margin = 2 * mm
+    margin = 1 * mm
     top_offset = top_offset_mm * mm
     x0 = margin
+    digits_font_size = 12
+    digits_gap = 8 * mm
+    digits_reserved = digits_gap + 2 * mm
+
+    available_h_for_barcode = label_h - 2 * margin - digits_reserved
+    if available_h_for_barcode <= 0:
+        available_h_for_barcode = label_h - 2 * margin
 
     for i, (barcode_value, ozn_code) in enumerate(items):
         if i > 0:
@@ -1398,18 +1418,21 @@ def _generate_multi_product_barcode_pdf(
         is_ean = _is_ean13(barcode_value)
         bc_product = _create_barcode_drawing(barcode_value, bar_width=0.4, hide_text=is_ean)
         bw1, bh1 = bc_product.width, bc_product.height
-        scale1 = min((label_w - 2 * margin) / bw1, 32 * mm / bh1, 3.0)
-        h = label_h
-        y0 = h - margin - top_offset
+        scale1 = min((label_w - 2 * margin) / bw1, available_h_for_barcode / bh1)
+        draw_w = bw1 * scale1
+        draw_h = bh1 * scale1
+
+        barcode_left = x0 + (label_w - 2 * margin - draw_w) / 2
+        barcode_bottom = margin + digits_reserved + (available_h_for_barcode - draw_h) / 2 + top_offset
         c.saveState()
-        c.translate(x0 + (label_w - bw1 * scale1) / 2, y0 - bh1 * scale1 - 1 * mm)
+        c.translate(barcode_left, barcode_bottom)
         c.scale(scale1, scale1)
         renderPDF.draw(bc_product, c, 0, 0)
         c.restoreState()
 
-        ty = y0 - bh1 * scale1 - 10 * mm
-        c.setFont("Helvetica-Bold", 10)
-        c.drawCentredString(x0 + label_w / 2, ty, str(display_code)[:20])
+        ty = max(margin, barcode_bottom - digits_gap)
+        c.setFont("Helvetica-Bold", digits_font_size)
+        c.drawCentredString(label_w / 2, ty, str(display_code)[:20])
 
     c.save()
     buf.seek(0)
