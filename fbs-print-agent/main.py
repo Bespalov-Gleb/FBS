@@ -28,6 +28,9 @@ class PrintRequest(BaseModel):
     printer: str | None = None
     mime: str = "application/pdf"
     print_settings: str | None = None  # fit (рекомендуется) | shrink | noscale — noscale заменяется на fit из-за искажений на термо-принтерах
+    # Тип документа для более точного рендера/поворота (для этикеток).
+    # Пример: "barcode" | "fbs" | "kiz"
+    job_type: str | None = None
 
 
 app = FastAPI(title="FBS Print Agent", version=__version__)
@@ -93,7 +96,13 @@ def print_job(req: PrintRequest):
         tokens = [t.strip().lower() for t in req.print_settings.split(",") if t.strip()]
         if tokens and all(t in allowed_tokens for t in tokens):
             print_settings_val = req.print_settings
-    ok = printer.print_document(data, mime, printer_name, print_settings=print_settings_val)
+    ok = printer.print_document(
+        data,
+        mime,
+        printer_name,
+        print_settings=print_settings_val,
+        job_type=req.job_type,
+    )
     print_journal.log_print(printer_name, mime, len(data), ok, None if ok else "Print failed")
     if not ok:
         raise HTTPException(500, detail="Print failed")

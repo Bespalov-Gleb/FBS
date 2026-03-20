@@ -207,7 +207,71 @@ def _print_images_via_gdi(image_paths: list[str], printer_name: Optional[str]) -
             pass
 
 
-def _print_pdf_via_gdi(pdf_path: str, printer: Optional[str], print_settings: Optional[str] = None) -> bool:
+def _score_dark_bbox_orientation(img: "Image.Image") -> float:
+    """
+    Оценить ориентацию картинки по bbox тёмного контента.
+    Чем больше площадь bbox и отношение ширины/высоты, тем лучше.
+    Дополнительно штрафуем за смещение bbox к низу/правой части (хотим прижим к верхнему левому углу).
+    """
+    try:
+        gray = img.convert("L")
+        # mask: тёмные пиксели -> 255, светлые -> 0
+        mask = gray.point(lambda p: 255 if p < 240 else 0)
+        bbox = mask.getbbox()
+        if not bbox:
+            return -1e18
+        minx, miny, maxx, maxy = bbox
+        w = maxx - minx
+        h = maxy - miny
+        if h <= 0 or w <= 0:
+            return -1e18
+        aspect = w / h
+        area = w * h
+        # Большой bbox + широкий (под 58×40 альбом) и прижатый сверху/слева
+        score = (area * aspect) - (5000.0 * (minx + miny))
+        return score
+    except Exception:
+        return -1e18
+
+
+def _maybe_rotate_fbs_pngs(pngs: list[str], tmpdir: str) -> list[str]:
+    """
+    Для FBS-этикеток подбираем поворот PNG на 0/90/180/270,
+    чтобы контент был максимально "широким" и прижатым к верхнему левому углу.
+    """
+    try:
+        from PIL import Image
+    except Exception:
+        return pngs
+
+    out_paths: list[str] = []
+    for idx, p in enumerate(pngs):
+        img = Image.open(p).convert("RGB")
+        candidates = [0, 90, 180, 270]
+        best_angle = 0
+        best_score = _score_dark_bbox_orientation(img)
+        for ang in candidates[1:]:
+            rot = img.rotate(ang, expand=True)
+            sc = _score_dark_bbox_orientation(rot)
+            if sc > best_score:
+                best_score = sc
+                best_angle = ang
+        if best_angle == 0:
+            out_paths.append(p)
+        else:
+            rot = img.rotate(best_angle, expand=True)
+            out_p = os.path.join(tmpdir, f"fbs-rot-{idx}-{best_angle}.png")
+            rot.save(out_p, format="PNG")
+            out_paths.append(out_p)
+    return out_paths
+
+
+def _print_pdf_via_gdi(
+    pdf_path: str,
+    printer: Optional[str],
+    print_settings: Optional[str] = None,
+    job_type: Optional[str] = None,
+) -> bool:
     """
     Кардинальный режим печати: PDF -> PNG (pdftocairo) -> Win32 GDI.
     Используется, чтобы SumatraPDF/драйвер не "пересобирали" компоновку.
@@ -217,6 +281,8 @@ def _print_pdf_via_gdi(pdf_path: str, printer: Optional[str], print_settings: Op
         dpi = dpi_x if dpi_x > 0 else 203
         with tempfile.TemporaryDirectory() as tmpdir:
             pngs = _render_pdf_to_png_via_pdftocairo(pdf_path, dpi=int(dpi), out_dir=tmpdir)
+            if job_type == "fbs":
+                pngs = _maybe_rotate_fbs_pngs(pngs, tmpdir)
             return _print_images_via_gdi(pngs, printer)
     except Exception as e:
         _log_print_error(f"PDF via GDI failed: {e}")
@@ -273,6 +339,7 @@ def print_document(
     mime: str,
     printer: Optional[str] = None,
     print_settings: Optional[str] = None,
+    job_type: Optional[str] = None,
 ) -> bool:
     """
     Печать документа. Поддерживает application/pdf и image/png.
@@ -292,7 +359,7 @@ def print_document(
                 )
                 # Кардинально: печатаем через GDI, чтобы не зависеть от SumatraPDF компоновки.
                 # Если вдруг GDI/рендер через pdftocairo недоступны — автоматически откатимся на Sumatra.
-                ok = _print_pdf_via_gdi(f.name, printer, print_settings=print_settings)
+                ok = _print_pdf_via_gdi(f.name, printer, print_settings=print_settings, job_type=job_type)
                 if ok:
                     return True
                 return _print_pdf_with_printer(f.name, printer, print_settings)
@@ -307,7 +374,7 @@ def print_document(
                     os.unlink(img_path)
                 except OSError:
                     pass
-                ok = _print_pdf_via_gdi(pdf_path, printer, print_settings=print_settings)
+                ok = _print_pdf_via_gdi(pdf_path, printer, print_settings=print_settings, job_type=job_type)
                 if ok:
                     return True
                 return _print_pdf_with_printer(pdf_path, printer, print_settings)

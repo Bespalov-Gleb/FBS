@@ -190,11 +190,17 @@ export default function AssemblyPage() {
       printScale?:
         | 'fit'
         | 'noscale';
+      jobType?: 'barcode' | 'fbs' | 'kiz';
     },
   ) => {
     const scale = options?.printScale ?? 'noscale';
     if (agentAvailable) {
-      const ok = await printViaAgent(blob, printSettings?.default_printer || undefined, scale);
+      const ok = await printViaAgent(
+        blob,
+        printSettings?.default_printer || undefined,
+        scale,
+        options?.jobType,
+      );
       if (ok) return;
     }
     openBlobInNewWindow(blob);
@@ -233,8 +239,8 @@ export default function AssemblyPage() {
             ),
           ]);
           if (agentAvailable) {
-            if (barcodesBlob) await printBlob(barcodesBlob, { printScale: 'noscale' });
-            await printBlob(labelBlob, { noFallback: !!barcodesBlob, printScale: labelPrintSettingsAgent });
+            if (barcodesBlob) await printBlob(barcodesBlob, { printScale: 'noscale', jobType: 'barcode' });
+            await printBlob(labelBlob, { noFallback: !!barcodesBlob, printScale: labelPrintSettingsAgent, jobType: 'fbs' });
           } else {
             if (barcodesBlob) openBlobInNewWindow(barcodesBlob);
             if (labelBlob) openBlobInSameTab(labelBlob);

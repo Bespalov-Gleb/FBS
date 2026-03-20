@@ -143,7 +143,7 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
           kizPrintedRef.current.add(kizFull);
           ordersApi.getKizLabelBlob(kizFull).then(async (blob) => {
             if (agentAvailable) {
-              await printViaAgent(blob, undefined, 'noscale');
+              await printViaAgent(blob, undefined, 'noscale', 'kiz');
             } else {
               openBlobInNewWindow(blob);
             }
@@ -184,8 +184,8 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
         ),
       ]);
       if (agentAvailable) {
-        if (barcodesBlob) await printViaAgent(barcodesBlob, defaultPrinter, 'noscale');
-        await printViaAgent(blob, defaultPrinter, labelPrintSettingsAgent);
+        if (barcodesBlob) await printViaAgent(barcodesBlob, defaultPrinter, 'noscale', 'barcode');
+        await printViaAgent(blob, defaultPrinter, labelPrintSettingsAgent, 'fbs');
       } else {
         if (barcodesBlob) openBlobInNewWindow(barcodesBlob);
         if (blob) openBlobInSameTab(blob);
@@ -204,7 +204,7 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
       for (const kiz of trimmed) {
         const blob = await ordersApi.getKizLabelBlob(kiz);
         if (agentAvailable) {
-          await printViaAgent(blob, defaultPrinter, 'noscale');
+          await printViaAgent(blob, defaultPrinter, 'noscale', 'kiz');
         } else {
           openBlobInNewWindow(blob);
         }

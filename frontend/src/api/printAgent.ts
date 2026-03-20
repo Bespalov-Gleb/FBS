@@ -49,6 +49,7 @@ export async function printViaAgent(
   blob: Blob,
   printer?: string,
   printSettings?: 'noscale' | 'shrink' | 'fit',
+  jobType?: 'barcode' | 'fbs' | 'kiz',
 ): Promise<boolean> {
   try {
     const base64 = await blobToBase64(blob);
@@ -57,6 +58,7 @@ export async function printViaAgent(
     const timeoutId = setTimeout(() => controller.abort(), PRINT_TIMEOUT_MS);
     const body: Record<string, unknown> = { data: base64, printer: printer || undefined, mime };
     if (printSettings) body.print_settings = printSettings;
+    if (jobType) body.job_type = jobType;
     const r = await fetch(`${AGENT_URL}/print`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
