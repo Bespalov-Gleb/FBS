@@ -5,6 +5,7 @@ import os
 import subprocess
 import tempfile
 from typing import Optional
+from pathlib import Path
 
 import img2pdf
 
@@ -97,6 +98,38 @@ def _log_print_error(msg: str) -> None:
         pass
 
 
+def _log_print_info(msg: str) -> None:
+    """Записать диагностическую информацию о печати (без падений)."""
+    try:
+        log_dir = os.path.join(os.environ.get("APPDATA", ""), "fbs-print-agent")
+        os.makedirs(log_dir, exist_ok=True)
+        log_path = os.path.join(log_dir, "print_info.log")
+        from datetime import datetime
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(f"{datetime.now().isoformat()} {msg}\n")
+    except Exception:
+        pass
+
+
+def _maybe_save_last_pdf(data: bytes, mime: str) -> None:
+    """
+    Сохранить входной PDF на диск (для диагностики).
+    Важно: MS Print to PDF может упаковать контент в A4 — нам нужно видеть исходный blob.
+    """
+    if mime not in ("application/pdf", "application/octet-stream"):
+        return
+    try:
+        base_dir = Path(os.environ.get("APPDATA", "")) / "fbs-print-agent" / "last_jobs"
+        base_dir.mkdir(parents=True, exist_ok=True)
+        from datetime import datetime
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        path = base_dir / f"in_{ts}.pdf"
+        path.write_bytes(data)
+        _log_print_info(f"Saved incoming PDF for diagnostics: {str(path)} (bytes={len(data)})")
+    except Exception as e:
+        _log_print_error(f"Failed to save incoming PDF diagnostics: {e}")
+
+
 def print_document(
     data: bytes,
     mime: str,
@@ -107,12 +140,18 @@ def print_document(
     Печать документа. Поддерживает application/pdf и image/png.
     print_settings: noscale (100% для этикеток), shrink, fit.
     """
+    # Сохраняем входной PDF как есть (до Sumatra), чтобы понять, какой MediaBox принтер видит.
+    _maybe_save_last_pdf(data, mime)
+
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as f:
         try:
             if mime in ("application/pdf", "application/octet-stream"):
                 f.write(data)
                 f.flush()
                 os.fsync(f.fileno())  # гарантировать запись на диск до вызова SumatraPDF
+                _log_print_info(
+                    f"Print job: printer={printer!r} print_settings={print_settings!r} input_mime={mime!r} pdf={f.name}"
+                )
                 return _print_pdf_with_printer(f.name, printer, print_settings)
             elif mime in ("image/png", "image/jpeg", "image/jpg"):
                 ext = ".png" if "png" in mime else ".jpg"
