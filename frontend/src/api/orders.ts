@@ -22,15 +22,26 @@ export interface OrderCompletePayload {
 
 export interface OrdersStats {
   total: number;
+  total_items?: number;
   on_assembly: number;
+  on_assembly_items?: number;
   completed: number;
+  completed_items?: number;
   completed_today: number;
+  completed_today_items?: number;
+  completed_week?: number;
+  completed_week_items?: number;
+  completed_month?: number;
+  completed_month_items?: number;
+  speed_items_per_hour_week?: number;
   by_marketplace: Array<{
     marketplace_id: number;
     name: string;
     type: string | null;
     total: number;
     completed: number;
+    total_items?: number;
+    completed_items?: number;
   }>;
 }
 

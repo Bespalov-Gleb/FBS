@@ -271,6 +271,7 @@ export default function AccountPage() {
                 </Box>
                 <Typography variant="h5" fontWeight={600}>
                   {stats.total}
+                  {typeof stats.total_items === 'number' ? ` (${stats.total_items})` : ''}
                 </Typography>
               </CardContent>
             </Card>
@@ -284,6 +285,7 @@ export default function AccountPage() {
                 </Box>
                 <Typography variant="h5" fontWeight={600} color="primary.main">
                   {stats.on_assembly}
+                  {typeof stats.on_assembly_items === 'number' ? ` (${stats.on_assembly_items})` : ''}
                 </Typography>
               </CardContent>
             </Card>
@@ -297,6 +299,7 @@ export default function AccountPage() {
                 </Box>
                 <Typography variant="h5" fontWeight={600} color="success.main">
                   {stats.completed}
+                  {typeof stats.completed_items === 'number' ? ` (${stats.completed_items})` : ''}
                 </Typography>
               </CardContent>
             </Card>
@@ -310,6 +313,49 @@ export default function AccountPage() {
                 </Box>
                 <Typography variant="h5" fontWeight={600}>
                   {stats.completed_today}
+                  {typeof stats.completed_today_items === 'number' ? ` (${stats.completed_today_items})` : ''}
+                </Typography>
+              </CardContent>
+            </Card>
+            <Card variant="outlined" sx={{ minWidth: 120 }}>
+              <CardContent sx={{ '&:last-child': { pb: 1.5 } }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+                  <Today fontSize="small" color="action" />
+                  <Typography variant="caption" color="text.secondary">
+                    За неделю
+                  </Typography>
+                </Box>
+                <Typography variant="h5" fontWeight={600}>
+                  {stats.completed_week ?? 0}
+                  {typeof stats.completed_week_items === 'number' ? ` (${stats.completed_week_items})` : ''}
+                </Typography>
+              </CardContent>
+            </Card>
+            <Card variant="outlined" sx={{ minWidth: 120 }}>
+              <CardContent sx={{ '&:last-child': { pb: 1.5 } }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+                  <Today fontSize="small" color="action" />
+                  <Typography variant="caption" color="text.secondary">
+                    За месяц
+                  </Typography>
+                </Box>
+                <Typography variant="h5" fontWeight={600}>
+                  {stats.completed_month ?? 0}
+                  {typeof stats.completed_month_items === 'number' ? ` (${stats.completed_month_items})` : ''}
+                </Typography>
+              </CardContent>
+            </Card>
+            <Card variant="outlined" sx={{ minWidth: 120 }}>
+              <CardContent sx={{ '&:last-child': { pb: 1.5 } }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+                  <Inventory2 fontSize="small" color="primary" />
+                  <Typography variant="caption" color="text.secondary">
+                    Скорость (шт/ч)
+                  </Typography>
+                </Box>
+                <Typography variant="h5" fontWeight={600} color="primary.main">
+                  {(stats.speed_items_per_hour_week ?? 0).toFixed(1)}
+                  {' шт/ч'}
                 </Typography>
               </CardContent>
             </Card>
@@ -324,7 +370,11 @@ export default function AccountPage() {
                   <Chip
                     key={mp.marketplace_id}
                     icon={<Store fontSize="small" />}
-                    label={`${mp.name}: ${mp.completed}/${mp.total}`}
+                    label={`${mp.name}: ${mp.completed}/${mp.total}${
+                      typeof mp.completed_items === 'number' && typeof mp.total_items === 'number'
+                        ? ` (${mp.completed_items}/${mp.total_items})`
+                        : ''
+                    }`}
                     size="small"
                     variant="outlined"
                   />

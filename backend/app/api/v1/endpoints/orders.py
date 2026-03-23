@@ -1375,10 +1375,18 @@ async def complete_order(
     mp = order.marketplace
     kiz_list: list[str] = []
     if data:
-        if data.kiz_codes:
-            kiz_list = [str(k).strip()[:31] for k in data.kiz_codes if k and str(k).strip()]
-        elif data.kiz_code and str(data.kiz_code).strip():
-            kiz_list = [str(data.kiz_code).strip()[:31]]
+        # Безопасное чтение полей (чтобы не падать при рассинхроне версий схем/контейнеров).
+        kiz_codes = getattr(data, "kiz_codes", None)
+        kiz_code = getattr(data, "kiz_code", None)
+
+        if kiz_codes:
+            try:
+                kiz_list = [str(k).strip()[:31] for k in kiz_codes if k and str(k).strip()]
+            except TypeError:
+                # на всякий случай, если kiz_codes вдруг пришёл не как список
+                kiz_list = []
+        elif kiz_code and str(kiz_code).strip():
+            kiz_list = [str(kiz_code).strip()[:31]]
     required_count = order.quantity
     if mp.is_kiz_enabled:
         if len(kiz_list) < required_count:
@@ -1537,7 +1545,7 @@ def _generate_product_barcode_pdf(
     scale_fit_reserved = min((label_w - 2 * margin) / bw1, available_h_for_barcode / bh1)
     # WORKING: пропорционально увеличиваем Ozon относительно базового fit.
     # Без прежнего "верхнего зажима", который обнулял эффект.
-    ozon_scale_boost = 1.22 if is_ozon_code and not is_ean else 1.0
+    ozon_scale_boost = 1.098 if is_ozon_code and not is_ean else 1.0
     scale1 = scale_fit_reserved * ozon_scale_boost
     # Защита от выхода за лист (58x40), но не от "резерва подписи" — чтобы рост реально был виден.
     scale_page_limit = min((label_w - 2 * margin) / bw1, (label_h - 2 * margin) / bh1)
@@ -1620,7 +1628,7 @@ def _generate_multi_product_barcode_pdf(
         )
         bw1, bh1 = bc_product.width, bc_product.height
         scale_fit_reserved = min((label_w - 2 * margin) / bw1, available_h_for_barcode / bh1)
-        ozon_scale_boost = 1.22 if is_ozon_code and not is_ean else 1.0
+        ozon_scale_boost = 1.098 if is_ozon_code and not is_ean else 1.0
         scale1 = scale_fit_reserved * ozon_scale_boost
         scale_page_limit = min((label_w - 2 * margin) / bw1, (label_h - 2 * margin) / bh1)
         if scale1 > scale_page_limit:

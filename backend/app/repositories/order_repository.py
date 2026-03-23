@@ -366,28 +366,75 @@ class OrderRepository:
         today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
 
         total = base.count()
+        total_items = int(
+            (base.with_entities(func.coalesce(func.sum(Order.quantity), 0)).scalar() or 0)
+        )
         on_assembly = total
+        on_assembly_items = total_items
         completed_since = datetime.utcnow() - timedelta(days=3)
-        completed = (
+        completed_q = (
             self.db.query(Order)
             .join(Marketplace, Order.marketplace_id == Marketplace.id)
             .filter(Marketplace.user_id == user_id)
             .filter(Order.collected_in_app == True)
             .filter(Order.completed_at >= completed_since)
-            .count()
         )
-        completed_today = (
+        completed = completed_q.count()
+        completed_items = int(
+            (completed_q.with_entities(func.coalesce(func.sum(Order.quantity), 0)).scalar() or 0)
+        )
+        completed_today_q = (
             self.db.query(Order)
             .join(Marketplace, Order.marketplace_id == Marketplace.id)
             .filter(Marketplace.user_id == user_id)
             .filter(Order.collected_in_app == True)
             .filter(Order.completed_at >= today_start)
-            .count()
+        )
+        completed_today = completed_today_q.count()
+        completed_today_items = int(
+            (completed_today_q.with_entities(func.coalesce(func.sum(Order.quantity), 0)).scalar() or 0)
+        )
+
+        # Статистика за последние 7/30 дней (только собранные)
+        week_start = datetime.utcnow() - timedelta(days=7)
+        month_start = datetime.utcnow() - timedelta(days=30)
+
+        completed_week_q = (
+            self.db.query(Order)
+            .join(Marketplace, Order.marketplace_id == Marketplace.id)
+            .filter(Marketplace.user_id == user_id)
+            .filter(Order.collected_in_app == True)
+            .filter(Order.completed_at >= week_start)
+        )
+        completed_week = completed_week_q.count()
+        completed_week_items = int(
+            (completed_week_q.with_entities(func.coalesce(func.sum(Order.quantity), 0)).scalar() or 0)
+        )
+
+        completed_month_q = (
+            self.db.query(Order)
+            .join(Marketplace, Order.marketplace_id == Marketplace.id)
+            .filter(Marketplace.user_id == user_id)
+            .filter(Order.collected_in_app == True)
+            .filter(Order.completed_at >= month_start)
+        )
+        completed_month = completed_month_q.count()
+        completed_month_items = int(
+            (completed_month_q.with_entities(func.coalesce(func.sum(Order.quantity), 0)).scalar() or 0)
+        )
+
+        # Скорость (шт/час) за последние 7 дней
+        speed_items_per_hour_week = (
+            float(completed_week_items) / (7 * 24) if completed_week_items > 0 else 0.0
         )
 
         # По маркетплейсам: отдельно total и completed для надёжности (за последние 3 дня)
         completed_counts = (
-            self.db.query(Order.marketplace_id, func.count(Order.id).label("cnt"))
+            self.db.query(
+                Order.marketplace_id,
+                func.count(Order.id).label("cnt"),
+                func.coalesce(func.sum(Order.quantity), 0).label("items"),
+            )
             .join(Marketplace, Order.marketplace_id == Marketplace.id)
             .filter(Marketplace.user_id == user_id)
             .filter(Order.collected_in_app == True)
@@ -395,7 +442,8 @@ class OrderRepository:
             .group_by(Order.marketplace_id)
             .all()
         )
-        completed_by_mp = {r.marketplace_id: r.cnt for r in completed_counts}
+        completed_by_mp = {r.marketplace_id: int(r.cnt or 0) for r in completed_counts}
+        completed_items_by_mp = {r.marketplace_id: int(r.items or 0) for r in completed_counts}
 
         mp_stats = (
             self.db.query(
@@ -403,6 +451,7 @@ class OrderRepository:
                 Marketplace.name,
                 Marketplace.type,
                 func.count(Order.id).label("total"),
+                func.coalesce(func.sum(Order.quantity), 0).label("total_items"),
             )
             .join(Order, Order.marketplace_id == Marketplace.id)
             .filter(Marketplace.user_id == user_id)
@@ -420,15 +469,26 @@ class OrderRepository:
                 "type": r.type.value if r.type else None,
                 "total": r.total or 0,
                 "completed": completed_by_mp.get(r.id, 0),
+                "total_items": int(r.total_items or 0),
+                "completed_items": completed_items_by_mp.get(r.id, 0),
             }
             for r in mp_stats
         ]
 
         return {
             "total": total,
+            "total_items": total_items,
             "on_assembly": on_assembly,
+            "on_assembly_items": on_assembly_items,
             "completed": completed,
+            "completed_items": completed_items,
             "completed_today": completed_today,
+            "completed_today_items": completed_today_items,
+            "completed_week": completed_week,
+            "completed_week_items": completed_week_items,
+            "completed_month": completed_month,
+            "completed_month_items": completed_month_items,
+            "speed_items_per_hour_week": speed_items_per_hour_week,
             "by_marketplace": by_marketplace,
         }
 
