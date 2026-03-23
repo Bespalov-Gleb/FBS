@@ -384,6 +384,8 @@ export default function AssemblyPage() {
         onComplete={() => {
           refetch();
           queryClient.invalidateQueries({ queryKey: ['orders-completed'] });
+          // Чтобы карточки в "Учетной записи" обновлялись сразу после "Собрано".
+          queryClient.invalidateQueries({ queryKey: ['orders-stats'] });
           queryClient.invalidateQueries({ queryKey: ['kiz-scans-count'] });
           setSelectedOrder(null);
         }}

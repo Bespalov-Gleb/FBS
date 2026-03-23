@@ -367,12 +367,11 @@ class OrderRepository:
         )
         today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
 
-        total = base.count()
-        total_items = int(
+        # "В сборке" = всё, что ещё НЕ отмечено «Собрано» (collected_in_app != True)
+        on_assembly = base.count()
+        on_assembly_items = int(
             (base.with_entities(func.coalesce(func.sum(Order.quantity), 0)).scalar() or 0)
         )
-        on_assembly = total
-        on_assembly_items = total_items
         completed_since = datetime.utcnow() - timedelta(days=3)
         completed_q = (
             self.db.query(Order)
@@ -387,6 +386,11 @@ class OrderRepository:
         completed_items = int(
             (completed_q.with_entities(func.coalesce(func.sum(Order.quantity), 0)).scalar() or 0)
         )
+
+        # Делает инвариант: "Всего - Собрано = На сборке"
+        # (в рамках тех же фильтров, что и для cards "Собрано").
+        total = on_assembly + completed
+        total_items = on_assembly_items + completed_items
         completed_today_q = (
             self.db.query(Order)
             .join(Marketplace, Order.marketplace_id == Marketplace.id)
