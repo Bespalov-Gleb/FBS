@@ -161,7 +161,23 @@ class BaseMarketplaceClient(ABC):
                 last_exception = e
                 # Retry только для retryable ошибок
                 if attempt < max_retries and self._is_retryable(e):
-                    wait_time = DEFAULT_RETRY_BACKOFF_BASE * (2 ** attempt)
+                    # Для 429 используем retry_after от API (если есть), чтобы не
+                    # повторять запрос раньше, чем снимется rate limit.
+                    # Для остальных retryable ошибок — оставляем экспоненциальный backoff.
+                    retry_after: Optional[int] = None
+                    if isinstance(e, RateLimitException):
+                        try:
+                            detail = getattr(e, "detail", None)
+                            if isinstance(detail, dict):
+                                ra = detail.get("retry_after")
+                                retry_after = int(ra) if ra is not None else None
+                        except Exception:
+                            retry_after = None
+
+                    if retry_after is not None and retry_after > 0:
+                        wait_time = float(retry_after)
+                    else:
+                        wait_time = DEFAULT_RETRY_BACKOFF_BASE * (2 ** attempt)
                     logger.warning(
                         f"Retry {attempt + 1}/{max_retries} after {wait_time}s",
                         extra={
