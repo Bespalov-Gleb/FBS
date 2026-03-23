@@ -358,10 +358,11 @@ class OrderRepository:
             self.db.query(Order)
             .join(Marketplace, Order.marketplace_id == Marketplace.id)
             .filter(Marketplace.user_id == user_id)
-            # "В сборке" — это кастомное состояние: заказ захвачен текущим упаковщиком
-            # и находится в статусе PACKAGING, пока не отмечен как «Собрано».
-            .filter(Order.assigned_to_id == user_id)
-            .filter(Order.status == OrderStatus.PACKAGING)
+            # "На сборке" — это всё, что ещё НЕ отмечено «Собрано».
+            # То есть: collected_in_app != True (и при этом исключаем отменённые/доставленные/COMPЛЕТED).
+            .filter(Order.status != OrderStatus.CANCELLED)
+            .filter(Order.status != OrderStatus.DELIVERED)
+            .filter(Order.status != OrderStatus.COMPLETED)
             .filter(Order.collected_in_app != True)
         )
         today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
@@ -465,8 +466,9 @@ class OrderRepository:
             )
             .join(Order, Order.marketplace_id == Marketplace.id)
             .filter(Marketplace.user_id == user_id)
-            .filter(Order.assigned_to_id == user_id)
-            .filter(Order.status == OrderStatus.PACKAGING)
+            .filter(Order.status != OrderStatus.CANCELLED)
+            .filter(Order.status != OrderStatus.DELIVERED)
+            .filter(Order.status != OrderStatus.COMPLETED)
             .filter(Order.collected_in_app != True)
             .group_by(Marketplace.id, Marketplace.name, Marketplace.type)
             .all()
