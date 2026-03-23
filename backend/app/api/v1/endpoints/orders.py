@@ -1545,7 +1545,10 @@ def _generate_product_barcode_pdf(
     scale_fit_reserved = min((label_w - 2 * margin) / bw1, available_h_for_barcode / bh1)
     # WORKING: пропорционально увеличиваем Ozon относительно базового fit.
     # Без прежнего "верхнего зажима", который обнулял эффект.
-    ozon_scale_boost = 1.098 if is_ozon_code and not is_ean else 1.0
+    # Уменьшаем Ozon ШК относительно базового fit.
+    # Важно: раньше эффект мог быть "срезан" clamp'ом scale_page_limit, поэтому
+    # задаём более нейтральный коэффициент (1.0), чтобы реально ушло вниз.
+    ozon_scale_boost = 1.0 if is_ozon_code and not is_ean else 1.0
     scale1 = scale_fit_reserved * ozon_scale_boost
     # Защита от выхода за лист (58x40), но не от "резерва подписи" — чтобы рост реально был виден.
     scale_page_limit = min((label_w - 2 * margin) / bw1, (label_h - 2 * margin) / bh1)
@@ -1628,7 +1631,7 @@ def _generate_multi_product_barcode_pdf(
         )
         bw1, bh1 = bc_product.width, bc_product.height
         scale_fit_reserved = min((label_w - 2 * margin) / bw1, available_h_for_barcode / bh1)
-        ozon_scale_boost = 1.098 if is_ozon_code and not is_ean else 1.0
+        ozon_scale_boost = 1.0 if is_ozon_code and not is_ean else 1.0
         scale1 = scale_fit_reserved * ozon_scale_boost
         scale_page_limit = min((label_w - 2 * margin) / bw1, (label_h - 2 * margin) / bh1)
         if scale1 > scale_page_limit:
