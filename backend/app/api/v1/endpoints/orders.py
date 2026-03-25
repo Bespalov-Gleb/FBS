@@ -200,8 +200,10 @@ def list_orders(
             assigned_to_id=o.assigned_to_id,
             assigned_at=o.assigned_at,
             assigned_to_name=o.assigned_to_user.full_name if o.assigned_to_user else None,
-            is_locked_by_me=o.is_locked_by(current_user.id),
-            is_locked_by_other=o.is_locked_by_other(current_user.id),
+            # Для PACKER используем effective_user_id (owner/admin),
+            # иначе lock-флаги считают "занятость другим" и карточки становятся не кликабельными.
+            is_locked_by_me=o.is_locked_by(effective_user_id),
+            is_locked_by_other=o.is_locked_by_other(effective_user_id),
             is_kiz_enabled=o.marketplace.is_kiz_enabled if o.marketplace else False,
             products=_order_products(o),
         )
@@ -268,8 +270,10 @@ def list_completed_orders(
             assigned_to_id=o.assigned_to_id,
             assigned_at=o.assigned_at,
             assigned_to_name=o.assigned_to_user.full_name if o.assigned_to_user else None,
-            is_locked_by_me=o.is_locked_by(current_user.id),
-            is_locked_by_other=o.is_locked_by_other(current_user.id),
+            # Для PACKER используем effective_user_id (owner/admin),
+            # иначе lock-флаги считают "занятость другим" и карточки становятся не кликабельными.
+            is_locked_by_me=o.is_locked_by(effective_user_id),
+            is_locked_by_other=o.is_locked_by_other(effective_user_id),
             is_kiz_enabled=o.marketplace.is_kiz_enabled if o.marketplace else False,
             products=_order_products(o),
         )
