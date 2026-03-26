@@ -200,10 +200,9 @@ def list_orders(
             assigned_to_id=o.assigned_to_id,
             assigned_at=o.assigned_at,
             assigned_to_name=o.assigned_to_user.full_name if o.assigned_to_user else None,
-            # Для PACKER используем effective_user_id (owner/admin),
-            # иначе lock-флаги считают "занятость другим" и карточки становятся не кликабельными.
-            is_locked_by_me=o.is_locked_by(effective_user_id),
-            is_locked_by_other=o.is_locked_by_other(effective_user_id),
+            # Блокировка по факту assigned_to_id: кто открыл заказ (упаковщик или админ).
+            is_locked_by_me=o.is_locked_by(current_user.id),
+            is_locked_by_other=o.is_locked_by_other(current_user.id),
             is_kiz_enabled=o.marketplace.is_kiz_enabled if o.marketplace else False,
             products=_order_products(o),
         )
@@ -237,6 +236,7 @@ def list_completed_orders(
         marketplace_types=marketplace_types,
         warehouse_ids=warehouse_ids,
         search=search,
+        packer_allowed_marketplace_ids=packer_allowed_mp_ids,
     )
     orders = order_repo.get_completed_list(
         user_id=effective_user_id,
@@ -248,6 +248,7 @@ def list_completed_orders(
         search=search,
         sort_by=sort_by,
         sort_desc=sort_desc,
+        packer_allowed_marketplace_ids=packer_allowed_mp_ids,
     )
     items = [
         OrderResponse(
@@ -270,10 +271,9 @@ def list_completed_orders(
             assigned_to_id=o.assigned_to_id,
             assigned_at=o.assigned_at,
             assigned_to_name=o.assigned_to_user.full_name if o.assigned_to_user else None,
-            # Для PACKER используем effective_user_id (owner/admin),
-            # иначе lock-флаги считают "занятость другим" и карточки становятся не кликабельными.
-            is_locked_by_me=o.is_locked_by(effective_user_id),
-            is_locked_by_other=o.is_locked_by_other(effective_user_id),
+            # Блокировка по факту assigned_to_id: кто открыл заказ (упаковщик или админ).
+            is_locked_by_me=o.is_locked_by(current_user.id),
+            is_locked_by_other=o.is_locked_by_other(current_user.id),
             is_kiz_enabled=o.marketplace.is_kiz_enabled if o.marketplace else False,
             products=_order_products(o),
         )
@@ -1207,12 +1207,27 @@ async def get_product_image(
 
 
 def _get_order_for_user(order_id: int, current_user: User, db: Session) -> Order:
-    """Получить заказ с проверкой доступа"""
-    order = db.query(Order).filter(Order.id == order_id).first()
+    """
+    Получить заказ с проверкой доступа.
+
+    Упаковщик с owner_id видит заказы магазинов владельца (как в GET /orders);
+    при ограничении UserMarketplaceAccess — только указанные marketplace_id.
+    """
+    order = (
+        db.query(Order)
+        .options(joinedload(Order.marketplace))
+        .filter(Order.id == order_id)
+        .first()
+    )
     if not order:
         raise HTTPException(404, detail="Order not found")
     mp = order.marketplace
-    if not mp or mp.user_id != current_user.id:
+    effective_user_id, packer_allowed_mp_ids = _get_effective_user_and_access(
+        current_user, db
+    )
+    if not mp or mp.user_id != effective_user_id:
+        raise HTTPException(404, detail="Order not found")
+    if packer_allowed_mp_ids is not None and order.marketplace_id not in packer_allowed_mp_ids:
         raise HTTPException(404, detail="Order not found")
     return order
 
@@ -2132,12 +2147,8 @@ async def get_order_product_barcode(
     from app.core.security import decrypt_api_key
     import io
 
-    order = db.query(Order).filter(Order.id == order_id).first()
-    if not order:
-        raise HTTPException(404, detail="Order not found")
+    order = _get_order_for_user(order_id, current_user, db)
     mp = order.marketplace
-    if not mp or mp.user_id != current_user.id:
-        raise HTTPException(404, detail="Order not found")
     if mp.type != MarketplaceType.OZON:
         raise HTTPException(400, detail="Product barcode only for Ozon")
     if not mp.client_id:
@@ -2204,12 +2215,8 @@ async def get_order_barcodes_pdf(
     from app.services.marketplace.ozon import OzonClient
     from app.core.security import decrypt_api_key
 
-    order = db.query(Order).filter(Order.id == order_id).first()
-    if not order:
-        raise HTTPException(404, detail="Order not found")
+    order = _get_order_for_user(order_id, current_user, db)
     mp = order.marketplace
-    if not mp or mp.user_id != current_user.id:
-        raise HTTPException(404, detail="Order not found")
 
     items: list[tuple[str, str]] = []
 
@@ -2350,12 +2357,8 @@ async def get_order_label(
     from app.services.marketplace.wildberries import WildberriesClient
     from app.core.security import decrypt_api_key
 
-    order = db.query(Order).filter(Order.id == order_id).first()
-    if not order:
-        raise HTTPException(404, detail="Order not found")
+    order = _get_order_for_user(order_id, current_user, db)
     mp = order.marketplace
-    if not mp or mp.user_id != current_user.id:
-        raise HTTPException(404, detail="Order not found")
     api_key = decrypt_api_key(mp.api_key)
 
     if mp.type == MarketplaceType.OZON:

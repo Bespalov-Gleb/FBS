@@ -247,6 +247,7 @@ class OrderRepository:
         search: Optional[str] = None,
         sort_by: str = "completed_at",
         sort_desc: bool = True,
+        packer_allowed_marketplace_ids: Optional[List[int]] = None,
     ) -> list[Order]:
         """Список заказов, отмеченных «Собрано» в нашем приложении. Только за последние 3 дня."""
         from app.models.marketplace import Marketplace, MarketplaceType
@@ -259,6 +260,8 @@ class OrderRepository:
             .filter(Order.collected_in_app == True)
             .filter(Order.completed_at >= completed_since)
         )
+        if packer_allowed_marketplace_ids is not None:
+            query = query.filter(Order.marketplace_id.in_(packer_allowed_marketplace_ids))
         mp_conds = []
         if marketplace_ids:
             mp_conds.append(Order.marketplace_id.in_(marketplace_ids))
@@ -307,6 +310,7 @@ class OrderRepository:
         marketplace_types: Optional[List[str]] = None,
         warehouse_ids: Optional[List[int]] = None,
         search: Optional[str] = None,
+        packer_allowed_marketplace_ids: Optional[List[int]] = None,
     ) -> int:
         """Количество заказов, отмеченных «Собрано» в нашем приложении (за последние 3 дня)."""
         from app.models.marketplace import Marketplace, MarketplaceType
@@ -319,6 +323,8 @@ class OrderRepository:
             .filter(Order.collected_in_app == True)
             .filter(Order.completed_at >= completed_since)
         )
+        if packer_allowed_marketplace_ids is not None:
+            query = query.filter(Order.marketplace_id.in_(packer_allowed_marketplace_ids))
         if marketplace_ids:
             query = query.filter(Order.marketplace_id.in_(marketplace_ids))
         if marketplace_types:
