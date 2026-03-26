@@ -5,11 +5,16 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
+from app.core.exceptions import RateLimitException
 from app.core.security import decrypt_api_key
 from app.models.marketplace import Marketplace, MarketplaceType
 from app.repositories.warehouse_repository import WarehouseRepository
 from app.services.marketplace.ozon import OzonClient
 from app.services.marketplace.wildberries import WildberriesClient
+from app.services.ozon_distributed_pace import (
+    mark_ozon_warehouse_list_synced,
+    should_skip_ozon_warehouse_list,
+)
 from app.utils.logger import logger
 
 
@@ -32,11 +37,25 @@ class WarehouseService:
             if not marketplace.client_id:
                 logger.warning("Ozon marketplace without client_id, skipping warehouse sync")
                 return 0
+            if should_skip_ozon_warehouse_list(marketplace.id):
+                logger.info(
+                    "Ozon: пропуск /v1/warehouse/list (кэш TTL), склады не менялись недавно",
+                    extra={"marketplace_id": marketplace.id},
+                )
+                return 0
             async with OzonClient(
                 api_key=api_key,
                 client_id=marketplace.client_id,
             ) as client:
-                warehouses_data = await client.get_warehouses()
+                try:
+                    warehouses_data = await client.get_warehouses()
+                except RateLimitException:
+                    logger.warning(
+                        "Ozon: лимит запросов при получении складов — пропускаем обновление складов "
+                        "(заказы синхронизируются; склады в БД остаются от прошлого успешного синка)",
+                        extra={"marketplace_id": marketplace.id},
+                    )
+                    return 0
         elif marketplace.type == MarketplaceType.WILDBERRIES:
             async with WildberriesClient(api_key=api_key) as client:
                 warehouses_data = await client.get_warehouses()
@@ -57,7 +76,10 @@ class WarehouseService:
                 name=str(name),
             )
             count += 1
-        
+
+        if marketplace.type == MarketplaceType.OZON:
+            mark_ozon_warehouse_list_synced(marketplace.id)
+
         logger.info(
             f"Synced {count} warehouses for marketplace {marketplace.id} ({marketplace.type})"
         )

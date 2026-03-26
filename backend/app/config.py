@@ -111,8 +111,17 @@ class Settings(BaseSettings):
 
     # Marketplaces API
     OZON_API_URL: str = "https://api-seller.ozon.ru"
-    OZON_RATE_LIMIT: int = 20  # requests per second
-    
+    # Док. Ozon: лимиты по ключу; фактически 429 «per second» — держим низкий общий поток
+    OZON_RATE_LIMIT: int = 20  # ориентир из доки (не используется как жёсткий счётчик)
+
+    # Ozon: Redis — один интервал между ЛЮБЫМИ запросами на Client-Id (все процессы)
+    OZON_REDIS_PACE_ENABLED: bool = True
+    OZON_REDIS_PACE_MS: int = 380
+    OZON_REDIS_PACE_SPIN_CAP_SEC: float = 90.0
+
+    # Ozon: реже звать /v1/warehouse/list (список складов меняется редко)
+    OZON_WAREHOUSE_SYNC_CACHE_SEC: int = 900
+
     WILDBERRIES_API_URL: str = "https://suppliers-api.wildberries.ru"
     WILDBERRIES_STATISTICS_URL: str = "https://statistics-api.wildberries.ru"
     WILDBERRIES_RATE_LIMIT: int = 100  # requests per minute

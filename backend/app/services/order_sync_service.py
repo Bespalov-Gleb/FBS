@@ -34,15 +34,24 @@ class OrderSyncService:
         Returns:
             int: Количество созданных/обновлённых заказов
         """
+        # Ozon: разнести старт синка между Celery-воркерами (один Client-Id — общий per-second лимит)
+        if marketplace.type == MarketplaceType.OZON:
+            try:
+                _jit = float(os.environ.get("OZON_SYNC_START_JITTER_SEC", "2.5") or 0)
+            except ValueError:
+                _jit = 2.5
+            if _jit > 0:
+                await asyncio.sleep(random.uniform(0, _jit))
+
         # 1. Синхронизируем склады
         await WarehouseService.sync_warehouses(marketplace, db)
 
         # Ozon: отдельный HTTP-клиент на заказы — без паузы два запроса подряд бьют в per-second
         if marketplace.type == MarketplaceType.OZON:
             try:
-                _oz_gap = float(os.environ.get("OZON_MIN_REQUEST_INTERVAL_SEC", "0.55") or 0.55)
+                _oz_gap = float(os.environ.get("OZON_MIN_REQUEST_INTERVAL_SEC", "0.22") or 0.22)
             except ValueError:
-                _oz_gap = 0.55
+                _oz_gap = 0.22
             if _oz_gap > 0:
                 await asyncio.sleep(_oz_gap)
         

@@ -13,12 +13,13 @@ import time
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
-from app.core.exceptions import MarketplaceAPIException
+from app.core.exceptions import MarketplaceAPIException, RateLimitException
 from app.services.marketplace.base import (
     BaseMarketplaceClient,
     MarketplaceOrder,
     OrderStatus,
 )
+from app.services.ozon_distributed_pace import acquire_ozon_pace_slot
 from app.utils.logger import logger
 
 
@@ -57,9 +58,9 @@ class OzonClient(BaseMarketplaceClient):
         rpm = requests_per_minute
         if rpm is None:
             try:
-                rpm = int(os.getenv("OZON_REQUESTS_PER_MINUTE", "12"))
+                rpm = int(os.getenv("OZON_REQUESTS_PER_MINUTE", "8"))
             except ValueError:
-                rpm = 12
+                rpm = 8
         super().__init__(
             api_key,
             client_id=client_id,
@@ -81,8 +82,9 @@ class OzonClient(BaseMarketplaceClient):
         params: Optional[dict[str, Any]],
         json_data: Optional[dict[str, Any]],
     ) -> dict[str, Any]:
-        """Один активный запрос к Ozon + минимальный интервал (защита от 429 per second)."""
+        """Один активный запрос к Ozon + Redis-пауза на весь Client-Id + локальный зазор."""
         async with self._ozon_inflight:
+            await acquire_ozon_pace_slot(self.client_id)
             if self._ozon_min_interval > 0:
                 gap = self._ozon_last_done + self._ozon_min_interval - time.monotonic()
                 if gap > 0:
@@ -99,6 +101,7 @@ class OzonClient(BaseMarketplaceClient):
         json_data: Optional[dict[str, Any]] = None,
     ) -> bytes:
         async with self._ozon_inflight:
+            await acquire_ozon_pace_slot(self.client_id)
             if self._ozon_min_interval > 0:
                 gap = self._ozon_last_done + self._ozon_min_interval - time.monotonic()
                 if gap > 0:
@@ -1137,18 +1140,28 @@ class OzonClient(BaseMarketplaceClient):
             list: Список складов для настроек цветов
         """
         logger.info("Fetching Ozon warehouses list")
-        
+
         try:
+            try:
+                _wh_retries = int(os.getenv("OZON_WAREHOUSE_LIST_MAX_RETRIES", "10"))
+            except ValueError:
+                _wh_retries = 10
+            _wh_retries = max(3, min(_wh_retries, 20))
             response = await self._request(
                 method="POST",
                 endpoint="/v1/warehouse/list",
                 json_data={},
+                max_retries=_wh_retries,
             )
-            
+
             warehouses = response.get("result", [])
             logger.info(f"Received {len(warehouses)} warehouses from Ozon")
             return warehouses
-            
+
+        except RateLimitException:
+            raise
+        except MarketplaceAPIException:
+            raise
         except Exception as e:
             logger.error(
                 "Failed to fetch Ozon warehouses",
