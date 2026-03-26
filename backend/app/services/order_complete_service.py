@@ -1,11 +1,16 @@
 """
-Сервис отметки заказа «Собрано» — только локальное изменение статуса
+Сервис отметки заказа «Собрано».
+
+WB: при включённом КИЗ сначала отправка КИЗ в Wildberries API (meta/sgtin), затем БД.
+Ozon: только локально (как раньше).
 """
 from sqlalchemy.orm import Session
 
+from app.core.security import decrypt_api_key
 from app.models.marketplace import MarketplaceType
 from app.models.order import Order
 from app.models.scanned_kiz import ScannedKiz
+from app.services.marketplace.wildberries import WildberriesClient
 
 KIZ_MAX_LENGTH = 31  # WB и Ozon принимают только первые 31 символ
 
@@ -25,7 +30,7 @@ def _add_to_scanned_kiz(db: Session, user_id: int, kiz_code: str, order: Order) 
 
 
 class OrderCompleteService:
-    """Отметка заказа как собранного — только локально, без вызова API маркетплейсов"""
+    """Отметка заказа как собранного; для WB с КИЗ — вызов API перед коммитом."""
 
     @staticmethod
     async def complete_order(
@@ -37,7 +42,9 @@ class OrderCompleteService:
         """
         Отметить заказ «Собрано»: обновить в БД.
 
-        Ozon и WB: только локально — сохраняем статус и КИЗ (по одному на каждый товар).
+        Wildberries: если включён КИЗ и передан код — PUT .../orders/{id}/meta/sgtin;
+        при ошибке API исключение, коммита нет.
+        Ozon: только локально.
         """
         kiz_list = [k.strip()[:KIZ_MAX_LENGTH] for k in kiz_codes if k and k.strip()]
         first_kiz = kiz_list[0] if kiz_list else None
@@ -58,6 +65,10 @@ class OrderCompleteService:
             return True
 
         if mp.type == MarketplaceType.WILDBERRIES:
+            if mp.is_kiz_enabled and first_kiz:
+                api_key = decrypt_api_key(mp.api_key)
+                async with WildberriesClient(api_key=api_key) as client:
+                    await client.add_kiz_code(str(order.external_id), first_kiz)
             for kiz in kiz_list:
                 _add_to_scanned_kiz(db, user_id, kiz, order)
             order.complete(user_id=user_id, kiz_code=first_kiz)
