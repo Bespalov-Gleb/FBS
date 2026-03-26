@@ -14,7 +14,6 @@ import {
 import Sync from '@mui/icons-material/Sync';
 import Download from '@mui/icons-material/Download';
 import DeleteSweep from '@mui/icons-material/DeleteSweep';
-import { useSelector } from 'react-redux';
 import OrderFilters, { defaultFilters, type OrderFiltersState } from '../components/orders/OrderFilters';
 import OrderCardGrid from '../components/orders/OrderCardGrid';
 import OrderModal from '../components/orders/OrderModal';
@@ -27,12 +26,9 @@ import { printSettingsApi } from '../api/printSettings';
 import { isPrintAgentAvailable, printViaAgent } from '../api/printAgent';
 import { openBlobInNewWindow, openBlobInSameTab } from '../utils/printUtils';
 import type { Order } from '../types/api';
-import type { RootState } from '../store';
 
 export default function AssemblyPage() {
   const queryClient = useQueryClient();
-  const user = useSelector((state: RootState) => state.auth.user);
-  const isAdmin = user?.role === 'admin';
 
   const [filters, setFilters] = useState<OrderFiltersState>(defaultFilters);
   const [page, setPage] = useState(1);
@@ -111,7 +107,6 @@ export default function AssemblyPage() {
   const { data: marketplaces = [] } = useQuery({
     queryKey: ['marketplaces'],
     queryFn: () => marketplacesApi.list(),
-    enabled: isAdmin,
   });
 
   const { data: warehouses = [] } = useQuery({
@@ -133,8 +128,17 @@ export default function AssemblyPage() {
 
   const syncMutation = useMutation({
     mutationFn: () => ordersApi.syncAll(),
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['orders'] });
+      queryClient.invalidateQueries({ queryKey: ['orders-completed'] });
+      queryClient.invalidateQueries({ queryKey: ['orders-stats'] });
+      queryClient.invalidateQueries({ queryKey: ['marketplaces'] });
+      setSnackbar({
+        message: `Синхронизация завершена: обновлено записей ~${data.total_synced ?? 0}`,
+      });
+    },
+    onError: () => {
+      setSnackbar({ message: 'Не удалось синхронизировать заказы (нет прав или ошибка сервера)' });
     },
   });
 
@@ -306,15 +310,13 @@ export default function AssemblyPage() {
             <MenuItem onClick={() => handleKizDownload('xlsx')}>Excel (.xlsx)</MenuItem>
             <MenuItem onClick={() => handleKizDownload('txt')}>Текст (.txt)</MenuItem>
           </Menu>
-          {isAdmin && (
-            <Button
-              startIcon={<Sync />}
-              onClick={handleSync}
-              disabled={syncMutation.isPending}
-            >
-              Синхронизировать
-            </Button>
-          )}
+          <Button
+            startIcon={<Sync />}
+            onClick={handleSync}
+            disabled={syncMutation.isPending}
+          >
+            Синхронизировать
+          </Button>
         </Box>
       </Box>
       <OrderFilters

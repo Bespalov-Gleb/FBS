@@ -11,14 +11,14 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.database import get_db
+from app.core.packer_scope import get_effective_user_and_marketplace_ids
 from app.utils.logger import logger
-from app.core.dependencies import CurrentAdminUser, CurrentUser
+from app.core.dependencies import CurrentUser
 from app.models.marketplace import Marketplace, MarketplaceType
 from app.models.order import Order, OrderStatus
 from app.models.scanned_kiz import ScannedKiz
 from app.models.print_settings import PrintSettings
-from app.models.user import User, UserRole
-from app.models.user_marketplace_access import UserMarketplaceAccess
+from app.models.user import User
 from app.repositories.order_repository import OrderRepository
 from app.schemas.order import OrderCompleteRequest, OrderProductItem, OrderResponse, OrdersListResponse
 from app.services.marketplace.wildberries import WildberriesClient
@@ -31,21 +31,7 @@ router = APIRouter(prefix="/orders", tags=["Orders"])
 def _get_effective_user_and_access(
     current_user: User, db: Session
 ) -> tuple[int, Optional[List[int]]]:
-    """
-    Для упаковщика (packer) с owner_id возвращает ID владельца-администратора
-    и список разрешённых marketplace_id (None = все).
-    Для администратора возвращает его собственный ID и None (без ограничений).
-    """
-    if current_user.role == UserRole.PACKER and current_user.owner_id:
-        effective_user_id = current_user.owner_id
-        rows = (
-            db.query(UserMarketplaceAccess)
-            .filter(UserMarketplaceAccess.user_id == current_user.id)
-            .all()
-        )
-        allowed = [r.marketplace_id for r in rows] if rows else None
-        return effective_user_id, allowed
-    return current_user.id, None
+    return get_effective_user_and_marketplace_ids(current_user, db)
 
 
 def _product_image_url_for_order(o: Order) -> Optional[str]:
@@ -1336,25 +1322,41 @@ def release_order(
     return {"ok": True, "order_id": order_id}
 
 
+def _marketplace_for_order_sync(
+    marketplace_id: int, current_user: User, db: Session
+) -> Marketplace:
+    """Маркетплейс владельца; упаковщик — только из разрешённых (как список заказов)."""
+    eff_id, allowed = _get_effective_user_and_access(current_user, db)
+    mp = (
+        db.query(Marketplace)
+        .filter(
+            Marketplace.id == marketplace_id,
+            Marketplace.user_id == eff_id,
+        )
+        .first()
+    )
+    if not mp:
+        raise HTTPException(status_code=404, detail="Marketplace not found")
+    if allowed is not None and marketplace_id not in allowed:
+        raise HTTPException(status_code=404, detail="Marketplace not found")
+    return mp
+
+
 @router.post("/sync/marketplace/{marketplace_id}")
 async def sync_orders(
     marketplace_id: int,
     db: Session = Depends(get_db),
-    current_user: User = CurrentAdminUser,
+    current_user: User = CurrentUser,
 ):
     """
     Ручная синхронизация заказов для маркетплейса.
     
     Ozon: заказы «Ожидают отгрузки»
     WB: заказы «На сборке» (new + confirm)
-    """
-    marketplace = db.query(Marketplace).filter(
-        Marketplace.id == marketplace_id,
-        Marketplace.user_id == current_user.id,
-    ).first()
-    if not marketplace:
-        raise HTTPException(status_code=404, detail="Marketplace not found")
     
+    Доступ: администратор (свои магазины) или упаковщик (магазины владельца по доступу).
+    """
+    marketplace = _marketplace_for_order_sync(marketplace_id, current_user, db)
     count = await OrderSyncService.sync_marketplace_orders(marketplace, db)
     return {"synced": count, "marketplace_id": marketplace_id}
 
@@ -1362,15 +1364,20 @@ async def sync_orders(
 @router.post("/sync/all")
 async def sync_all_orders(
     db: Session = Depends(get_db),
-    current_user: User = CurrentAdminUser,
+    current_user: User = CurrentUser,
 ):
     """
-    Синхронизация заказов для всех активных маркетплейсов пользователя.
+    Синхронизация заказов для всех активных маркетплейсов в области видимости пользователя.
+    Упаковщик — только разрешённые магазины владельца.
     """
-    marketplaces = db.query(Marketplace).filter(
-        Marketplace.user_id == current_user.id,
+    eff_id, allowed = _get_effective_user_and_access(current_user, db)
+    q = db.query(Marketplace).filter(
+        Marketplace.user_id == eff_id,
         Marketplace.is_active == True,
-    ).all()
+    )
+    if allowed is not None:
+        q = q.filter(Marketplace.id.in_(allowed))
+    marketplaces = q.all()
     
     total = 0
     results = []

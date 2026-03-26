@@ -17,6 +17,32 @@ from app.services.marketplace.wildberries import WildberriesClient
 KIZ_STORAGE_MAX = 255
 
 
+def _wb_meta_lists_contain_sgtin(extra: dict) -> bool:
+    """WB в API отдаёт requiredMeta/optionalMeta; в БД часто required_meta/optional_meta."""
+    req = extra.get("required_meta") or extra.get("requiredMeta") or []
+    opt = extra.get("optional_meta") or extra.get("optionalMeta") or []
+
+    def mentions_sgtin(meta_list) -> bool:
+        if not meta_list:
+            return False
+        for x in meta_list:
+            if isinstance(x, str) and x.strip().lower() == "sgtin":
+                return True
+            if isinstance(x, dict):
+                key = (
+                    x.get("type")
+                    or x.get("name")
+                    or x.get("meta")
+                    or x.get("key")
+                    or ""
+                )
+                if str(key).strip().lower() == "sgtin":
+                    return True
+        return False
+
+    return mentions_sgtin(req) or mentions_sgtin(opt)
+
+
 def _add_to_scanned_kiz(db: Session, user_id: int, kiz_code: str, order: Order) -> None:
     """Добавить КИЗ в таблицу отсканированных (для выгрузки в WB/Ozon)."""
     if not kiz_code or not kiz_code.strip():
@@ -69,19 +95,17 @@ class OrderCompleteService:
         if mp.type == MarketplaceType.WILDBERRIES:
             if mp.is_kiz_enabled and first_kiz:
                 ed = order.extra_data or {}
-                req_meta = ed.get("required_meta") or []
-                opt_meta = ed.get("optional_meta") or []
-                if "sgtin" not in req_meta and "sgtin" not in opt_meta:
+                if not _wb_meta_lists_contain_sgtin(ed):
                     raise MarketplaceAPIException(
                         message="WB: для задания не запрошена маркировка КИЗ (sgtin)",
                         marketplace="Wildberries",
                         detail=(
                             "В данных заказа нет sgtin в requiredMeta/optionalMeta. "
-                            "Синхронизируйте заказы или проверьте карточку товара в WB."
+                            "Нажмите «Синхронизировать» на странице Сборки или проверьте карточку товара в WB."
                         ),
                         status_code=400,
                     )
-                supplier = (ed.get("supplierStatus") or "").strip().lower()
+                supplier = (ed.get("supplierStatus") or ed.get("supplier_status") or "").strip().lower()
                 if supplier != "confirm":
                     raise MarketplaceAPIException(
                         message="WB: КИЗ можно передать только после добавления задания в поставку",

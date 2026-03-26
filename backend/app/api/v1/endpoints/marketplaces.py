@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.packer_scope import get_effective_user_and_marketplace_ids
 from app.core.security import decrypt_api_key, encrypt_api_key
 from app.core.dependencies import CurrentUser
 from app.models.marketplace import Marketplace, MarketplaceType
@@ -26,9 +27,13 @@ def list_marketplaces(
     db: Session = Depends(get_db),
     current_user: User = CurrentUser,
 ):
-    """Список подключённых маркетплейсов"""
+    """Список маркетплейсов: админ — свои; упаковщик — владельца (с учётом доступа к магазинам)."""
+    eff_id, allowed_ids = get_effective_user_and_marketplace_ids(current_user, db)
     repo = MarketplaceRepository(db)
-    items = repo.get_by_user(current_user.id)
+    items = repo.get_by_user(eff_id)
+    if allowed_ids is not None:
+        allow = set(allowed_ids)
+        items = [m for m in items if m.id in allow]
     return [
         MarketplaceResponse(
             id=mp.id,
@@ -83,10 +88,13 @@ def get_marketplace(
     db: Session = Depends(get_db),
     current_user: User = CurrentUser,
 ):
-    """Получить маркетплейс"""
+    """Получить маркетплейс (упаковщик — только из области видимости, без права редактирования в других эндпоинтах)."""
+    eff_id, allowed_ids = get_effective_user_and_marketplace_ids(current_user, db)
     repo = MarketplaceRepository(db)
     mp = repo.get(marketplace_id)
-    if not mp or mp.user_id != current_user.id:
+    if not mp or mp.user_id != eff_id:
+        raise HTTPException(404, detail="Marketplace not found")
+    if allowed_ids is not None and mp.id not in allowed_ids:
         raise HTTPException(404, detail="Marketplace not found")
     return MarketplaceResponse(
         id=mp.id,
