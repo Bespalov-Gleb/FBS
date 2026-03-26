@@ -12,6 +12,7 @@ from app.models.marketplace import MarketplaceType
 from app.models.order import Order
 from app.models.scanned_kiz import ScannedKiz
 from app.services.marketplace.wildberries import WildberriesClient
+from app.utils.logger import logger
 
 # Полный КИЗ (Честный ЗНАК / GS1) для API WB и хранения в БД; на этикетке текстом часто показывают 31 символ.
 KIZ_STORAGE_MAX = 255
@@ -114,7 +115,27 @@ class OrderCompleteService:
                     )
                 api_key = decrypt_api_key(mp.api_key)
                 async with WildberriesClient(api_key=api_key) as client:
-                    await client.add_kiz_code(str(order.external_id), wb_kiz)
+                    try:
+                        await client.add_kiz_code(str(order.external_id), wb_kiz)
+                    except MarketplaceAPIException as e:
+                        if e.status_code == 409:
+                            ed = order.extra_data or {}
+                            logger.error(
+                                "WB KIZ 409 on complete: order status snapshot",
+                                extra={
+                                    "order_id": order.id,
+                                    "external_id": order.external_id,
+                                    "posting_number": order.posting_number,
+                                    "marketplace_id": order.marketplace_id,
+                                    "local_status": str(order.status.value) if order.status else None,
+                                    "marketplace_status": order.marketplace_status,
+                                    "supplier_status_from_sync": (ed.get("supplierStatus") or ed.get("supplier_status")),
+                                    "collected_in_app": bool(order.collected_in_app),
+                                    "kiz_len": len(wb_kiz),
+                                    "wb_error_detail": e.detail,
+                                },
+                            )
+                        raise
             for kiz in kiz_list:
                 _add_to_scanned_kiz(db, user_id, kiz, order)
             order.complete(user_id=user_id, kiz_code=first_kiz)

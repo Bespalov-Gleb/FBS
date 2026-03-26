@@ -36,6 +36,7 @@ export interface Order {
   status: string;
   is_locked_by_me?: boolean;
   is_locked_by_other?: boolean;
+  is_printed?: boolean;
   assigned_to_name?: string;
   completed_at?: string;
   marketplace_created_at?: string;

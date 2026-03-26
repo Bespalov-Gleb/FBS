@@ -105,6 +105,14 @@ export default function OrderCard({ order, onClick, muted = false }: OrderCardPr
               >
                 ×{order.quantity}
               </Typography>
+              {order.is_printed && (
+                <Chip
+                  label="Распечатано"
+                  size="small"
+                  color="success"
+                  sx={{ fontSize: '0.65rem', height: 18, '& .MuiChip-label': { px: 0.75 } }}
+                />
+              )}
               {order.warehouse_name && (
                 <Chip
                   label={order.warehouse_name}
@@ -167,6 +175,14 @@ export default function OrderCard({ order, onClick, muted = false }: OrderCardPr
               >
                 ×{order.quantity}
               </Typography>
+                {order.is_printed && (
+                  <Chip
+                    label="Распечатано"
+                    size="small"
+                    color="success"
+                    sx={{ fontSize: '0.65rem', height: 18, '& .MuiChip-label': { px: 0.75 } }}
+                  />
+                )}
                 {order.warehouse_name && (
                   <Chip
                     label={order.warehouse_name}

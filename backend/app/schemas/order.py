@@ -52,6 +52,7 @@ class OrderResponse(BaseModel):
     assigned_to_name: Optional[str] = None
     is_locked_by_me: bool = False
     is_locked_by_other: bool = False
+    is_printed: bool = False  # Заказ открывали/печатали в приложении
     is_kiz_enabled: bool = False  # Маркетплейс требует КИЗ (WB + Ozon)
     products: list[OrderProductItem] = []  # Ozon: несколько товаров в одном заказе
 

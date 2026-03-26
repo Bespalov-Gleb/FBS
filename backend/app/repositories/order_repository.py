@@ -633,7 +633,13 @@ class OrderRepository:
         if warehouse_name is not None:
             order.warehouse_name = warehouse_name
         if metadata is not None:
-            order.extra_data = metadata
+            # Сохраняем локальные служебные метки, которые не приходят из API маркетплейса.
+            local_ed = order.extra_data if isinstance(order.extra_data, dict) else {}
+            merged = dict(metadata) if isinstance(metadata, dict) else {}
+            for k in ("printed_in_app", "printed_at", "printed_by_id"):
+                if k in local_ed:
+                    merged[k] = local_ed[k]
+            order.extra_data = merged
         self.db.commit()
         self.db.refresh(order)
         return order

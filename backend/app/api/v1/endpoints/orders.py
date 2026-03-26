@@ -110,6 +110,10 @@ def _order_products(o: Order) -> list[OrderProductItem]:
         for p in prods
     ]
 
+def _is_printed(order: Order) -> bool:
+    ed = order.extra_data or {}
+    return isinstance(ed, dict) and bool(ed.get("printed_in_app"))
+
 
 class OrderCompleteRequest(BaseModel):
     """Запрос на отметку «Собрано»"""
@@ -189,6 +193,7 @@ def list_orders(
             # Блокировка по факту assigned_to_id: кто открыл заказ (упаковщик или админ).
             is_locked_by_me=o.is_locked_by(current_user.id),
             is_locked_by_other=o.is_locked_by_other(current_user.id),
+            is_printed=_is_printed(o),
             is_kiz_enabled=o.marketplace.is_kiz_enabled if o.marketplace else False,
             products=_order_products(o),
         )
@@ -260,6 +265,7 @@ def list_completed_orders(
             # Блокировка по факту assigned_to_id: кто открыл заказ (упаковщик или админ).
             is_locked_by_me=o.is_locked_by(current_user.id),
             is_locked_by_other=o.is_locked_by_other(current_user.id),
+            is_printed=_is_printed(o),
             is_kiz_enabled=o.marketplace.is_kiz_enabled if o.marketplace else False,
             products=_order_products(o),
         )
@@ -1278,6 +1284,7 @@ def get_order(
         assigned_to_name=order.assigned_to_user.full_name if order.assigned_to_user else None,
         is_locked_by_me=order.is_locked_by(current_user.id),
         is_locked_by_other=order.is_locked_by_other(current_user.id),
+        is_printed=_is_printed(order),
         is_kiz_enabled=order.marketplace.is_kiz_enabled if order.marketplace else False,
         products=_order_products(order),
     )
@@ -1309,6 +1316,11 @@ def claim_order(
             },
         )
     order.assign_to(current_user.id)
+    ed = order.extra_data if isinstance(order.extra_data, dict) else {}
+    ed["printed_in_app"] = True
+    ed["printed_at"] = datetime.utcnow().isoformat()
+    ed["printed_by_id"] = current_user.id
+    order.extra_data = ed
     db.commit()
     db.refresh(order)
     return {
