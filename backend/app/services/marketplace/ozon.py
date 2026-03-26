@@ -5,8 +5,11 @@
 Основано на официальной документации и библиотеке ozon-seller
 https://github.com/irenicaa/ozon-seller
 """
+import asyncio
 import json
+import os
 import re
+import time
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
@@ -38,8 +41,73 @@ class OzonClient(BaseMarketplaceClient):
     Авторизация:
     - Header: Client-Id
     - Header: Api-Key
+    
+    Лимиты: Ozon отвечает 429 «per second»; параллельные запросы (gather, несколько воркеров)
+    суммируются. На клиенте — не более одного одновременного HTTP и пауза между запросами
+    (OZON_MIN_REQUEST_INTERVAL_SEC), плюс низкий OZON_REQUESTS_PER_MINUTE.
     """
     
+    def __init__(
+        self,
+        api_key: str,
+        client_id: Optional[str] = None,
+        timeout: int = 30,
+        requests_per_minute: Optional[int] = None,
+    ):
+        rpm = requests_per_minute
+        if rpm is None:
+            try:
+                rpm = int(os.getenv("OZON_REQUESTS_PER_MINUTE", "12"))
+            except ValueError:
+                rpm = 12
+        super().__init__(
+            api_key,
+            client_id=client_id,
+            timeout=timeout,
+            requests_per_minute=max(1, rpm),
+        )
+        try:
+            self._ozon_min_interval = float(os.getenv("OZON_MIN_REQUEST_INTERVAL_SEC", "0.55"))
+        except ValueError:
+            self._ozon_min_interval = 0.55
+        self._ozon_min_interval = max(0.0, self._ozon_min_interval)
+        self._ozon_last_done: float = 0.0
+        self._ozon_inflight = asyncio.Semaphore(1)
+
+    async def _do_request(
+        self,
+        method: str,
+        endpoint: str,
+        params: Optional[dict[str, Any]],
+        json_data: Optional[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Один активный запрос к Ozon + минимальный интервал (защита от 429 per second)."""
+        async with self._ozon_inflight:
+            if self._ozon_min_interval > 0:
+                gap = self._ozon_last_done + self._ozon_min_interval - time.monotonic()
+                if gap > 0:
+                    await asyncio.sleep(gap)
+            try:
+                return await super()._do_request(method, endpoint, params, json_data)
+            finally:
+                self._ozon_last_done = time.monotonic()
+
+    async def _request_content(
+        self,
+        method: str,
+        endpoint: str,
+        json_data: Optional[dict[str, Any]] = None,
+    ) -> bytes:
+        async with self._ozon_inflight:
+            if self._ozon_min_interval > 0:
+                gap = self._ozon_last_done + self._ozon_min_interval - time.monotonic()
+                if gap > 0:
+                    await asyncio.sleep(gap)
+            try:
+                return await super()._request_content(method, endpoint, json_data)
+            finally:
+                self._ozon_last_done = time.monotonic()
+
     @property
     def base_url(self) -> str:
         """Базовый URL Ozon API"""
@@ -357,7 +425,7 @@ class OzonClient(BaseMarketplaceClient):
     async def get_postings_details_for_sizes(
         self,
         posting_numbers: list[str],
-        max_concurrent: int = 5,
+        max_concurrent: int = 1,
     ) -> dict[str, dict[str, Any]]:
         """
         Получить детали posting для извлечения dimensions (конкретный размер заказа).

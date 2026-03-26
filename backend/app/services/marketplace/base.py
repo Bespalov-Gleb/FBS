@@ -2,6 +2,7 @@
 Базовый класс для интеграции с маркетплейсами
 """
 import asyncio
+import random
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -178,6 +179,9 @@ class BaseMarketplaceClient(ABC):
                         wait_time = float(retry_after)
                     else:
                         wait_time = DEFAULT_RETRY_BACKOFF_BASE * (2 ** attempt)
+                    if isinstance(e, RateLimitException) and self.marketplace_name == "Ozon":
+                        # Развести воркеры/процессы, которые просыпаются после одного и того же backoff
+                        wait_time = max(0.5, wait_time * random.uniform(0.7, 1.35))
                     logger.warning(
                         f"Retry {attempt + 1}/{max_retries} after {wait_time}s",
                         extra={
@@ -328,10 +332,26 @@ class BaseMarketplaceClient(ABC):
             )
             
             if response.status_code == 429:
-                retry_after = response.headers.get("Retry-After", 60)
+                hdr = response.headers.get("Retry-After")
+                if hdr is not None and str(hdr).isdigit():
+                    ra = int(hdr)
+                else:
+                    ra = 60
+                if self.marketplace_name == "Ozon":
+                    ozon_burst = False
+                    if isinstance(error_detail, dict):
+                        if error_detail.get("code") == 8:
+                            ozon_burst = True
+                        else:
+                            msg = str(error_detail.get("message", "")).lower()
+                            if "per second" in msg or "rate limit" in msg:
+                                ozon_burst = True
+                    if ozon_burst:
+                        # Лимит по секунде: долгая пауза на всех воркерах одновременно усугубляет 429
+                        ra = min(ra, 8)
                 raise RateLimitException(
                     message="Rate limit exceeded",
-                    retry_after=int(retry_after) if str(retry_after).isdigit() else 60,
+                    retry_after=ra,
                 )
             
             raise MarketplaceAPIException(

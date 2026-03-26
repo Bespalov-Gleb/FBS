@@ -36,6 +36,15 @@ class OrderSyncService:
         """
         # 1. Синхронизируем склады
         await WarehouseService.sync_warehouses(marketplace, db)
+
+        # Ozon: отдельный HTTP-клиент на заказы — без паузы два запроса подряд бьют в per-second
+        if marketplace.type == MarketplaceType.OZON:
+            try:
+                _oz_gap = float(os.environ.get("OZON_MIN_REQUEST_INTERVAL_SEC", "0.55") or 0.55)
+            except ValueError:
+                _oz_gap = 0.55
+            if _oz_gap > 0:
+                await asyncio.sleep(_oz_gap)
         
         api_key = decrypt_api_key(marketplace.api_key)
         order_repo = OrderRepository(db)
