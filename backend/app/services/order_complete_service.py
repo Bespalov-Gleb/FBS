@@ -6,13 +6,15 @@ Ozon: только локально (как раньше).
 """
 from sqlalchemy.orm import Session
 
+from app.core.exceptions import MarketplaceAPIException
 from app.core.security import decrypt_api_key
 from app.models.marketplace import MarketplaceType
 from app.models.order import Order
 from app.models.scanned_kiz import ScannedKiz
 from app.services.marketplace.wildberries import WildberriesClient
 
-KIZ_MAX_LENGTH = 31  # WB и Ozon принимают только первые 31 символ
+# Полный КИЗ (Честный ЗНАК / GS1) для API WB и хранения в БД; на этикетке текстом часто показывают 31 символ.
+KIZ_STORAGE_MAX = 255
 
 
 def _add_to_scanned_kiz(db: Session, user_id: int, kiz_code: str, order: Order) -> None:
@@ -21,7 +23,7 @@ def _add_to_scanned_kiz(db: Session, user_id: int, kiz_code: str, order: Order) 
         return
     sk = ScannedKiz(
         user_id=user_id,
-        kiz_code=kiz_code[:KIZ_MAX_LENGTH],
+        kiz_code=kiz_code[:KIZ_STORAGE_MAX],
         external_id=order.external_id,
         posting_number=order.posting_number,
         marketplace_id=order.marketplace_id,
@@ -46,7 +48,7 @@ class OrderCompleteService:
         при ошибке API исключение, коммита нет.
         Ozon: только локально.
         """
-        kiz_list = [k.strip()[:KIZ_MAX_LENGTH] for k in kiz_codes if k and k.strip()]
+        kiz_list = [k.strip()[:KIZ_STORAGE_MAX] for k in kiz_codes if k and k.strip()]
         first_kiz = kiz_list[0] if kiz_list else None
 
         mp = order.marketplace
@@ -66,6 +68,30 @@ class OrderCompleteService:
 
         if mp.type == MarketplaceType.WILDBERRIES:
             if mp.is_kiz_enabled and first_kiz:
+                ed = order.extra_data or {}
+                req_meta = ed.get("required_meta") or []
+                opt_meta = ed.get("optional_meta") or []
+                if "sgtin" not in req_meta and "sgtin" not in opt_meta:
+                    raise MarketplaceAPIException(
+                        message="WB: для задания не запрошена маркировка КИЗ (sgtin)",
+                        marketplace="Wildberries",
+                        detail=(
+                            "В данных заказа нет sgtin в requiredMeta/optionalMeta. "
+                            "Синхронизируйте заказы или проверьте карточку товара в WB."
+                        ),
+                        status_code=400,
+                    )
+                supplier = (ed.get("supplierStatus") or "").strip().lower()
+                if supplier != "confirm":
+                    raise MarketplaceAPIException(
+                        message="WB: КИЗ можно передать только после добавления задания в поставку",
+                        marketplace="Wildberries",
+                        detail=(
+                            f"По данным синхронизации статус задания: «{supplier or 'неизвестен'}», "
+                            "нужен «confirm» (в поставке). Добавьте задание в поставку в кабинете WB и обновите заказы."
+                        ),
+                        status_code=400,
+                    )
                 api_key = decrypt_api_key(mp.api_key)
                 async with WildberriesClient(api_key=api_key) as client:
                     await client.add_kiz_code(str(order.external_id), first_kiz)

@@ -289,9 +289,20 @@ def get_orders_stats(
 ):
     """
     Общая статистика по заказам для вкладки «Учетная запись».
+
+    Упаковщик: те же магазины, что в GET /orders (владелец + UserMarketplaceAccess).
+    «Собрано» — все отмеченные в приложении за 3 дня в этой области; «собрано мной» — с completed_by_id текущего пользователя.
+    Сегодня / неделя / месяц / скорость — личная статистика текущего пользователя.
     """
+    effective_user_id, packer_allowed_mp_ids = _get_effective_user_and_access(
+        current_user, db
+    )
     order_repo = OrderRepository(db)
-    return order_repo.get_stats(user_id=current_user.id)
+    return order_repo.get_stats(
+        marketplace_owner_id=effective_user_id,
+        stats_user_id=current_user.id,
+        packer_allowed_marketplace_ids=packer_allowed_mp_ids,
+    )
 
 
 @router.get("/kiz-scans")
@@ -347,7 +358,7 @@ def add_kiz_scan(
     Добавить КИЗ в таблицу отсканированных (свободное сканирование).
     При «Собрано» КИЗ добавляется автоматически. Этот endpoint — для ручного добавления.
     """
-    kiz = (data.kiz_code or "").strip()[:31]
+    kiz = (data.kiz_code or "").strip()[:255]
     if not kiz:
         raise HTTPException(400, detail="kiz_code required")
     if data.marketplace_id:
@@ -1398,14 +1409,16 @@ async def complete_order(
         kiz_codes = getattr(data, "kiz_codes", None)
         kiz_code = getattr(data, "kiz_code", None)
 
+        # До 255 символов: полный КИЗ для WB API / Честного ЗНАКА; этикетки могут показывать 31 символ отдельно.
+        _kiz_max = 255
         if kiz_codes:
             try:
-                kiz_list = [str(k).strip()[:31] for k in kiz_codes if k and str(k).strip()]
+                kiz_list = [str(k).strip()[:_kiz_max] for k in kiz_codes if k and str(k).strip()]
             except TypeError:
                 # на всякий случай, если kiz_codes вдруг пришёл не как список
                 kiz_list = []
         elif kiz_code and str(kiz_code).strip():
-            kiz_list = [str(kiz_code).strip()[:31]]
+            kiz_list = [str(kiz_code).strip()[:_kiz_max]]
     required_count = order.quantity
     if mp.is_kiz_enabled:
         if len(kiz_list) < required_count:
@@ -1422,6 +1435,15 @@ async def complete_order(
         if isinstance(e, MarketplaceAPIException):
             status = e.status_code
             detail = e.detail if e.detail else str(e)
+            if isinstance(detail, dict):
+                detail = detail.get("message") or detail.get("detail") or str(detail)
+            if status == 400 and mp and mp.type.value == "wildberries":
+                if not detail or str(detail).strip() in ("", "Incorrect Request"):
+                    detail = (
+                        "Wildberries отклонил запрос КИЗ (400). Частые причины: задание не в поставке "
+                        "(нужен статус confirm), в задании не запрошен sgtin, или неверный формат кода маркировки. "
+                        "Обновите заказы и проверьте личный кабинет WB."
+                    )
             if status == 404 and mp and mp.type.value == "ozon":
                 detail = (
                     "Отправление не найдено в Ozon или уже отгружено. "

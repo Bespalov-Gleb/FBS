@@ -27,6 +27,9 @@ export interface OrdersStats {
   on_assembly_items?: number;
   completed: number;
   completed_items?: number;
+  /** Собрано текущим пользователем за 3 дня (в той же области, что и completed) */
+  completed_by_me?: number;
+  completed_by_me_items?: number;
   completed_today: number;
   completed_today_items?: number;
   completed_week?: number;

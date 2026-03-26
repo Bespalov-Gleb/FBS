@@ -352,20 +352,32 @@ class OrderRepository:
             )
         return query.scalar() or 0
 
-    def get_stats(self, user_id: int) -> dict:
+    def get_stats(
+        self,
+        *,
+        marketplace_owner_id: int,
+        stats_user_id: int,
+        packer_allowed_marketplace_ids: Optional[List[int]] = None,
+    ) -> dict:
         """
-        Общая статистика по заказам пользователя.
-        Заказы считаются только из маркетплейсов пользователя.
+        Статистика для вкладки «Учётная запись».
+
+        marketplace_owner_id — владелец маркетплейсов (для упаковщика = owner_id).
+        stats_user_id — текущий пользователь: личные «сегодня / неделя / месяц» и completed_by_me.
+        packer_allowed_marketplace_ids — если задан, только эти магазины (как в get_list).
         """
         from app.models.marketplace import Marketplace
 
+        def _packer_mp_filter(q):
+            if packer_allowed_marketplace_ids is not None:
+                return q.filter(Order.marketplace_id.in_(packer_allowed_marketplace_ids))
+            return q
+
         # Только заказы в сборке (не отмеченные «Собрано» у нас, не COMPLETED от Ozon)
-        base = (
+        base = _packer_mp_filter(
             self.db.query(Order)
             .join(Marketplace, Order.marketplace_id == Marketplace.id)
-            .filter(Marketplace.user_id == user_id)
-            # "На сборке" — это всё, что ещё НЕ отмечено «Собрано».
-            # То есть: collected_in_app != True (и при этом исключаем отменённые/доставленные/COMPЛЕТED).
+            .filter(Marketplace.user_id == marketplace_owner_id)
             .filter(Order.status != OrderStatus.CANCELLED)
             .filter(Order.status != OrderStatus.DELIVERED)
             .filter(Order.status != OrderStatus.COMPLETED)
@@ -373,37 +385,58 @@ class OrderRepository:
         )
         today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
 
-        # "В сборке" = всё, что ещё НЕ отмечено «Собрано» (collected_in_app != True)
         on_assembly = base.count()
         on_assembly_items = int(
             (base.with_entities(func.coalesce(func.sum(Order.quantity), 0)).scalar() or 0)
         )
         completed_since = datetime.utcnow() - timedelta(days=3)
-        completed_q = (
-            self.db.query(Order)
-            .join(Marketplace, Order.marketplace_id == Marketplace.id)
-            .filter(Marketplace.user_id == user_id)
-            .filter(Order.completed_by_id == user_id)
-            .filter(Order.collected_in_app == True)
-            .filter(Order.status == OrderStatus.COMPLETED)
-            .filter(Order.completed_at >= completed_since)
-        )
-        completed = completed_q.count()
+
+        def _completed_workspace_q():
+            # Как get_completed_list: только collected_in_app и окно по дате (без фильтра status)
+            return _packer_mp_filter(
+                self.db.query(Order)
+                .join(Marketplace, Order.marketplace_id == Marketplace.id)
+                .filter(Marketplace.user_id == marketplace_owner_id)
+                .filter(Order.collected_in_app == True)
+                .filter(Order.completed_at >= completed_since)
+            )
+
+        # «Собрано» в кабинете за 3 дня (любой пользователь) — как список /orders/completed
+        completed = _completed_workspace_q().count()
         completed_items = int(
-            (completed_q.with_entities(func.coalesce(func.sum(Order.quantity), 0)).scalar() or 0)
+            (
+                _completed_workspace_q()
+                .with_entities(func.coalesce(func.sum(Order.quantity), 0))
+                .scalar()
+                or 0
+            )
         )
 
-        # Делает инвариант: "Всего - Собрано = На сборке"
-        # (в рамках тех же фильтров, что и для cards "Собрано").
+        completed_by_me = (
+            _completed_workspace_q()
+            .filter(Order.completed_by_id == stats_user_id)
+            .count()
+        )
+        completed_by_me_items = int(
+            (
+                _completed_workspace_q()
+                .filter(Order.completed_by_id == stats_user_id)
+                .with_entities(func.coalesce(func.sum(Order.quantity), 0))
+                .scalar()
+                or 0
+            )
+        )
+
+        # Инвариант: всего = на сборке + собрано в приложении за 3 дня (по кабинету)
         total = on_assembly + completed
         total_items = on_assembly_items + completed_items
-        completed_today_q = (
+
+        completed_today_q = _packer_mp_filter(
             self.db.query(Order)
             .join(Marketplace, Order.marketplace_id == Marketplace.id)
-            .filter(Marketplace.user_id == user_id)
-            .filter(Order.completed_by_id == user_id)
+            .filter(Marketplace.user_id == marketplace_owner_id)
+            .filter(Order.completed_by_id == stats_user_id)
             .filter(Order.collected_in_app == True)
-            .filter(Order.status == OrderStatus.COMPLETED)
             .filter(Order.completed_at >= today_start)
         )
         completed_today = completed_today_q.count()
@@ -411,17 +444,15 @@ class OrderRepository:
             (completed_today_q.with_entities(func.coalesce(func.sum(Order.quantity), 0)).scalar() or 0)
         )
 
-        # Статистика за последние 7/30 дней (только собранные)
         week_start = datetime.utcnow() - timedelta(days=7)
         month_start = datetime.utcnow() - timedelta(days=30)
 
-        completed_week_q = (
+        completed_week_q = _packer_mp_filter(
             self.db.query(Order)
             .join(Marketplace, Order.marketplace_id == Marketplace.id)
-            .filter(Marketplace.user_id == user_id)
-            .filter(Order.completed_by_id == user_id)
+            .filter(Marketplace.user_id == marketplace_owner_id)
+            .filter(Order.completed_by_id == stats_user_id)
             .filter(Order.collected_in_app == True)
-            .filter(Order.status == OrderStatus.COMPLETED)
             .filter(Order.completed_at >= week_start)
         )
         completed_week = completed_week_q.count()
@@ -429,13 +460,12 @@ class OrderRepository:
             (completed_week_q.with_entities(func.coalesce(func.sum(Order.quantity), 0)).scalar() or 0)
         )
 
-        completed_month_q = (
+        completed_month_q = _packer_mp_filter(
             self.db.query(Order)
             .join(Marketplace, Order.marketplace_id == Marketplace.id)
-            .filter(Marketplace.user_id == user_id)
-            .filter(Order.completed_by_id == user_id)
+            .filter(Marketplace.user_id == marketplace_owner_id)
+            .filter(Order.completed_by_id == stats_user_id)
             .filter(Order.collected_in_app == True)
-            .filter(Order.status == OrderStatus.COMPLETED)
             .filter(Order.completed_at >= month_start)
         )
         completed_month = completed_month_q.count()
@@ -443,23 +473,22 @@ class OrderRepository:
             (completed_month_q.with_entities(func.coalesce(func.sum(Order.quantity), 0)).scalar() or 0)
         )
 
-        # Скорость (шт/час) за последние 7 дней
         speed_items_per_hour_week = (
             float(completed_week_items) / (7 * 24) if completed_week_items > 0 else 0.0
         )
 
-        # По маркетплейсам: отдельно total и completed для надёжности (за последние 3 дня)
         completed_counts = (
-            self.db.query(
-                Order.marketplace_id,
-                func.count(Order.id).label("cnt"),
-                func.coalesce(func.sum(Order.quantity), 0).label("items"),
+            _packer_mp_filter(
+                self.db.query(
+                    Order.marketplace_id,
+                    func.count(Order.id).label("cnt"),
+                    func.coalesce(func.sum(Order.quantity), 0).label("items"),
+                )
+                .join(Marketplace, Order.marketplace_id == Marketplace.id)
+                .filter(Marketplace.user_id == marketplace_owner_id)
+                .filter(Order.collected_in_app == True)
+                .filter(Order.completed_at >= completed_since)
             )
-            .join(Marketplace, Order.marketplace_id == Marketplace.id)
-            .filter(Marketplace.user_id == user_id)
-            .filter(Order.completed_by_id == user_id)
-            .filter(Order.collected_in_app == True)
-            .filter(Order.completed_at >= completed_since)
             .group_by(Order.marketplace_id)
             .all()
         )
@@ -467,19 +496,21 @@ class OrderRepository:
         completed_items_by_mp = {r.marketplace_id: int(r.items or 0) for r in completed_counts}
 
         mp_stats = (
-            self.db.query(
-                Marketplace.id,
-                Marketplace.name,
-                Marketplace.type,
-                func.count(Order.id).label("total"),
-                func.coalesce(func.sum(Order.quantity), 0).label("total_items"),
+            _packer_mp_filter(
+                self.db.query(
+                    Marketplace.id,
+                    Marketplace.name,
+                    Marketplace.type,
+                    func.count(Order.id).label("total"),
+                    func.coalesce(func.sum(Order.quantity), 0).label("total_items"),
+                )
+                .join(Order, Order.marketplace_id == Marketplace.id)
+                .filter(Marketplace.user_id == marketplace_owner_id)
+                .filter(Order.status != OrderStatus.CANCELLED)
+                .filter(Order.status != OrderStatus.DELIVERED)
+                .filter(Order.status != OrderStatus.COMPLETED)
+                .filter(Order.collected_in_app != True)
             )
-            .join(Order, Order.marketplace_id == Marketplace.id)
-            .filter(Marketplace.user_id == user_id)
-            .filter(Order.status != OrderStatus.CANCELLED)
-            .filter(Order.status != OrderStatus.DELIVERED)
-            .filter(Order.status != OrderStatus.COMPLETED)
-            .filter(Order.collected_in_app != True)
             .group_by(Marketplace.id, Marketplace.name, Marketplace.type)
             .all()
         )
@@ -503,6 +534,8 @@ class OrderRepository:
             "on_assembly_items": on_assembly_items,
             "completed": completed,
             "completed_items": completed_items,
+            "completed_by_me": completed_by_me,
+            "completed_by_me_items": completed_by_me_items,
             "completed_today": completed_today,
             "completed_today_items": completed_today_items,
             "completed_week": completed_week,

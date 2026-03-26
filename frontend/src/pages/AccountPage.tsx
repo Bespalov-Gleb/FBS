@@ -301,6 +301,14 @@ export default function AccountPage() {
                   {stats.completed}
                   {typeof stats.completed_items === 'number' ? ` (${stats.completed_items})` : ''}
                 </Typography>
+                {typeof stats.completed_by_me === 'number' && (
+                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+                    из них мной: {stats.completed_by_me}
+                    {typeof stats.completed_by_me_items === 'number'
+                      ? ` (${stats.completed_by_me_items})`
+                      : ''}
+                  </Typography>
+                )}
               </CardContent>
             </Card>
             <Card variant="outlined" sx={{ minWidth: 120 }}>
