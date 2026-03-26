@@ -12,7 +12,7 @@ from typing import Any, Optional
 
 import httpx
 
-from app.core.exceptions import MarketplaceAPIException
+from app.core.exceptions import MarketplaceAPIException, RateLimitException
 from app.services.marketplace.base import (
     BaseMarketplaceClient,
     MarketplaceOrder,
@@ -692,10 +692,13 @@ class WildberriesClient(BaseMarketplaceClient):
                 endpoint=f"/api/v3/orders/{order_id}/meta/sgtin",
                 json_data=request_body,
             )
-            
+
             logger.info(f"Successfully added КИЗ to WB order {order_id}")
             return True
-            
+
+        except (MarketplaceAPIException, RateLimitException):
+            # Не оборачивать: нужны реальный status_code (409 и т.д.) и detail от WB для API «Собрано».
+            raise
         except Exception as e:
             logger.error(
                 f"Failed to add КИЗ to WB order {order_id}",
