@@ -473,8 +473,21 @@ class OrderRepository:
             (completed_month_q.with_entities(func.coalesce(func.sum(Order.quantity), 0)).scalar() or 0)
         )
 
+        # Скорость: за последние 2 часа (rolling).
+        last_2h_start = datetime.utcnow() - timedelta(hours=2)
+        completed_last_2h_q = _packer_mp_filter(
+            self.db.query(Order)
+            .join(Marketplace, Order.marketplace_id == Marketplace.id)
+            .filter(Marketplace.user_id == marketplace_owner_id)
+            .filter(Order.completed_by_id == stats_user_id)
+            .filter(Order.collected_in_app == True)
+            .filter(Order.completed_at >= last_2h_start)
+        )
+        completed_last_2h_items = int(
+            (completed_last_2h_q.with_entities(func.coalesce(func.sum(Order.quantity), 0)).scalar() or 0)
+        )
         speed_items_per_hour_week = (
-            float(completed_week_items) / (7 * 24) if completed_week_items > 0 else 0.0
+            float(completed_last_2h_items) / 2 if completed_last_2h_items > 0 else 0.0
         )
 
         completed_counts = (

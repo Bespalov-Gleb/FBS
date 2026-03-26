@@ -17,11 +17,15 @@ from app.services.marketplace.base import MarketplaceOrder
 from app.services.marketplace.ozon import OzonClient
 from app.services.marketplace.wildberries import WildberriesClient
 from app.services.warehouse_service import WarehouseService
+from app.utils.cache import cache_get, cache_set
 from app.utils.logger import logger
 
 
 class OrderSyncService:
     """Синхронизация заказов из Ozon и Wildberries в БД"""
+
+    _OZON_ENRICH_CACHE_TTL = 12 * 3600
+    _WB_CARD_CACHE_TTL = 24 * 3600
 
     @staticmethod
     async def sync_marketplace_orders(marketplace: Marketplace, db: Session) -> int:
@@ -97,15 +101,33 @@ class OrderSyncService:
                                 pass
                 offer_ids = list(dict.fromkeys(offer_ids))
                 sku_list = list(dict.fromkeys(sku_list))
+                ozon_cached_images: dict[str, str] = {}
+                ozon_cached_sizes: dict[str, str] = {}
+                uncached_offer_ids: list[str] = []
+                for oid in offer_ids:
+                    cimg = cache_get(f"ozon:enrich:image:{oid}")
+                    csize = cache_get(f"ozon:enrich:size:{oid}")
+                    if isinstance(cimg, str) and cimg:
+                        ozon_cached_images[oid] = cimg
+                    if isinstance(csize, str) and csize:
+                        ozon_cached_sizes[oid] = csize
+                    if oid not in ozon_cached_images or oid not in ozon_cached_sizes:
+                        uncached_offer_ids.append(oid)
+                if offer_ids:
+                    logger.info(
+                        "Ozon enrich cache hit: images=%s/%s sizes=%s/%s",
+                        len(ozon_cached_images), len(offer_ids),
+                        len(ozon_cached_sizes), len(offer_ids),
+                    )
 
                 # Шаг 1: фото + posting/fbs/get (размер — приоритет фактический заказанный)
                 images: dict[str, str] = {}
                 details_map: dict[str, dict] = {}
                 sizes_from_attrs: dict[str, str] = {}
                 fetch_sizes = False
-                if offer_ids or sku_list:
+                if uncached_offer_ids or sku_list:
                     fetch_sizes = (
-                        bool(offer_ids)
+                        bool(uncached_offer_ids)
                         and os.environ.get("FBS_OZON_FETCH_SIZES", "1") != "0"
                     )
                     fetch_posting = (
@@ -122,7 +144,7 @@ class OrderSyncService:
                         # Параллельно: фото + posting details (фактический размер заказа — приоритет)
                         _res = await asyncio.gather(
                             client.get_product_images(
-                                offer_ids=offer_ids or None,
+                                offer_ids=uncached_offer_ids or None,
                                 sku_list=sku_list or None,
                                 sku_to_article=sku_to_article or None,
                             ),
@@ -139,11 +161,11 @@ class OrderSyncService:
                         # Без posting: только фото + attributes
                         _res = await asyncio.gather(
                             client.get_product_images(
-                                offer_ids=offer_ids or None,
+                                offer_ids=uncached_offer_ids or None,
                                 sku_list=sku_list or None,
                                 sku_to_article=sku_to_article or None,
                             ),
-                            client.get_product_sizes(offer_ids=offer_ids),
+                            client.get_product_sizes(offer_ids=uncached_offer_ids),
                             return_exceptions=True,
                         )
                         images = _res[0] if isinstance(_res[0], dict) else {}
@@ -155,7 +177,7 @@ class OrderSyncService:
                     else:
                         try:
                             images = await client.get_product_images(
-                                offer_ids=offer_ids or None,
+                                offer_ids=uncached_offer_ids or None,
                                 sku_list=sku_list or None,
                                 sku_to_article=sku_to_article or None,
                             )
@@ -205,6 +227,8 @@ class OrderSyncService:
                     for i, p in enumerate(prods):
                         oid = p.get("offer_id")
                         url = images.get(oid) if oid else ""
+                        if not url and oid:
+                            url = ozon_cached_images.get(oid, "")
                         if not url and p.get("sku") is not None:
                             url = images.get(str(p["sku"])) or images.get(int(p["sku"])) or ""  # type: ignore[call-overload]
                         p["image_url"] = url or ""
@@ -217,9 +241,19 @@ class OrderSyncService:
                         if not size_val and oid:
                             size_val = sizes_from_attrs.get(oid) or ""
                         if not size_val and oid:
+                            size_val = ozon_cached_sizes.get(oid) or ""
+                        if not size_val and oid:
                             size_val = OzonClient._extract_size_from_offer_id(oid)
                         if size_val and str(size_val).strip():
                             p["size"] = str(size_val).strip()
+                        if oid and url:
+                            cache_set(f"ozon:enrich:image:{oid}", url, OrderSyncService._OZON_ENRICH_CACHE_TTL)
+                        if oid and p.get("size"):
+                            cache_set(
+                                f"ozon:enrich:size:{oid}",
+                                str(p.get("size")).strip(),
+                                OrderSyncService._OZON_ENRICH_CACHE_TTL,
+                            )
                     first_size = next(
                         (pr.get("size") for pr in (mo.metadata or {}).get("products", []) if pr.get("size")),
                         None,
@@ -345,7 +379,7 @@ class OrderSyncService:
                     f"WB marketplace {marketplace.id}: confirm={len(orders_new)}, "
                     f"all_external_ids={len(all_external_ids)}, status_updates={len(status_updates)}"
                 )
-                # Обновить статусы: complete (в доставке) → DELIVERED (скрыть), cancel/new → cancelled
+                # Обновить статусы: complete (в доставке) → DELIVERED (скрыть), cancel → cancelled
                 # Не трогаем заказы, собранные в приложении (collected_in_app=True):
                 # WB отдаёт complete, но мы больше не вызываем supply API при сборке —
                 # статус меняется только локально, синк не должен его сбрасывать.
@@ -356,28 +390,35 @@ class OrderSyncService:
                             continue
                         if order_repo.mark_delivered_by_marketplace(marketplace.id, ext_id):
                             count += 1
-                    elif wb_status in ("cancel", "new"):
+                    elif wb_status == "cancel":
                         if order_repo.mark_cancelled_by_marketplace(marketplace.id, ext_id):
                             count += 1
-                # URL фото и размер: Content API (официально), fallback — CDN.
-                # WB Content API имеет жёсткий лимит. Запросы последовательные с паузой
-                # _WB_CONTENT_SLEEP между ними. Случайный начальный сдвиг (jitter) не даёт
-                # двум Celery-воркерам синхронно бомбить один endpoint одним API-ключом.
+                # Тяжёлое enrichment WB (Content API) опционально:
+                # по умолчанию выключено, чтобы синхронизация заказов оставалась быстрой.
+                wb_enrich_content = os.environ.get("FBS_WB_ENRICH_CONTENT", "1") != "0"
                 unique_nm_ids = list({
                     (mo.metadata or {}).get("nm_id")
                     for mo in orders_new
                     if (mo.metadata or {}).get("nm_id") is not None
                 })
-                _WB_CONTENT_SLEEP = 2.0  # 1 req / 2s = 30 req/min на воркер
-
                 nm_to_card: dict[int | str, dict | None] = {}
-                if unique_nm_ids:
+                nm_ids_to_fetch: list[int | str] = []
+                for nm_id in unique_nm_ids:
+                    cached_card = cache_get(f"wb:card:{nm_id}")
+                    if isinstance(cached_card, dict) and cached_card:
+                        nm_to_card[nm_id] = cached_card
+                    else:
+                        nm_ids_to_fetch.append(nm_id)
+                if wb_enrich_content and nm_ids_to_fetch:
+                    _WB_CONTENT_SLEEP = 2.0  # 1 req / 2s = 30 req/min на воркер
                     # Случайный сдвиг 0–4s, чтобы воркеры не шли в ногу
                     await asyncio.sleep(random.uniform(0, 4))
-                    for idx, nm_id in enumerate(unique_nm_ids):
+                    for idx, nm_id in enumerate(nm_ids_to_fetch):
                         _res = await client.get_product_card_content_api(nm_id)
                         nm_to_card[nm_id] = _res
-                        if idx < len(unique_nm_ids) - 1:
+                        if isinstance(_res, dict) and _res:
+                            cache_set(f"wb:card:{nm_id}", _res, OrderSyncService._WB_CARD_CACHE_TTL)
+                        if idx < len(nm_ids_to_fetch) - 1:
                             await asyncio.sleep(_WB_CONTENT_SLEEP)
                 for mo in orders_new:
                     nm_id = (mo.metadata or {}).get("nm_id")

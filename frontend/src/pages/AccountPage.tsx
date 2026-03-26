@@ -358,7 +358,7 @@ export default function AccountPage() {
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
                   <Inventory2 fontSize="small" color="primary" />
                   <Typography variant="caption" color="text.secondary">
-                    Скорость (шт/ч)
+                    Скорость за 2ч (шт/ч)
                   </Typography>
                 </Box>
                 <Typography variant="h5" fontWeight={600} color="primary.main">

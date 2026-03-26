@@ -4,6 +4,7 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
+  IconButton,
   Button,
   TextField,
   Typography,
@@ -12,6 +13,7 @@ import {
   Divider,
 } from '@mui/material';
 import LocalPrintshop from '@mui/icons-material/LocalPrintshop';
+import Close from '@mui/icons-material/Close';
 import type { Order, Marketplace } from '../../types/api';
 import { ordersApi } from '../../api/orders';
 import { printViaAgent } from '../../api/printAgent';
@@ -70,7 +72,17 @@ interface OrderModalProps {
   onComplete: () => void;
 }
 
-const KIZ_MAX_LENGTH = 31;
+// Полный КИЗ нужен для WB API и корректного DataMatrix; 31 символ — только человекочитаемая часть.
+const KIZ_MAX_LENGTH = 255;
+
+function normalizeKizInput(raw: string): string {
+  let s = (raw || '').replace(/[\r\n\t]/g, '').trim();
+  // AIM-префиксы некоторых сканеров DataMatrix (не часть самого кода).
+  s = s.replace(/^\](?:C1|c1|D2|d2|Q3|q3)/, '');
+  // Убираем ведущие служебные символы кроме GS (0x1D), который может быть частью GS1.
+  s = s.replace(/^[\u0000-\u001c\u001e-\u001f]+/g, '');
+  return s;
+}
 
 export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate = true, labelFormat: labelFormatProp, agentAvailable = false, defaultPrinter, onClose, onComplete }: OrderModalProps) {
   const kizCount = order?.quantity ?? 1;
@@ -78,6 +90,7 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
   const [completing, setCompleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [imageError, setImageError] = useState(false);
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
   const kizPrintedRef = useRef<Set<string>>(new Set());
   const kizInputRefs = useRef<(HTMLInputElement | null)[]>([]);
   const kizDebounceByIndexRef = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
@@ -123,7 +136,7 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
 
     const prev = prevKizValuesRef.current;
     kizCodes.forEach((raw, i) => {
-      const kizFull = raw.trim();
+      const kizFull = normalizeKizInput(raw);
       if (!kizFull) {
         const t = kizDebounceByIndexRef.current.get(i);
         if (t) {
@@ -198,7 +211,7 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
   };
 
   const handlePrintKizDuplicate = async () => {
-    const trimmed = kizCodes.map((k) => k.trim()).filter(Boolean);
+    const trimmed = kizCodes.map((k) => normalizeKizInput(k)).filter(Boolean);
     if (!trimmed.length) return;
     try {
       for (const kiz of trimmed) {
@@ -215,7 +228,7 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
   };
 
   const handleComplete = async () => {
-    const trimmed = kizCodes.map((k) => k.trim().slice(0, KIZ_MAX_LENGTH)).filter(Boolean);
+    const trimmed = kizCodes.map((k) => normalizeKizInput(k).slice(0, KIZ_MAX_LENGTH)).filter(Boolean);
     if (isKizRequired && trimmed.length < (order.quantity ?? 1)) {
       setError(`Нужен КИЗ для каждого товара: введите ${order.quantity ?? 1} код(ов) маркировки`);
       return;
@@ -260,16 +273,17 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
                         component="img"
                         src={getProductImageUrl(p.image_url)!}
                         alt={p.name}
+                        onClick={() => setPreviewImage(getProductImageUrl(p.image_url)!)}
                         sx={{ width: 90, height: 90, objectFit: 'cover', borderRadius: 1, flexShrink: 0 }}
                       />
                     )}
                     <Box sx={{ flex: 1, minWidth: 0 }}>
-                      <Typography variant="body2" sx={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}>
+                      <Typography variant="body1" sx={{ wordBreak: 'break-word', overflowWrap: 'anywhere', fontWeight: 600 }}>
                         <strong>{p.offer_id}</strong>
                       </Typography>
-                      <Typography variant="body2" color="text.secondary">{p.name}</Typography>
+                      <Typography variant="body1" color="text.secondary">{p.name}</Typography>
                       <Typography
-                        variant="caption"
+                        variant="body1"
                         sx={{ color: order.quantity >= 2 ? palette.accent.red : 'inherit', fontWeight: order.quantity >= 2 ? 600 : 400 }}
                       >
                         ×{p.quantity}
@@ -286,6 +300,7 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
                   component="img"
                   src={imageUrl}
                   alt={order.product_name}
+                  onClick={() => setPreviewImage(imageUrl)}
                   onError={() => setImageError(true)}
                   sx={{
                     width: 130,
@@ -293,28 +308,29 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
                     objectFit: 'cover',
                     borderRadius: 1,
                     flexShrink: 0,
+                    cursor: 'zoom-in',
                   }}
                 />
               )}
               <Box sx={{ flex: 1, minWidth: 0 }}>
                 <Typography
-                  variant="body1"
+                  variant="h6"
                   sx={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}
                 >
                   <strong>Артикул:</strong> {order.article}
                 </Typography>
-                <Typography variant="body2" color="text.secondary">
+                <Typography variant="body1" color="text.secondary">
                   {order.product_name}
                 </Typography>
                 {order.marketplace_type !== 'ozon' && (
-                  <Typography variant="body2">
+                  <Typography variant="body1">
                     <strong>Размер:</strong>{' '}
                     <Box component="span" color={order.size ? 'text.primary' : 'text.disabled'}>
                       {order.size || '—'}
                     </Box>
                   </Typography>
                 )}
-              <Typography variant="body2">
+              <Typography variant="body1">
                 <strong>Количество:</strong>{' '}
                 <Box component="span" sx={{ color: order.quantity >= 2 ? palette.accent.red : 'inherit', fontWeight: 600 }}>
                   {order.quantity}
@@ -350,7 +366,7 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
                   value={code}
                   onChange={(e) => {
                     const next = [...kizCodes];
-                    next[i] = e.target.value.slice(0, KIZ_MAX_LENGTH);
+                    next[i] = normalizeKizInput(e.target.value).slice(0, KIZ_MAX_LENGTH);
                     setKizCodes(next);
                   }}
                   fullWidth
@@ -396,6 +412,38 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
           </>
         )}
       </DialogActions>
+
+      <Dialog
+        open={!!previewImage}
+        onClose={() => setPreviewImage(null)}
+        maxWidth="lg"
+        fullWidth
+      >
+        <DialogTitle sx={{ pr: 6 }}>
+          Просмотр изображения
+          <IconButton
+            onClick={() => setPreviewImage(null)}
+            sx={{ position: 'absolute', right: 8, top: 8 }}
+          >
+            <Close />
+          </IconButton>
+        </DialogTitle>
+        <DialogContent sx={{ display: 'flex', justifyContent: 'center', p: 2 }}>
+          {previewImage && (
+            <Box
+              component="img"
+              src={previewImage}
+              alt="Предпросмотр товара"
+              sx={{
+                width: '100%',
+                maxHeight: '75vh',
+                objectFit: 'contain',
+                borderRadius: 1,
+              }}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </Dialog>
   );
 }

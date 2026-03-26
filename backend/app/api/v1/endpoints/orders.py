@@ -1081,8 +1081,9 @@ def _generate_kiz_label_pdf(kiz_full: str, kiz_31: str, width_mm: int = 40, heig
     from reportlab.lib.units import mm
     from reportlab.pdfgen import canvas
 
-    # GS1 DataMatrix: > → GS, FNC1 в начало (если нет)
-    data_for_dm = kiz_full.replace(">", "\x1d")
+    # GS1 DataMatrix: печатаем тот же укороченный КИЗ (31), который уходит в WB.
+    # Символ '>' трактуем как GS (ASCII 29), добавляем FNC1 в начало.
+    data_for_dm = kiz_31.replace(">", "\x1d")
     if not data_for_dm.startswith("\xe8"):
         data_for_dm = "\xe8" + data_for_dm
 
@@ -1132,6 +1133,22 @@ def _generate_kiz_label_pdf(kiz_full: str, kiz_31: str, width_mm: int = 40, heig
     return buf.getvalue()
 
 
+def _normalize_kiz_for_label(raw: str) -> str:
+    s = (raw or "").replace("\r", "").replace("\n", "").replace("\t", "").strip()
+    if s.startswith("]C1") or s.startswith("]c1") or s.startswith("]D2") or s.startswith("]d2") or s.startswith("]Q3") or s.startswith("]q3"):
+        s = s[3:]
+    while s and (ord(s[0]) < 32) and (s[0] != "\x1d"):
+        s = s[1:]
+    return s
+
+
+def _kiz_31(raw: str) -> str:
+    s = _normalize_kiz_for_label(raw).replace("\x1d", ">")
+    if ">" in s:
+        s = s.split(">", 1)[0]
+    return s[:31].strip()
+
+
 @router.get("/kiz-label")
 def get_kiz_label(
     kiz_code: str = Query(..., min_length=1, description="Код КИЗ (маркировка, полный или 31 символ)"),
@@ -1148,10 +1165,12 @@ def get_kiz_label(
     kiz_h = (ps.kiz_height_mm or 35) if ps else 35
     kiz_rot = (ps.kiz_rotate or 0) if ps else 0
 
-    kiz = kiz_code.strip()
-    kiz_31 = kiz[:31]
+    kiz = _normalize_kiz_for_label(kiz_code)
+    kiz_31 = _kiz_31(kiz)
+    if not kiz_31:
+        raise HTTPException(400, detail="Пустой КИЗ после нормализации")
     try:
-        pdf_bytes = _generate_kiz_label_pdf(kiz, kiz_31, width_mm=kiz_w, height_mm=kiz_h)
+        pdf_bytes = _generate_kiz_label_pdf(kiz_31, kiz_31, width_mm=kiz_w, height_mm=kiz_h)
     except Exception as e:
         logger.warning("DataMatrix failed, fallback to QR: %s", e)
         import io
@@ -1542,6 +1561,7 @@ _BARCODE_TOP_OFFSET_MM = 1.5
 def _generate_product_barcode_pdf(
     barcode_value: str,
     ozn_code: str = "",
+    article: str = "",
     label_width_mm: int = 58,
     top_offset_mm: float = 0,
 ) -> bytes:
@@ -1587,10 +1607,12 @@ def _generate_product_barcode_pdf(
     x0 = margin
     # Рисуем так, чтобы блок (штрихкод + цифры) занимал почти всю высоту этикетки и был центрирован.
     # top_offset_mm используем как "смещение вверх" (для Ozon), чтобы не обрезать верхние элементы.
-    digits_font_size = 12
-    # Делаем штрихкод крупнее: уменьшаем резерв снизу под подпись.
-    digits_gap = 5 * mm
-    digits_reserved = digits_gap + 1 * mm
+    article_font_size = 9
+    digits_font_size = 10
+    # Резерв под 2 строки: артикул + номер ШК
+    article_gap = 8 * mm
+    digits_gap = 3.5 * mm
+    digits_reserved = article_gap + digits_gap + 1 * mm
 
     available_h_for_barcode = label_h - 2 * margin - digits_reserved
     if available_h_for_barcode <= 0:
@@ -1622,7 +1644,12 @@ def _generate_product_barcode_pdf(
     renderPDF.draw(bc_product, c, 0, 0)
     c.restoreState()
 
-    ty = max(margin, barcode_bottom - digits_gap)
+    article_text = str(article or "").strip()[:28]
+    ay = max(margin + digits_gap, barcode_bottom - article_gap)
+    if article_text:
+        c.setFont("Helvetica", article_font_size)
+        c.drawCentredString(label_w / 2, ay, article_text)
+    ty = max(margin, ay - digits_gap)
     c.setFont("Helvetica-Bold", digits_font_size)
     c.drawCentredString(label_w / 2, ty, str(display_code)[:20])
 
@@ -1632,7 +1659,7 @@ def _generate_product_barcode_pdf(
 
 
 def _generate_multi_product_barcode_pdf(
-    items: list[tuple[str, str]],
+    items: list[tuple[str, str, str]],
     label_width_mm: int = 58,
     top_offset_mm: float = 0,
 ) -> bytes:
@@ -1650,7 +1677,9 @@ def _generate_multi_product_barcode_pdf(
     if not items:
         raise ValueError("No items for barcode PDF")
     if len(items) == 1:
-        return _generate_product_barcode_pdf(items[0][0], items[0][1], label_width_mm, top_offset_mm)
+        return _generate_product_barcode_pdf(
+            items[0][0], items[0][1], items[0][2], label_width_mm, top_offset_mm
+        )
 
     label_w = label_width_mm * mm
     label_h = 40 * mm
@@ -1660,16 +1689,18 @@ def _generate_multi_product_barcode_pdf(
     margin = 1 * mm
     top_offset = top_offset_mm * mm
     x0 = margin
-    digits_font_size = 12
-    # Делаем штрихкод крупнее: уменьшаем резерв снизу под подпись.
-    digits_gap = 5 * mm
-    digits_reserved = digits_gap + 1 * mm
+    article_font_size = 9
+    digits_font_size = 10
+    # Резерв под 2 строки: артикул + номер ШК
+    article_gap = 8 * mm
+    digits_gap = 3.5 * mm
+    digits_reserved = article_gap + digits_gap + 1 * mm
 
     available_h_for_barcode = label_h - 2 * margin - digits_reserved
     if available_h_for_barcode <= 0:
         available_h_for_barcode = label_h - 2 * margin
 
-    for i, (barcode_value, ozn_code) in enumerate(items):
+    for i, (barcode_value, ozn_code, article) in enumerate(items):
         if i > 0:
             c.showPage()
         display_code = ozn_code or barcode_value
@@ -1703,7 +1734,12 @@ def _generate_multi_product_barcode_pdf(
         renderPDF.draw(bc_product, c, 0, 0)
         c.restoreState()
 
-        ty = max(margin, barcode_bottom - digits_gap)
+        article_text = str(article or "").strip()[:28]
+        ay = max(margin + digits_gap, barcode_bottom - article_gap)
+        if article_text:
+            c.setFont("Helvetica", article_font_size)
+            c.drawCentredString(label_w / 2, ay, article_text)
+        ty = max(margin, ay - digits_gap)
         c.setFont("Helvetica-Bold", digits_font_size)
         c.drawCentredString(label_w / 2, ty, str(display_code)[:20])
 
@@ -2253,16 +2289,17 @@ async def get_order_barcodes_pdf(
     order = _get_order_for_user(order_id, current_user, db)
     mp = order.marketplace
 
-    items: list[tuple[str, str]] = []
+    items: list[tuple[str, str, str]] = []
 
     if mp.type == MarketplaceType.WILDBERRIES:
         # WB: товарный баркод хранится в extra_data["skus"] (EAN13 или Code128)
         extra = order.extra_data or {}
         skus: list = extra.get("skus") or []
+        article = str(order.article or "").strip()
         for sku_val in skus:
             code = str(sku_val).strip()
             if code:
-                items.append((code, code))
+                items.append((code, code, article))
         if not items:
             raise HTTPException(404, detail="Товарный баркод не найден в заказе WB (skus пустой)")
     elif mp.type == MarketplaceType.OZON:
@@ -2304,10 +2341,11 @@ async def get_order_barcodes_pdf(
             sku = p.get("sku")
             qty = max(1, int(p.get("quantity", 1)))
             ozn_code = f"OZN{sku}" if sku is not None else (upper if upper else None)
+            article = str(p.get("offer_id") or p.get("article") or order.article or "").strip()
             if not ozn_code:
                 continue
             for _ in range(qty):
-                items.append((ozn_code, ozn_code))
+                items.append((ozn_code, ozn_code, article))
 
         if not items:
             raise HTTPException(404, detail="Product barcode not found")

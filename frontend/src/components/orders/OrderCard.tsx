@@ -7,6 +7,7 @@ import { getProductImageUrl } from '../../api/client';
 interface OrderCardProps {
   order: Order;
   onClick: () => void;
+  muted?: boolean;
 }
 
 function ProductRow({ product, highlightQuantity }: { product: OrderProduct; highlightQuantity?: boolean }) {
@@ -21,7 +22,7 @@ function ProductRow({ product, highlightQuantity }: { product: OrderProduct; hig
           src={imgUrl}
           alt={product.name}
           onError={() => setImgErr(true)}
-          sx={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 1, flexShrink: 0 }}
+          sx={{ width: 110, height: 110, objectFit: 'cover', borderRadius: 1, flexShrink: 0 }}
         />
       )}
       <Box sx={{ flex: 1, minWidth: 0 }}>
@@ -46,7 +47,7 @@ function ProductRow({ product, highlightQuantity }: { product: OrderProduct; hig
   );
 }
 
-export default function OrderCard({ order, onClick }: OrderCardProps) {
+export default function OrderCard({ order, onClick, muted = false }: OrderCardProps) {
   const [imageError, setImageError] = useState(false);
   const imageUrl = getProductImageUrl(order.product_image_url);
   // Ozon: posting_number (номер отправления). WB: external_id (ID сборочного задания) — как в модалке
@@ -65,13 +66,14 @@ export default function OrderCard({ order, onClick }: OrderCardProps) {
       onClick={isLockedByOther ? undefined : onClick}
       sx={{
         cursor: isLockedByOther ? 'not-allowed' : 'pointer',
-        opacity: isLockedByOther ? 0.8 : 1,
+        opacity: muted ? 0.78 : (isLockedByOther ? 0.8 : 1),
+        filter: muted ? 'grayscale(1)' : 'none',
         borderLeft: 4,
         borderLeftColor: borderColor,
         '&:hover': isLockedByOther ? {} : { boxShadow: 2 },
       }}
     >
-      <CardContent sx={{ p: '10px !important', '&:last-child': { pb: '10px !important' } }}>
+      <CardContent sx={{ p: '12px !important', '&:last-child': { pb: '12px !important' } }}>
         {isOzonMulti ? (
           <>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 0.5 }}>
@@ -122,8 +124,8 @@ export default function OrderCard({ order, onClick }: OrderCardProps) {
                 alt={order.product_name}
                 onError={() => setImageError(true)}
                 sx={{
-                  width: 80,
-                  height: 80,
+                  width: 120,
+                  height: 120,
                   objectFit: 'cover',
                   borderRadius: 1,
                   flexShrink: 0,

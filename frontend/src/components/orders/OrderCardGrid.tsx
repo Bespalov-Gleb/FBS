@@ -46,13 +46,18 @@ export default function OrderCardGrid({ orders, completedOrders = [], onOrderCli
           </Box>
           <Box
             sx={{
+              p: 1,
+              borderRadius: 1,
+              bgcolor: 'action.hover',
+              border: 1,
+              borderColor: 'divider',
               display: 'grid',
               gridTemplateColumns: { xs: 'repeat(2, 1fr)', sm: 'repeat(3, 1fr)', md: 'repeat(4, 1fr)' },
               gap: 1.5,
             }}
           >
             {completed.map((order) => (
-              <OrderCard key={order.id} order={order} onClick={() => onOrderClick(order)} />
+              <OrderCard key={order.id} order={order} muted onClick={() => onOrderClick(order)} />
             ))}
           </Box>
         </>
