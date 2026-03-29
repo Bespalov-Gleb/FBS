@@ -17,6 +17,7 @@ export interface OrderProduct {
   quantity: number;
   image_url: string;
   size?: string;
+  barcode?: string;
 }
 
 export interface Order {
@@ -30,6 +31,7 @@ export interface Order {
   warehouse_name?: string;
   warehouse_color?: string;
   product_image_url?: string;
+  barcode?: string;
   size?: string;
   marketplace_id: number;
   marketplace_type?: string;

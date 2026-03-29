@@ -170,6 +170,13 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
   if (!order) return null;
 
   const imageUrl = getProductImageUrl(order.product_image_url);
+  const orderBarcode = (
+    order.barcode ||
+    (order as Order & { product_barcode?: string; sku?: string }).product_barcode ||
+    (order as Order & { product_barcode?: string; sku?: string }).sku ||
+    order.products?.[0]?.barcode ||
+    ''
+  ).toString().trim();
   // Ozon: posting_number (85500607-0760-1). WB: external_id (4712812320 — ID сборочного задания)
   const displayId =
     order.marketplace_type === 'ozon'
@@ -281,6 +288,10 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
                       <Typography variant="body1" sx={{ wordBreak: 'break-word', overflowWrap: 'anywhere', fontWeight: 600 }}>
                         <strong>{p.offer_id}</strong>
                       </Typography>
+                      <Typography variant="body2">
+                        <strong>ШК:</strong>{' '}
+                        {(p.barcode || (p as typeof p & { sku?: string }).sku || '—').toString().trim() || '—'}
+                      </Typography>
                       <Typography variant="body1" color="text.secondary">{p.name}</Typography>
                       <Typography
                         variant="body1"
@@ -321,6 +332,12 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
                 </Typography>
                 <Typography variant="body1" color="text.secondary">
                   {order.product_name}
+                </Typography>
+                <Typography variant="body1">
+                  <strong>ШК:</strong>{' '}
+                  <Box component="span" color={orderBarcode ? 'text.primary' : 'text.disabled'}>
+                    {orderBarcode || '—'}
+                  </Box>
                 </Typography>
                 {order.marketplace_type !== 'ozon' && (
                   <Typography variant="body1">

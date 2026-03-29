@@ -115,6 +115,48 @@ class OrderCompleteService:
                     )
                 api_key = decrypt_api_key(mp.api_key)
                 async with WildberriesClient(api_key=api_key) as client:
+                    # Перед отправкой КИЗ проверяем актуальный статус в WB (официальный endpoint /api/v3/orders/status).
+                    try:
+                        wb_order_id = int(str(order.external_id))
+                    except (TypeError, ValueError):
+                        wb_order_id = None
+                    if wb_order_id is not None:
+                        try:
+                            statuses = await client.get_orders_statuses([wb_order_id])
+                            wb_state = statuses.get(wb_order_id) or {}
+                            wb_supplier = str(wb_state.get("supplier_status") or "").strip().lower()
+                            wb_wb_status = str(wb_state.get("wb_status") or "").strip().lower()
+                            logger.info(
+                                "WB live status before KIZ submit",
+                                extra={
+                                    "order_id": order.id,
+                                    "external_id": order.external_id,
+                                    "wb_order_id": wb_order_id,
+                                    "supplier_status_live": wb_supplier or None,
+                                    "wb_status_live": wb_wb_status or None,
+                                },
+                            )
+                            if wb_supplier and wb_supplier != "confirm":
+                                raise MarketplaceAPIException(
+                                    message="WB: задание не в статусе confirm (live check)",
+                                    marketplace="Wildberries",
+                                    detail=(
+                                        f"WB live status: supplierStatus='{wb_supplier}', wbStatus='{wb_wb_status or '-'}'. "
+                                        "Для передачи КИЗ нужен confirm (в сборке/в поставке)."
+                                    ),
+                                    status_code=409,
+                                )
+                        except MarketplaceAPIException:
+                            raise
+                        except Exception as e:
+                            logger.warning(
+                                "WB live status check failed before KIZ submit",
+                                extra={
+                                    "order_id": order.id,
+                                    "external_id": order.external_id,
+                                    "error": str(e),
+                                },
+                            )
                     try:
                         await client.add_kiz_code(str(order.external_id), wb_kiz)
                     except MarketplaceAPIException as e:

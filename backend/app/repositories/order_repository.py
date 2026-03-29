@@ -4,7 +4,7 @@
 from datetime import datetime, timedelta
 from typing import List, Optional
 
-from sqlalchemy import case, func, or_
+from sqlalchemy import String, case, cast, func, or_
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.order import Order, OrderStatus
@@ -144,12 +144,14 @@ class OrderRepository:
         search_pattern = None
         if search and search.strip():
             search_pattern = f"%{search.strip()}%"
+            extra_data_text = cast(Order.extra_data, String)
             query = query.filter(
                 or_(
                     Order.article.ilike(search_pattern),
                     Order.product_name.ilike(search_pattern),
                     Order.posting_number.ilike(search_pattern),
                     Order.external_id.ilike(search_pattern),
+                    extra_data_text.ilike(search_pattern),
                 )
             )
         order_col = getattr(Order, sort_by, Order.marketplace_created_at)
@@ -160,6 +162,7 @@ class OrderRepository:
                 (Order.product_name.ilike(search_pattern), 2),
                 (Order.posting_number.ilike(search_pattern), 3),
                 (Order.external_id.ilike(search_pattern), 3),
+                (extra_data_text.ilike(search_pattern), 4),
                 else_=4,
             ).label("search_priority")
             if sort_desc:
@@ -225,12 +228,14 @@ class OrderRepository:
             query = query.filter(Order.status == status)
         if search and search.strip():
             search_pattern = f"%{search.strip()}%"
+            extra_data_text = cast(Order.extra_data, String)
             query = query.filter(
                 or_(
                     Order.article.ilike(search_pattern),
                     Order.product_name.ilike(search_pattern),
                     Order.posting_number.ilike(search_pattern),
                     Order.external_id.ilike(search_pattern),
+                    extra_data_text.ilike(search_pattern),
                 )
             )
         return query.scalar() or 0
@@ -282,12 +287,14 @@ class OrderRepository:
             query = query.filter(Order.warehouse_id.in_(warehouse_ids))
         if search and search.strip():
             search_pattern = f"%{search.strip()}%"
+            extra_data_text = cast(Order.extra_data, String)
             query = query.filter(
                 or_(
                     Order.article.ilike(search_pattern),
                     Order.product_name.ilike(search_pattern),
                     Order.posting_number.ilike(search_pattern),
                     Order.external_id.ilike(search_pattern),
+                    extra_data_text.ilike(search_pattern),
                 )
             )
         order_col = getattr(Order, sort_by, Order.completed_at)
@@ -342,12 +349,14 @@ class OrderRepository:
             query = query.filter(Order.warehouse_id.in_(warehouse_ids))
         if search and search.strip():
             search_pattern = f"%{search.strip()}%"
+            extra_data_text = cast(Order.extra_data, String)
             query = query.filter(
                 or_(
                     Order.article.ilike(search_pattern),
                     Order.product_name.ilike(search_pattern),
                     Order.posting_number.ilike(search_pattern),
                     Order.external_id.ilike(search_pattern),
+                    extra_data_text.ilike(search_pattern),
                 )
             )
         return query.scalar() or 0
