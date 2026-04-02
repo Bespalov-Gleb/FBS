@@ -1095,7 +1095,7 @@ def _generate_kiz_label_pdf(kiz_full: str, kiz_31: str, width_mm: int = 40, heig
     """
     PDF этикетки-дубля КИЗ: DataMatrix (полный код) + 31 символ текстом снизу.
     Размер DataMatrix ~22×22 мм по инструкции WB.
-    GS1: > в выводе сканера = GS (ASCII 29), добавляем FNC1 (ASCII 232) в начало.
+    GS1: > в выводе сканера = GS (ASCII 29).
     """
     import io
 
@@ -1105,10 +1105,15 @@ def _generate_kiz_label_pdf(kiz_full: str, kiz_31: str, width_mm: int = 40, heig
     from reportlab.pdfgen import canvas
 
     # GS1 DataMatrix: печатаем полный КИЗ (скан должен возвращать полный код, не 31 символ).
-    # Символ '>' трактуем как GS (ASCII 29), добавляем FNC1 в начало.
+    # Символ '>' трактуем как GS (ASCII 29).
     data_for_dm = (kiz_full or "").replace(">", "\x1d").strip()
-    if not data_for_dm.startswith("\xe8"):
-        data_for_dm = "\xe8" + data_for_dm
+    if not data_for_dm:
+        raise ValueError("Пустой payload для DataMatrix")
+    # Для надёжной генерации допускаем только printable ASCII + GS (0x1D).
+    # Кириллица/мусор от неверной раскладки сканера делают DataMatrix невалидным.
+    bad_chars = [ch for ch in data_for_dm if (ord(ch) > 126 or (ord(ch) < 32 and ch != "\x1d"))]
+    if bad_chars:
+        raise ValueError("Невалидные символы в КИЗ для DataMatrix")
 
     dm = createBarcodeDrawing("ECC200DataMatrix", value=data_for_dm)
 
@@ -1195,20 +1200,13 @@ def get_kiz_label(
     try:
         pdf_bytes = _generate_kiz_label_pdf(kiz, kiz_31, width_mm=kiz_w, height_mm=kiz_h)
     except Exception as e:
-        logger.warning("DataMatrix failed, fallback to QR: %s", e)
-        import io
-        import qrcode
-        qr = qrcode.QRCode(version=1, box_size=6, border=2)
-        qr.add_data(kiz_31)
-        qr.make(fit=True)
-        img = qr.make_image(fill_color="black", back_color="white")
-        buf = io.BytesIO()
-        img.save(buf, format="PNG")
-        buf.seek(0)
-        return Response(
-            content=buf.getvalue(),
-            media_type="image/png",
-            headers={"Content-Disposition": f"inline; filename=kiz-{kiz_31[:20]}.png"},
+        logger.warning("DataMatrix generation failed (no QR fallback): %s", e)
+        raise HTTPException(
+            400,
+            detail=(
+                "Не удалось сформировать DataMatrix из скана КИЗ. "
+                "Проверьте раскладку сканера (ENG), префиксы/суффиксы и повторите сканирование."
+            ),
         )
     if kiz_rot:
         try:
