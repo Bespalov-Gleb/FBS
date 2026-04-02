@@ -104,12 +104,26 @@ def _order_products(o: Order) -> list[OrderProductItem]:
             name=str(p.get("name", "")),
             quantity=int(p.get("quantity", 1)),
             image_url=str(p.get("image_url", "")),
+            barcode=(str(p.get("barcode", "")).strip() or None),
             size=_ozon_product_size(
                 p, order_id=o.id, offer_id=str(p.get("offer_id", "")), order_size=order_size
             ),
         )
         for p in prods
     ]
+
+
+def _order_barcode(o: Order) -> Optional[str]:
+    """Основной ШК заказа для UI модалки (WB: первый sku)."""
+    ed = o.extra_data or {}
+    skus = ed.get("skus") if isinstance(ed, dict) else None
+    if isinstance(skus, list):
+        for s in skus:
+            val = str(s or "").strip()
+            if val:
+                return val
+    val = str(ed.get("barcode", "")).strip() if isinstance(ed, dict) else ""
+    return val or None
 
 def _is_printed(order: Order) -> bool:
     ed = order.extra_data or {}
@@ -185,6 +199,7 @@ def list_orders(
             warehouse_name=o.warehouse_name,
             warehouse_color=o.warehouse.color if o.warehouse else None,
             product_image_url=_product_image_url_for_order(o),
+            barcode=_order_barcode(o),
             size=_sanitize_size((o.extra_data or {}).get("size")),
             marketplace_created_at=o.marketplace_created_at,
             completed_at=o.completed_at,
@@ -257,6 +272,7 @@ def list_completed_orders(
             warehouse_name=o.warehouse_name,
             warehouse_color=o.warehouse.color if o.warehouse else None,
             product_image_url=_product_image_url_for_order(o),
+            barcode=_order_barcode(o),
             size=_sanitize_size((o.extra_data or {}).get("size")),
             marketplace_created_at=o.marketplace_created_at,
             completed_at=o.completed_at,
@@ -1177,7 +1193,7 @@ def get_kiz_label(
     if not kiz_31:
         raise HTTPException(400, detail="Пустой КИЗ после нормализации")
     try:
-        pdf_bytes = _generate_kiz_label_pdf(kiz_31, kiz_31, width_mm=kiz_w, height_mm=kiz_h)
+        pdf_bytes = _generate_kiz_label_pdf(kiz, kiz_31, width_mm=kiz_w, height_mm=kiz_h)
     except Exception as e:
         logger.warning("DataMatrix failed, fallback to QR: %s", e)
         import io
@@ -1277,6 +1293,7 @@ def get_order(
         warehouse_name=order.warehouse_name,
         warehouse_color=order.warehouse.color if order.warehouse else None,
         product_image_url=_product_image_url_for_order(order),
+        barcode=_order_barcode(order),
         size=_sanitize_size((order.extra_data or {}).get("size")),
         marketplace_created_at=order.marketplace_created_at,
         completed_at=order.completed_at,
