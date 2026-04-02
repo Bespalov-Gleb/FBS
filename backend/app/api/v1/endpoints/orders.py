@@ -1104,9 +1104,9 @@ def _generate_kiz_label_pdf(kiz_full: str, kiz_31: str, width_mm: int = 40, heig
     from reportlab.lib.units import mm
     from reportlab.pdfgen import canvas
 
-    # GS1 DataMatrix: печатаем тот же укороченный КИЗ (31), который уходит в WB.
+    # GS1 DataMatrix: печатаем полный КИЗ (скан должен возвращать полный код, не 31 символ).
     # Символ '>' трактуем как GS (ASCII 29), добавляем FNC1 в начало.
-    data_for_dm = kiz_31.replace(">", "\x1d")
+    data_for_dm = (kiz_full or "").replace(">", "\x1d").strip()
     if not data_for_dm.startswith("\xe8"):
         data_for_dm = "\xe8" + data_for_dm
 
