@@ -1099,10 +1099,10 @@ def _generate_kiz_label_pdf(kiz_full: str, kiz_31: str, width_mm: int = 40, heig
     """
     import io
 
-    from reportlab.graphics import renderPDF
-    from reportlab.graphics.barcode import createBarcodeDrawing
     from reportlab.lib.units import mm
+    from reportlab.lib.utils import ImageReader
     from reportlab.pdfgen import canvas
+    import treepoem
 
     # GS1 DataMatrix: печатаем полный КИЗ (скан должен возвращать полный код, не 31 символ).
     # Символ '>' трактуем как GS (ASCII 29).
@@ -1115,7 +1115,11 @@ def _generate_kiz_label_pdf(kiz_full: str, kiz_31: str, width_mm: int = 40, heig
     if bad_chars:
         raise ValueError("Невалидные символы в КИЗ для DataMatrix")
 
-    dm = createBarcodeDrawing("ECC200DataMatrix", value=data_for_dm)
+    # Treepoem/BWIPP генерирует более стабильный DataMatrix для термопечати.
+    dm_img = treepoem.generate_barcode(
+        barcode_type="datamatrix",
+        data=data_for_dm,
+    ).convert("RGB")
 
     dm_size_mm = min(width_mm - 4, height_mm - 12, 22)  # DataMatrix вписывается в этикетку
     label_w = width_mm * mm
@@ -1125,9 +1129,10 @@ def _generate_kiz_label_pdf(kiz_full: str, kiz_31: str, width_mm: int = 40, heig
     margin = 1 * mm
 
     # DataMatrix размер
-    scale = (dm_size_mm * mm) / max(dm.width, dm.height)
-    dm_w = dm.width * scale
-    dm_h = dm.height * scale
+    dm_src_w, dm_src_h = dm_img.size
+    scale = (dm_size_mm * mm) / max(dm_src_w, dm_src_h)
+    dm_w = dm_src_w * scale
+    dm_h = dm_src_h * scale
 
     # 31 символ: подбираем размер шрифта
     text = kiz_31[:31]
@@ -1146,11 +1151,18 @@ def _generate_kiz_label_pdf(kiz_full: str, kiz_31: str, width_mm: int = 40, heig
     ty = (label_h - total_h) / 2  # базовая линия текста
 
     # DataMatrix (центрирован горизонтально)
-    c.saveState()
-    c.translate((label_w - dm_w) / 2, y_dm_bottom)
-    c.scale(scale, scale)
-    renderPDF.draw(dm, c, 0, 0)
-    c.restoreState()
+    dm_buf = io.BytesIO()
+    dm_img.save(dm_buf, format="PNG")
+    dm_buf.seek(0)
+    c.drawImage(
+        ImageReader(dm_buf),
+        (label_w - dm_w) / 2,
+        y_dm_bottom,
+        width=dm_w,
+        height=dm_h,
+        preserveAspectRatio=True,
+        mask="auto",
+    )
 
     # 31 символ текстом (центрирован горизонтально)
     c.setFont("Helvetica", font_size)
