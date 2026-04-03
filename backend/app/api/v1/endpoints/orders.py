@@ -1095,7 +1095,8 @@ def _generate_kiz_label_pdf(kiz_full: str, kiz_31: str, width_mm: int = 40, heig
     """
     PDF этикетки-дубля КИЗ: DataMatrix (полный код) + 31 символ текстом снизу.
     Размер DataMatrix ~22×22 мм по инструкции WB.
-    GS1: > в выводе сканера = GS (ASCII 29).
+    Важно: для дубля кодируем payload как есть (после базовой нормализации),
+    чтобы повторное сканирование возвращало ту же строку.
     """
     import io
 
@@ -1104,16 +1105,10 @@ def _generate_kiz_label_pdf(kiz_full: str, kiz_31: str, width_mm: int = 40, heig
     from reportlab.pdfgen import canvas
     import treepoem
 
-    # GS1 DataMatrix: печатаем полный КИЗ (скан должен возвращать полный код, не 31 символ).
-    # Символ '>' трактуем как GS (ASCII 29).
-    data_for_dm = (kiz_full or "").replace(">", "\x1d").strip()
+    # Кодируем полный скан как есть для round-trip 1:1.
+    data_for_dm = (kiz_full or "").strip()
     if not data_for_dm:
         raise ValueError("Пустой payload для DataMatrix")
-    # Для надёжной генерации допускаем только printable ASCII + GS (0x1D).
-    # Кириллица/мусор от неверной раскладки сканера делают DataMatrix невалидным.
-    bad_chars = [ch for ch in data_for_dm if (ord(ch) > 126 or (ord(ch) < 32 and ch != "\x1d"))]
-    if bad_chars:
-        raise ValueError("Невалидные символы в КИЗ для DataMatrix")
 
     # Treepoem/BWIPP генерирует более стабильный DataMatrix для термопечати.
     dm_img = treepoem.generate_barcode(
@@ -1183,10 +1178,8 @@ def _normalize_kiz_for_label(raw: str) -> str:
 
 
 def _kiz_31(raw: str) -> str:
-    s = _normalize_kiz_for_label(raw).replace("\x1d", ">")
-    if ">" in s:
-        s = s.split(">", 1)[0]
-    return s[:31].strip()
+    # Только отображение для подписи под кодом: берём первые 31 символа как есть.
+    return (raw or "")[:31]
 
 
 @router.get("/kiz-label")
@@ -1205,10 +1198,11 @@ def get_kiz_label(
     kiz_h = (ps.kiz_height_mm or 35) if ps else 35
     kiz_rot = (ps.kiz_rotate or 0) if ps else 0
 
-    kiz = _normalize_kiz_for_label(kiz_code)
+    # Важно: для генерации DataMatrix используем строку ровно как пришла со сканера.
+    kiz = kiz_code
     kiz_31 = _kiz_31(kiz)
     if not kiz_31:
-        raise HTTPException(400, detail="Пустой КИЗ после нормализации")
+        raise HTTPException(400, detail="Пустой КИЗ")
     try:
         pdf_bytes = _generate_kiz_label_pdf(kiz, kiz_31, width_mm=kiz_w, height_mm=kiz_h)
     except Exception as e:

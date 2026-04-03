@@ -230,6 +230,26 @@ class OzonClient(BaseMarketplaceClient):
             limit=1000,
         )[0]
     
+    async def get_orders_unfulfilled_by_status(
+        self,
+        status: str,
+        warehouse_id: Optional[str] = None,
+        limit: int = 1000,
+        offset: int = 0,
+    ) -> tuple[list[MarketplaceOrder], bool]:
+        """
+        Получение необработанных FBS заказов Ozon по статусу.
+
+        Endpoint: POST /v3/posting/fbs/unfulfilled/list
+        """
+        orders, has_next = await self.get_orders_with_pagination(
+            warehouse_id=warehouse_id,
+            status=status,
+            limit=limit,
+            offset=offset,
+        )
+        return orders, has_next
+
     async def get_orders_awaiting_deliver(
         self,
         warehouse_id: Optional[str] = None,
@@ -251,9 +271,9 @@ class OzonClient(BaseMarketplaceClient):
         Returns:
             tuple: (список заказов, has_next)
         """
-        orders, has_next = await self.get_orders_with_pagination(
-            warehouse_id=warehouse_id,
+        orders, has_next = await self.get_orders_unfulfilled_by_status(
             status="awaiting_deliver",
+            warehouse_id=warehouse_id,
             limit=limit,
             offset=offset,
         )
@@ -343,7 +363,7 @@ class OzonClient(BaseMarketplaceClient):
         Args:
             warehouse_id: ID склада
             since, to: Период (по умолчанию 365 дней назад, to = +30 дней)
-            status: Статус — фильтрация на нашей стороне (API не поддерживает)
+            status: Статус — передаётся в filter.status к Ozon API (серверная фильтрация)
             limit: Лимит (max 1000)
             offset: Смещение
             dir: asc | desc
@@ -357,10 +377,15 @@ class OzonClient(BaseMarketplaceClient):
         iso_format = "%Y-%m-%dT%H:%M:%S.000Z"
 
         # cutoff_from/cutoff_to — фильтр по времени сборки (дедлайн). cutoff_to в будущем — новые заказы.
+        # status передаём серверному API напрямую — Ozon /v3/posting/fbs/unfulfilled/list поддерживает
+        # filter.status (awaiting_packaging, awaiting_deliver и др.), поэтому фильтруем на стороне Ozon,
+        # а не у себя после получения ответа.
         filter_data: dict[str, Any] = {
             "cutoff_from": period_from.strftime(iso_format),
             "cutoff_to": period_to.strftime(iso_format),
         }
+        if status:
+            filter_data["status"] = status
         
         request_body = {
             "dir": dir.lower() if dir else "asc",
@@ -391,10 +416,8 @@ class OzonClient(BaseMarketplaceClient):
             postings = result.get("postings", [])
             # unfulfilled/list возвращает count, не has_next — считаем по количеству
             has_next = len(postings) >= limit
-            
-            # API не поддерживает filter.status и filter.warehouse_id — фильтруем на нашей стороне
-            if status:
-                postings = [p for p in postings if p.get("status") == status]
+
+            # warehouse_id фильтруем на нашей стороне (API не поддерживает)
             if warehouse_id:
                 try:
                     wh_id = int(warehouse_id)

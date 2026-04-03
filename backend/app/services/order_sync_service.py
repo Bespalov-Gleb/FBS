@@ -32,7 +32,7 @@ class OrderSyncService:
         """
         Синхронизация заказов для одного маркетплейса.
         
-        Ozon: заказы awaiting_deliver (с пагинацией, период 90 дней)
+        Ozon: заказы в статусе сборки (по умолчанию awaiting_packaging, настраивается env)
         WB: заказы confirm (На сборке) — через status API
         
         Returns:
@@ -67,6 +67,13 @@ class OrderSyncService:
             if not marketplace.client_id:
                 logger.warning("Ozon without client_id, skipping sync")
                 return 0
+            ozon_sync_status = (
+                os.environ.get("OZON_SYNC_UNFULFILLED_STATUS", "awaiting_packaging")
+                .strip()
+                .lower()
+            )
+            if not ozon_sync_status:
+                ozon_sync_status = "awaiting_packaging"
             async with OzonClient(
                 api_key=api_key,
                 client_id=marketplace.client_id,
@@ -74,13 +81,19 @@ class OrderSyncService:
                 orders = []
                 offset = 0
                 while True:
-                    batch, has_next = await client.get_orders_awaiting_deliver(
+                    batch, has_next = await client.get_orders_unfulfilled_by_status(
+                        status=ozon_sync_status,
                         limit=1000, offset=offset
                     )
                     orders.extend(batch)
                     if not has_next or len(batch) < 1000:
                         break
                     offset += 1000
+                logger.info(
+                    "Ozon sync unfulfilled status=%s, fetched=%s",
+                    ozon_sync_status,
+                    len(orders),
+                )
                 # Собираем уникальные offer_id и sku для батч-запросов
                 offer_ids = []
                 sku_list = []
