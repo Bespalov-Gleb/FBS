@@ -1091,12 +1091,54 @@ def _rotate_pdf_via_image(
     return content
 
 
+def _build_gs1_kiz_payload(raw: str) -> str:
+    """
+    Формирует payload для GS1 DataMatrix из сырой строки КИЗ.
+
+    Структура Честного ЗНАКА: 01{GTIN-14} 21{serial-13} [GS] 91{key-4} [GS] 92{crypto-44}
+    Разделитель GS (ASCII 29 / 0x1D) обязателен между полями переменной длины.
+    Без него генерируется обычный DataMatrix, а не GS1 DataMatrix — паттерны разные.
+
+    Если строка уже содержит GS-символы (сканер их передал) — не трогаем.
+    """
+    if "\x1d" in raw:
+        return raw  # GS уже есть, используем как есть
+
+    # Стандартная структура КИЗ: начинается с 01 + 14 цифр + 21
+    if not (raw.startswith("01") and len(raw) > 16 and raw[16:18] == "21"):
+        return raw  # нестандартный формат — возвращаем как есть
+
+    # Первые 31 символа: 01 + GTIN(14) + 21 + serial(13) — фиксированная часть
+    base = raw[:31]
+    rest = raw[31:]
+
+    if not rest:
+        return base  # только короткий КИЗ без крипто-хвоста
+
+    # rest начинается с AI 91 (ключ проверки, 4 символа) или 93 (OTP)
+    # Между base и rest нужен GS (после поля переменной длины 21)
+    if rest.startswith("91") and len(rest) >= 6:
+        key_part = rest[:6]   # 91 + 4 символа ключа
+        after_key = rest[6:]  # всё, что после ключа (обычно 92 + 44 символа крипто)
+        if after_key:
+            # GS после serial (21) и GS после ключа (91)
+            return base + "\x1d" + key_part + "\x1d" + after_key
+        else:
+            return base + "\x1d" + key_part
+
+    # Другие варианты (93 и т.п.) — просто GS после base
+    return base + "\x1d" + rest
+
+
 def _generate_kiz_label_pdf(kiz_full: str, kiz_31: str, width_mm: int = 40, height_mm: int = 35) -> bytes:
     """
-    PDF этикетки-дубля КИЗ: DataMatrix (полный код) + 31 символ текстом снизу.
+    PDF этикетки-дубля КИЗ: GS1 DataMatrix (полный код) + 31 символ текстом снизу.
     Размер DataMatrix ~22×22 мм по инструкции WB.
-    Важно: для дубля кодируем payload как есть (после базовой нормализации),
-    чтобы повторное сканирование возвращало ту же строку.
+
+    Используем GS1 DataMatrix (не обычный DataMatrix):
+    - FNC1 в начале кода добавляется автоматически библиотекой treepoem/BWIPP
+    - GS-разделители (0x1D) вставляем между полями переменной длины через _build_gs1_kiz_payload
+    Без этого паттерн кода отличается от оригинала и сканер читает неправильно.
     """
     import io
 
@@ -1105,14 +1147,17 @@ def _generate_kiz_label_pdf(kiz_full: str, kiz_31: str, width_mm: int = 40, heig
     from reportlab.pdfgen import canvas
     import treepoem
 
-    # Кодируем полный скан как есть для round-trip 1:1.
-    data_for_dm = (kiz_full or "").strip()
-    if not data_for_dm:
+    raw = (kiz_full or "").strip()
+    if not raw:
         raise ValueError("Пустой payload для DataMatrix")
 
-    # Treepoem/BWIPP генерирует более стабильный DataMatrix для термопечати.
+    # Строим корректный GS1-payload с разделителями
+    data_for_dm = _build_gs1_kiz_payload(raw)
+
+    # gs1datamatrix: BWIPP автоматически добавляет FNC1 в начало,
+    # корректно кодирует GS-разделители (0x1D) — результат идентичен оригинальному КИЗ.
     dm_img = treepoem.generate_barcode(
-        barcode_type="datamatrix",
+        barcode_type="gs1datamatrix",
         data=data_for_dm,
     ).convert("RGB")
 
@@ -1200,6 +1245,19 @@ def get_kiz_label(
 
     # Важно: для генерации DataMatrix используем строку ровно как пришла со сканера.
     kiz = kiz_code
+
+    # Кириллица в КИЗ = сканер работал в русской раскладке.
+    # Такой код неверный — сообщаем пользователю и не генерируем DataMatrix.
+    if any('\u0400' <= ch <= '\u04FF' for ch in kiz):
+        logger.warning("KIZ contains Cyrillic characters (wrong scanner layout): %r", kiz[:40])
+        raise HTTPException(
+            400,
+            detail=(
+                "Сканер работал в русской раскладке — код КИЗ содержит кириллицу. "
+                "Переключите сканер/клавиатуру на английский (ENG) и отсканируйте повторно."
+            ),
+        )
+
     kiz_31 = _kiz_31(kiz)
     if not kiz_31:
         raise HTTPException(400, detail="Пустой КИЗ")
@@ -1219,10 +1277,12 @@ def get_kiz_label(
             pdf_bytes = _rotate_pdf(pdf_bytes, kiz_rot)
         except Exception as _re:
             logger.warning(f"KIZ PDF rotate failed: {_re}")
+    # Имя файла только из ASCII-символов, иначе latin-1 в заголовке упадёт
+    safe_name = "".join(ch for ch in kiz_31[:20] if ch.isascii() and ch.isprintable()) or "kiz"
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": f"inline; filename=kiz-{kiz_31[:20]}.pdf"},
+        headers={"Content-Disposition": f"inline; filename=kiz-{safe_name}.pdf"},
     )
 
 

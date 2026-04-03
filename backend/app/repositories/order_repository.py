@@ -609,15 +609,17 @@ class OrderRepository:
     ) -> bool:
         """Отметить заказ как доставленный (Ozon delivered/delivering). Не показывать в списке.
         Для Ozon: ищем по external_id, при неудаче — по posting_number.
-        Сбрасываем collected_in_app — при смене статуса с «В сборке» убираем из «Собрано»."""
+        Локально собранные (collected_in_app=True) не трогаем."""
         order = self.get_by_external_id(marketplace_id, external_id)
         if not order and posting_number:
             order = self.get_by_posting_number(marketplace_id, posting_number)
         if not order or order.status == OrderStatus.DELIVERED:
             return False
+        if order.collected_in_app:
+            # Инвариант: синк не должен сбрасывать локально собранный заказ.
+            return False
         order.status = OrderStatus.DELIVERED
         order.marketplace_status = "delivered"
-        order.collected_in_app = False
         self.db.commit()
         self.db.refresh(order)
         return True

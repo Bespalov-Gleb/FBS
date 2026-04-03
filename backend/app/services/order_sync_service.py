@@ -94,11 +94,21 @@ class OrderSyncService:
                     ozon_sync_status,
                     len(orders),
                 )
+                existing_external_ids: set[str] = set()
+                for mo in orders:
+                    if order_repo.get_by_external_id(marketplace.id, mo.external_id):
+                        existing_external_ids.add(mo.external_id)
+                new_orders = [mo for mo in orders if mo.external_id not in existing_external_ids]
+                logger.info(
+                    "Ozon sync split: new=%s existing=%s",
+                    len(new_orders),
+                    len(existing_external_ids),
+                )
                 # Собираем уникальные offer_id и sku для батч-запросов
                 offer_ids = []
                 sku_list = []
                 sku_to_article: dict[int, str] = {}
-                for mo in orders:
+                for mo in new_orders:
                     prods = (mo.metadata or {}).get("products", [])
                     for p in prods:
                         oid = p.get("offer_id")
@@ -149,7 +159,7 @@ class OrderSyncService:
                     )
                     posting_numbers = [
                         getattr(mo, "posting_number", None) or getattr(mo, "external_id", None)
-                        for mo in orders
+                        for mo in new_orders
                         if getattr(mo, "posting_number", None) or getattr(mo, "external_id", None)
                     ]
                     posting_numbers = [pn for pn in posting_numbers if pn]
@@ -230,7 +240,7 @@ class OrderSyncService:
                     return None
 
                 # Шаг 2: применяем фото; размер — posting (основа) → attributes (с валидацией) → offer_id
-                for mo in orders:
+                for mo in new_orders:
                     prods = (mo.metadata or {}).get("products", [])
                     if mo.metadata is None:
                         mo.metadata = {}
@@ -273,8 +283,9 @@ class OrderSyncService:
                     )
                     if first_size and mo.metadata:
                         mo.metadata["size"] = first_size
-                with_images = sum(1 for mo in orders if (mo.metadata or {}).get("product_image_url"))
-                logger.info(f"Product images: {with_images}/{len(orders)} orders got photo")
+                with_images = sum(1 for mo in new_orders if (mo.metadata or {}).get("product_image_url"))
+                if new_orders:
+                    logger.info(f"Product images: {with_images}/{len(new_orders)} new orders got photo")
                 if details_map:
                     logger.info("Ozon: sizes from posting/fbs/get (primary, actual ordered size)")
                 elif sizes_from_attrs:
@@ -283,7 +294,7 @@ class OrderSyncService:
                 # Шаг 3 (fallback): get_product_sizes — только для заказов БЕЗ размера (когда posting уже запрашивали)
                 if fetch_sizes and details_map:
                     orders_without_size = [
-                        mo for mo in orders
+                        mo for mo in new_orders
                         if not any(p.get("size") for p in (mo.metadata or {}).get("products", []))
                     ]
                     if orders_without_size and offer_ids:
@@ -324,7 +335,7 @@ class OrderSyncService:
                             except Exception as e:
                                 logger.warning("Ozon: get_product_sizes fallback failed: %s", e)
                     still_missing = [
-                        mo for mo in orders
+                        mo for mo in new_orders
                         if not any(p.get("size") for p in (mo.metadata or {}).get("products", []))
                     ]
                     if still_missing:
@@ -345,6 +356,7 @@ class OrderSyncService:
                 for mo in orders:
                     count += OrderSyncService._upsert_order(
                         db, order_repo, marketplace, mo,
+                        skip_metadata_if_exists=True,
                     )
                 # delivering (в доставке) и delivered (доставлен) → DELIVERED (скрыть)
                 # filter: since, to — по irenicaa/ozon-seller (GetPostingFBSListFilter)
@@ -486,6 +498,8 @@ class OrderSyncService:
         order_repo: OrderRepository,
         marketplace: Marketplace,
         mo: MarketplaceOrder,
+        *,
+        skip_metadata_if_exists: bool = False,
     ) -> int:
         """Создать или обновить заказ"""
         external_wh_id = None
@@ -519,13 +533,14 @@ class OrderSyncService:
             # WB: supply API не вызывается, заказ остаётся confirm на WB — синк не сбрасывает
             # COMPLETED обратно в awaiting_packaging.
             status_to_set = order_status if existing.status != OrderStatus.COMPLETED else None
+            metadata_to_set = None if skip_metadata_if_exists else mo.metadata
             order_repo.update_from_marketplace(
                 existing,
                 status=status_to_set,
                 marketplace_status=mo.status,
                 warehouse_id=warehouse_id,
                 warehouse_name=mo.warehouse_name,
-                metadata=mo.metadata,
+                metadata=metadata_to_set,
             )
             return 1
 
