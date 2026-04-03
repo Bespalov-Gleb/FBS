@@ -4,6 +4,7 @@ API endpoints для заказов и синхронизации
 from datetime import datetime
 from typing import List, Optional
 import os
+import re
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -1091,43 +1092,78 @@ def _rotate_pdf_via_image(
     return content
 
 
-def _build_gs1_kiz_payload(raw: str) -> str:
+def _kiz_to_bwipp_gs1_datamatrix_string(raw: str) -> str:
     """
-    Формирует payload для GS1 DataMatrix из сырой строки КИЗ.
+    BWIPP / treepoem barcode_type=gs1datamatrix ожидает человекочитаемый GS1 со скобками:
+    (01)GTIN14(21)serial…(91)key4(92)crypto…
+    Сырая строка сканера без скобок даёт ошибку: GS1aiMissingOpenParen AIs must start with '('
 
-    Структура Честного ЗНАКА: 01{GTIN-14} 21{serial-13} [GS] 91{key-4} [GS] 92{crypto-44}
-    Разделитель GS (ASCII 29 / 0x1D) обязателен между полями переменной длины.
-    Без него генерируется обычный DataMatrix, а не GS1 DataMatrix — паттерны разные.
-
-    Если строка уже содержит GS-символы (сканер их передал) — не трогаем.
+    Компактный КИЗ Честного ЗНАКА (без GS в строке): 01+14 цифр + 21 + серия 13 + 91+4 + 92+остаток.
     """
-    if "\x1d" in raw:
-        return raw  # GS уже есть, используем как есть
+    s = (raw or "").strip()
+    if not s:
+        return s
+    if s.startswith("("):
+        return s
+    # Уже с разделителями GS — разбить и собрать в скобочный формат (первый сегмент = 01…21…)
+    if "\x1d" in s:
+        parts = [p for p in s.split("\x1d") if p]
+        if len(parts) == 1:
+            return _kiz_to_bwipp_gs1_datamatrix_string(parts[0])
+        out: list[str] = []
+        for p in parts:
+            if p.startswith("01") and len(p) >= 18 and p[16:18] == "21" and len(p) >= 31:
+                out.append(f"(01){p[2:16]}(21){p[18:31]}")
+                tail = p[31:]
+                if tail:
+                    out.append(_kiz_to_bwipp_gs1_datamatrix_string(tail))
+            elif p.startswith("91") and len(p) >= 6:
+                out.append(f"(91){p[2:6]}")
+                if len(p) > 6:
+                    rest = p[6:]
+                    if rest.startswith("92") and len(rest) >= 2:
+                        out.append(f"(92){rest[2:]}")
+                    else:
+                        out.append(rest)
+            elif p.startswith("92") and len(p) >= 2:
+                out.append(f"(92){p[2:]}")
+            elif p.startswith("93") and len(p) >= 2:
+                out.append(f"(93){p[2:]}")
+            else:
+                out.append(p)
+        return "".join(out)
 
-    # Стандартная структура КИЗ: начинается с 01 + 14 цифр + 21
-    if not (raw.startswith("01") and len(raw) > 16 and raw[16:18] == "21"):
-        return raw  # нестандартный формат — возвращаем как есть
+    if not (s.startswith("01") and len(s) >= 18 and s[16:18] == "21"):
+        return s
 
-    # Первые 31 символа: 01 + GTIN(14) + 21 + serial(13) — фиксированная часть
-    base = raw[:31]
-    rest = raw[31:]
+    # Полный КИЗ ЧЗ: 01(14 цифр)21(серия переменной длины)91(4)92(крипто…). Без GS между полями —
+    # фиксированные 31 символ ненадёжен, если длина серии ≠ 13.
+    m_full = re.match(r"^01(\d{14})21(.*?)91([A-Za-z0-9]{4})92(.+)$", s)
+    if m_full:
+        gtin, serial, key, crypto = m_full.groups()
+        return f"(01){gtin}(21){serial}(91){key}(92){crypto}"
 
-    if not rest:
-        return base  # только короткий КИЗ без крипто-хвоста
+    gtin = s[2:16]
+    if len(s) < 31:
+        serial = s[18:]
+        return f"(01){gtin}(21){serial}"
 
-    # rest начинается с AI 91 (ключ проверки, 4 символа) или 93 (OTP)
-    # Между base и rest нужен GS (после поля переменной длины 21)
-    if rest.startswith("91") and len(rest) >= 6:
-        key_part = rest[:6]   # 91 + 4 символа ключа
-        after_key = rest[6:]  # всё, что после ключа (обычно 92 + 44 символа крипто)
-        if after_key:
-            # GS после serial (21) и GS после ключа (91)
-            return base + "\x1d" + key_part + "\x1d" + after_key
-        else:
-            return base + "\x1d" + key_part
+    serial = s[18:31]
+    tail = s[31:]
+    if not tail:
+        return f"(01){gtin}(21){serial}"
 
-    # Другие варианты (93 и т.п.) — просто GS после base
-    return base + "\x1d" + rest
+    if tail.startswith("91") and len(tail) >= 6:
+        key = tail[2:6]
+        rest = tail[6:]
+        if rest.startswith("92") and len(rest) >= 2:
+            return f"(01){gtin}(21){serial}(91){key}(92){rest[2:]}"
+        return f"(01){gtin}(21){serial}(91){key}{rest}"
+
+    if tail.startswith("93") and len(tail) >= 2:
+        return f"(01){gtin}(21){serial}(93){tail[2:]}"
+
+    return f"(01){gtin}(21){serial}{tail}"
 
 
 def _generate_kiz_label_pdf(kiz_full: str, kiz_31: str, width_mm: int = 40, height_mm: int = 35) -> bytes:
@@ -1135,10 +1171,7 @@ def _generate_kiz_label_pdf(kiz_full: str, kiz_31: str, width_mm: int = 40, heig
     PDF этикетки-дубля КИЗ: GS1 DataMatrix (полный код) + 31 символ текстом снизу.
     Размер DataMatrix ~22×22 мм по инструкции WB.
 
-    Используем GS1 DataMatrix (не обычный DataMatrix):
-    - FNC1 в начале кода добавляется автоматически библиотекой treepoem/BWIPP
-    - GS-разделители (0x1D) вставляем между полями переменной длины через _build_gs1_kiz_payload
-    Без этого паттерн кода отличается от оригинала и сканер читает неправильно.
+    treepoem + BWIPP gs1datamatrix: данные в формате (01)…(21)…(91)…(92)… — см. _kiz_to_bwipp_gs1_datamatrix_string.
     """
     import io
 
@@ -1151,11 +1184,10 @@ def _generate_kiz_label_pdf(kiz_full: str, kiz_31: str, width_mm: int = 40, heig
     if not raw:
         raise ValueError("Пустой payload для DataMatrix")
 
-    # Строим корректный GS1-payload с разделителями
-    data_for_dm = _build_gs1_kiz_payload(raw)
+    data_for_dm = _kiz_to_bwipp_gs1_datamatrix_string(raw)
+    if not data_for_dm.startswith("("):
+        raise ValueError("Неверный формат КИЗ для GS1 DataMatrix (ожидается 01…21… или уже (01)…)")
 
-    # gs1datamatrix: BWIPP автоматически добавляет FNC1 в начало,
-    # корректно кодирует GS-разделители (0x1D) — результат идентичен оригинальному КИЗ.
     dm_img = treepoem.generate_barcode(
         barcode_type="gs1datamatrix",
         data=data_for_dm,
@@ -1243,8 +1275,8 @@ def get_kiz_label(
     kiz_h = (ps.kiz_height_mm or 35) if ps else 35
     kiz_rot = (ps.kiz_rotate or 0) if ps else 0
 
-    # Важно: для генерации DataMatrix используем строку ровно как пришла со сканера.
-    kiz = kiz_code
+    # Снять префиксы сканера (]C1 и т.д.) и управляющие символы — иначе BWIPP не распознаёт 01…21…
+    kiz = _normalize_kiz_for_label(kiz_code)
 
     # Кириллица в КИЗ = сканер работал в русской раскладке.
     # Такой код неверный — сообщаем пользователю и не генерируем DataMatrix.
