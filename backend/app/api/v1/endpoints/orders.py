@@ -1092,6 +1092,86 @@ def _rotate_pdf_via_image(
     return content
 
 
+def _parse_kiz_01_21_91_92(s: str) -> Optional[tuple[str, str, str, str]]:
+    """
+    Полный КИЗ ЧЗ без скобок: 01+GTIN(14)+21+serial+91+key(4)+92+crypto.
+    Возвращает (gtin, serial, key, crypto) или None.
+    """
+    t = (s or "").strip()
+    if not t or t.startswith("("):
+        return None
+    m = re.match(r"^01(\d{14})21(.*?)91([A-Za-z0-9]{4})92(.+)$", t)
+    if not m:
+        return None
+    return (m.group(1), m.group(2), m.group(3), m.group(4))
+
+
+def _try_datamatrix_image_zint_gs1(raw: str):
+    """
+    GS1 Data Matrix через Zint (как у многих сервисов дублей КИЗ): разметка [01]…[21]…[91]…[92]… и --gs1.
+    См. Zint manual 4.11.3 GS1 Data Entry. Нет zint в PATH / ошибка — вернуть None.
+    Отключить: FBS_KIZ_USE_ZINT=0.
+    """
+    import shutil
+    import subprocess
+    import tempfile
+
+    from PIL import Image
+
+    ev = (os.environ.get("FBS_KIZ_USE_ZINT") or "1").strip().lower()
+    if ev in ("0", "false", "no", "off"):
+        return None
+    if not shutil.which("zint"):
+        return None
+    parsed = _parse_kiz_01_21_91_92(raw)
+    if not parsed:
+        return None
+    gtin, serial, key, crypto = parsed
+    if any(("[" in p or "]" in p) for p in (gtin, serial, key, crypto)):
+        return None
+    data = f"[01]{gtin}[21]{serial}[91]{key}[92]{crypto}"
+    tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+    path = tmp.name
+    tmp.close()
+    try:
+        r = subprocess.run(
+            [
+                "zint",
+                "-b",
+                "DATAMATRIX",
+                "--gs1",
+                "--notext",
+                "-o",
+                path,
+                "-d",
+                data,
+            ],
+            capture_output=True,
+            timeout=30,
+            text=True,
+            check=False,
+        )
+        if r.returncode != 0:
+            logger.warning(
+                "zint GS1 DataMatrix failed rc=%s stderr=%s",
+                r.returncode,
+                (r.stderr or r.stdout or "").strip()[:500],
+            )
+            return None
+        img = Image.open(path).convert("RGB")
+        img.load()
+        logger.debug("KIZ label: GS1 DataMatrix via zint")
+        return img
+    except Exception as e:
+        logger.warning("zint GS1 DataMatrix: %s", e)
+        return None
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
 def _kiz_to_bwipp_gs1_datamatrix_string(raw: str) -> str:
     """
     BWIPP / treepoem barcode_type=gs1datamatrix ожидает человекочитаемый GS1 со скобками:
@@ -1136,11 +1216,9 @@ def _kiz_to_bwipp_gs1_datamatrix_string(raw: str) -> str:
     if not (s.startswith("01") and len(s) >= 18 and s[16:18] == "21"):
         return s
 
-    # Полный КИЗ ЧЗ: 01(14 цифр)21(серия переменной длины)91(4)92(крипто…). Без GS между полями —
-    # фиксированные 31 символ ненадёжен, если длина серии ≠ 13.
-    m_full = re.match(r"^01(\d{14})21(.*?)91([A-Za-z0-9]{4})92(.+)$", s)
-    if m_full:
-        gtin, serial, key, crypto = m_full.groups()
+    parsed_full = _parse_kiz_01_21_91_92(s)
+    if parsed_full:
+        gtin, serial, key, crypto = parsed_full
         return f"(01){gtin}(21){serial}(91){key}(92){crypto}"
 
     gtin = s[2:16]
@@ -1171,7 +1249,8 @@ def _generate_kiz_label_pdf(kiz_full: str, kiz_31: str, width_mm: int = 40, heig
     PDF этикетки-дубля КИЗ: GS1 DataMatrix (полный код) + 31 символ текстом снизу.
     Размер DataMatrix ~22×22 мм по инструкции WB.
 
-    treepoem + BWIPP gs1datamatrix: данные в формате (01)…(21)…(91)…(92)… — см. _kiz_to_bwipp_gs1_datamatrix_string.
+    Сначала пробуем Zint (формат [01]…[21]…[91]…[92]…, --gs1) — ближе к типичным дублям КИЗ.
+    Иначе treepoem + BWIPP gs1datamatrix со скобками (01)… — см. _kiz_to_bwipp_gs1_datamatrix_string.
     """
     import io
 
@@ -1184,14 +1263,17 @@ def _generate_kiz_label_pdf(kiz_full: str, kiz_31: str, width_mm: int = 40, heig
     if not raw:
         raise ValueError("Пустой payload для DataMatrix")
 
-    data_for_dm = _kiz_to_bwipp_gs1_datamatrix_string(raw)
-    if not data_for_dm.startswith("("):
-        raise ValueError("Неверный формат КИЗ для GS1 DataMatrix (ожидается 01…21… или уже (01)…)")
-
-    dm_img = treepoem.generate_barcode(
-        barcode_type="gs1datamatrix",
-        data=data_for_dm,
-    ).convert("RGB")
+    dm_img = _try_datamatrix_image_zint_gs1(raw)
+    if dm_img is None:
+        data_for_dm = _kiz_to_bwipp_gs1_datamatrix_string(raw)
+        if not data_for_dm.startswith("("):
+            raise ValueError(
+                "Неверный формат КИЗ для GS1 DataMatrix (ожидается 01…21… или уже (01)…)"
+            )
+        dm_img = treepoem.generate_barcode(
+            barcode_type="gs1datamatrix",
+            data=data_for_dm,
+        ).convert("RGB")
 
     dm_size_mm = min(width_mm - 4, height_mm - 12, 22)  # DataMatrix вписывается в этикетку
     label_w = width_mm * mm
