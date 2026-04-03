@@ -1108,9 +1108,14 @@ def _parse_kiz_01_21_91_92(s: str) -> Optional[tuple[str, str, str, str]]:
 
 def _try_datamatrix_image_zint_gs1(raw: str):
     """
-    GS1 Data Matrix через Zint (как у многих сервисов дублей КИЗ): разметка [01]…[21]…[91]…[92]… и --gs1.
-    См. Zint manual 4.11.3 GS1 Data Entry. Нет zint в PATH / ошибка — вернуть None.
-    Отключить: FBS_KIZ_USE_ZINT=0.
+    GS1 Data Matrix через Zint. Подбираем режим, ближе к этикеткам ЧЗ / сервисам вроде 2КИЗ.
+
+    В Zint по умолчанию между полями GS1 в DM идёт FNC1; у маркировки часто ожидается
+    разделитель GS (ASCII 29) — см. Zint manual 6.6.1: опция --gssep.
+    Дополнительно --square — только квадратные размеры (как 26×26, 32×32…).
+
+    Порядок: [01]… + --gs1 --gssep --square → … --gssep → … --square → …; затем --gs1raw + \\G.
+    FBS_KIZ_ZINT_MODE=bracket_only — только первый старый вариант (--gs1 без gssep).
     """
     import shutil
     import subprocess
@@ -1129,39 +1134,65 @@ def _try_datamatrix_image_zint_gs1(raw: str):
     gtin, serial, key, crypto = parsed
     if any(("[" in p or "]" in p) for p in (gtin, serial, key, crypto)):
         return None
-    data = f"[01]{gtin}[21]{serial}[91]{key}[92]{crypto}"
+    bracket = f"[01]{gtin}[21]{serial}[91]{key}[92]{crypto}"
+    # Сырой поток: 01…21… <GS> 91… <GS> 92… (Zint --gs1raw, \G + --esc)
+    raw_gs1 = f"01{gtin}21{serial}\\G91{key}\\G92{crypto}"
+
+    mode = (os.environ.get("FBS_KIZ_ZINT_MODE") or "").strip().lower()
+    if mode == "bracket_only":
+        attempts: list[tuple[str, list[str], str]] = [
+            ("zint --gs1", ["--gs1"], bracket),
+        ]
+    else:
+        attempts = [
+            ("zint --gs1 --gssep --square", ["--gs1", "--gssep", "--square"], bracket),
+            ("zint --gs1 --gssep", ["--gs1", "--gssep"], bracket),
+            ("zint --gs1 --square", ["--gs1", "--square"], bracket),
+            ("zint --gs1", ["--gs1"], bracket),
+            (
+                "zint --gs1raw --esc --gssep --square",
+                ["--gs1raw", "--esc", "--gssep", "--square"],
+                raw_gs1,
+            ),
+            ("zint --gs1raw --esc --gssep", ["--gs1raw", "--esc", "--gssep"], raw_gs1),
+            ("zint --gs1raw --esc --square", ["--gs1raw", "--esc", "--square"], raw_gs1),
+            ("zint --gs1raw --esc", ["--gs1raw", "--esc"], raw_gs1),
+        ]
+
     tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
     path = tmp.name
     tmp.close()
+    last_err = ""
     try:
-        r = subprocess.run(
-            [
-                "zint",
-                "-b",
-                "DATAMATRIX",
-                "--gs1",
-                "--notext",
-                "-o",
-                path,
-                "-d",
-                data,
-            ],
-            capture_output=True,
-            timeout=30,
-            text=True,
-            check=False,
-        )
-        if r.returncode != 0:
-            logger.warning(
-                "zint GS1 DataMatrix failed rc=%s stderr=%s",
-                r.returncode,
-                (r.stderr or r.stdout or "").strip()[:500],
+        for label, flags, data in attempts:
+            r = subprocess.run(
+                [
+                    "zint",
+                    "-b",
+                    "DATAMATRIX",
+                    *flags,
+                    "--notext",
+                    "-o",
+                    path,
+                    "-d",
+                    data,
+                ],
+                capture_output=True,
+                timeout=30,
+                text=True,
+                check=False,
             )
-            return None
-        img = Image.open(path).convert("RGB")
-        img.load()
-        logger.debug("KIZ label: GS1 DataMatrix via zint")
-        return img
+            if r.returncode == 0:
+                img = Image.open(path).convert("RGB")
+                img.load()
+                logger.info("KIZ label: GS1 DataMatrix via %s", label)
+                return img
+            last_err = (r.stderr or r.stdout or "").strip()[:400]
+        logger.warning(
+            "zint GS1 DataMatrix: all variants failed, last stderr=%s",
+            last_err,
+        )
+        return None
     except Exception as e:
         logger.warning("zint GS1 DataMatrix: %s", e)
         return None
