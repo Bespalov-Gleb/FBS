@@ -10,6 +10,19 @@ from sqlalchemy.orm import Session, joinedload
 from app.models.order import Order, OrderStatus
 
 
+def _assembly_tab_ozon_marketplace_status_clause():
+    """
+    Вкладка «Сборка»: для Ozon показываем только отправления в статусе API awaiting_deliver
+    (ожидает отгрузки). Остальные маркетплейсы — без фильтра по marketplace_status.
+    """
+    from app.models.marketplace import Marketplace, MarketplaceType
+
+    return or_(
+        Marketplace.type != MarketplaceType.OZON,
+        Order.marketplace_status == "awaiting_deliver",
+    )
+
+
 class OrderRepository:
     """CRUD операции для заказов"""
 
@@ -117,6 +130,7 @@ class OrderRepository:
             .filter(Order.status != OrderStatus.DELIVERED)
             .filter(Order.status != OrderStatus.COMPLETED)
             .filter(Order.collected_in_app != True)
+            .filter(_assembly_tab_ozon_marketplace_status_clause())
         )
         # Ограничение доступа упаковщика к конкретным магазинам
         if packer_allowed_marketplace_ids is not None:
@@ -203,6 +217,7 @@ class OrderRepository:
             .filter(Order.status != OrderStatus.DELIVERED)
             .filter(Order.status != OrderStatus.COMPLETED)
             .filter(Order.collected_in_app != True)
+            .filter(_assembly_tab_ozon_marketplace_status_clause())
         )
         if packer_allowed_marketplace_ids is not None:
             query = query.filter(Order.marketplace_id.in_(packer_allowed_marketplace_ids))
@@ -391,6 +406,7 @@ class OrderRepository:
             .filter(Order.status != OrderStatus.DELIVERED)
             .filter(Order.status != OrderStatus.COMPLETED)
             .filter(Order.collected_in_app != True)
+            .filter(_assembly_tab_ozon_marketplace_status_clause())
         )
         today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
 
@@ -532,6 +548,7 @@ class OrderRepository:
                 .filter(Order.status != OrderStatus.DELIVERED)
                 .filter(Order.status != OrderStatus.COMPLETED)
                 .filter(Order.collected_in_app != True)
+                .filter(_assembly_tab_ozon_marketplace_status_clause())
             )
             .group_by(Marketplace.id, Marketplace.name, Marketplace.type)
             .all()
