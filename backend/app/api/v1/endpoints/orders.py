@@ -92,6 +92,26 @@ def _ozon_product_size(
     return None
 
 
+def _ozon_product_barcode_for_ui(p: dict) -> Optional[str]:
+    """
+    ШК для карточки заказа Ozon: поля из Seller API или OZN+SKU (как GET .../product-barcode).
+    В unfulfilled/list часто есть sku, а barcode на товаре — только при with.barcodes или в /posting/fbs/get.
+    """
+    if not isinstance(p, dict):
+        return None
+    for k in ("barcode", "product_barcode", "ean", "product_ean"):
+        v = str(p.get(k) or "").strip()
+        if v:
+            return v
+    sku = p.get("sku")
+    if sku is not None and str(sku).strip():
+        try:
+            return f"OZN{int(sku)}"
+        except (ValueError, TypeError):
+            return f"OZN{sku}"
+    return None
+
+
 def _order_products(o: Order) -> list[OrderProductItem]:
     """Список товаров в заказе (Ozon: несколько в одном posting)."""
     if not o.marketplace or o.marketplace.type.value != "ozon":
@@ -105,7 +125,7 @@ def _order_products(o: Order) -> list[OrderProductItem]:
             name=str(p.get("name", "")),
             quantity=int(p.get("quantity", 1)),
             image_url=str(p.get("image_url", "")),
-            barcode=(str(p.get("barcode", "")).strip() or None),
+            barcode=_ozon_product_barcode_for_ui(p if isinstance(p, dict) else {}),
             size=_ozon_product_size(
                 p, order_id=o.id, offer_id=str(p.get("offer_id", "")), order_size=order_size
             ),
@@ -115,8 +135,23 @@ def _order_products(o: Order) -> list[OrderProductItem]:
 
 
 def _order_barcode(o: Order) -> Optional[str]:
-    """Основной ШК заказа для UI модалки (WB: первый sku)."""
+    """Основной ШК заказа для UI модалки (Ozon: товарный ШК; WB: первый sku)."""
     ed = o.extra_data or {}
+    mp = o.marketplace
+    if mp and mp.type.value == "ozon" and isinstance(ed, dict):
+        prods = ed.get("products")
+        if isinstance(prods, list) and prods:
+            first = prods[0]
+            if isinstance(first, dict):
+                bc = _ozon_product_barcode_for_ui(first)
+                if bc:
+                    return bc
+        bdict = ed.get("barcodes")
+        if isinstance(bdict, dict):
+            for key in ("upper_barcode", "lower_barcode"):
+                v = str(bdict.get(key) or "").strip()
+                if v:
+                    return v
     skus = ed.get("skus") if isinstance(ed, dict) else None
     if isinstance(skus, list):
         for s in skus:

@@ -394,7 +394,7 @@ class OzonClient(BaseMarketplaceClient):
             "offset": offset,
             "with": {
                 "analytics_data": False,
-                "barcodes": False,
+                "barcodes": True,
                 "financial_data": False,
                 "translit": False,
             },
