@@ -32,7 +32,8 @@ class OrderSyncService:
         """
         Синхронизация заказов для одного маркетплейса.
         
-        Ozon: заказы в статусе сборки (по умолчанию awaiting_packaging, настраивается env)
+        Ozon: заказы «ожидают отгрузки» (по умолчанию awaiting_deliver в filter.status unfulfilled/list;
+        переопределение: OZON_SYNC_UNFULFILLED_STATUS).
         WB: заказы confirm (На сборке) — через status API
         
         Returns:
@@ -68,12 +69,12 @@ class OrderSyncService:
                 logger.warning("Ozon without client_id, skipping sync")
                 return 0
             ozon_sync_status = (
-                os.environ.get("OZON_SYNC_UNFULFILLED_STATUS", "awaiting_packaging")
+                os.environ.get("OZON_SYNC_UNFULFILLED_STATUS", "awaiting_deliver")
                 .strip()
                 .lower()
             )
             if not ozon_sync_status:
-                ozon_sync_status = "awaiting_packaging"
+                ozon_sync_status = "awaiting_deliver"
             async with OzonClient(
                 api_key=api_key,
                 client_id=marketplace.client_id,
