@@ -527,6 +527,15 @@ class OrderSyncService:
             except ValueError:
                 pass
 
+        # Ozon: mo.status — смапленный внутренний (awaiting_packaging и awaiting_deliver → одно значение).
+        # В marketplace_status храним сырой статус API из metadata, иначе фильтр вкладки «Сборка»
+        # (awaiting_deliver) не совпадает с тем, что в БД.
+        mp_status_for_db = mo.status
+        if marketplace.type == MarketplaceType.OZON:
+            raw = (mo.metadata or {}).get("status")
+            if isinstance(raw, str) and raw.strip():
+                mp_status_for_db = raw.strip()
+
         existing = order_repo.get_by_external_id(marketplace.id, mo.external_id)
         if existing:
             # Не перезаписывать статус, если заказ уже собран локально.
@@ -538,7 +547,7 @@ class OrderSyncService:
             order_repo.update_from_marketplace(
                 existing,
                 status=status_to_set,
-                marketplace_status=mo.status,
+                marketplace_status=mp_status_for_db,
                 warehouse_id=warehouse_id,
                 warehouse_name=mo.warehouse_name,
                 metadata=metadata_to_set,
@@ -554,7 +563,7 @@ class OrderSyncService:
             quantity=mo.quantity,
             warehouse_id=warehouse_id,
             warehouse_name=mo.warehouse_name,
-            marketplace_status=mo.status,
+            marketplace_status=mp_status_for_db,
             marketplace_created_at=mo.created_at,
             metadata=mo.metadata,
             status=order_status,
