@@ -1223,10 +1223,10 @@ class OzonClient(BaseMarketplaceClient):
         logger.info("Testing Ozon API connection")
         
         try:
-            # Простой запрос - список складов
+            # Простой запрос - список складов (актуальная версия API)
             await self._request(
                 method="POST",
-                endpoint="/v1/warehouse/list",
+                endpoint="/v2/warehouse/list",
                 json_data={},
             )
             
