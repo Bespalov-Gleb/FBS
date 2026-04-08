@@ -1157,7 +1157,7 @@ class OzonClient(BaseMarketplaceClient):
         """
         Получение списка складов компании
         
-        Endpoint: POST /v1/warehouse/list
+        Endpoint: POST /v2/warehouse/list
         
         Returns:
             list: Список складов для настроек цветов
@@ -1170,12 +1170,28 @@ class OzonClient(BaseMarketplaceClient):
             except ValueError:
                 _wh_retries = 10
             _wh_retries = max(3, min(_wh_retries, 20))
-            response = await self._request(
-                method="POST",
-                endpoint="/v1/warehouse/list",
-                json_data={},
-                max_retries=_wh_retries,
-            )
+            try:
+                # Ozon отключил /v1/warehouse/list; актуальная версия — /v2/warehouse/list.
+                response = await self._request(
+                    method="POST",
+                    endpoint="/v2/warehouse/list",
+                    json_data={},
+                    max_retries=_wh_retries,
+                )
+            except MarketplaceAPIException as e:
+                # Fallback для старых/особых окружений, где v2 может быть недоступен.
+                if e.status_code in (404, 405):
+                    logger.warning(
+                        "Ozon /v2/warehouse/list is unavailable, fallback to /v1/warehouse/list"
+                    )
+                    response = await self._request(
+                        method="POST",
+                        endpoint="/v1/warehouse/list",
+                        json_data={},
+                        max_retries=_wh_retries,
+                    )
+                else:
+                    raise
 
             warehouses = response.get("result", [])
             logger.info(f"Received {len(warehouses)} warehouses from Ozon")
