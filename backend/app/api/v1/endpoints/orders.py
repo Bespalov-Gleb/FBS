@@ -63,6 +63,134 @@ def _sanitize_size(s: Optional[str]) -> Optional[str]:
     return s if s else None
 
 
+def _wb_label_size_text(size_value: Optional[str]) -> Optional[str]:
+    """Нормализованный текст размера для печати на WB-этикетке."""
+    normalized = _sanitize_size(size_value)
+    if not normalized:
+        return None
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    return normalized[:24] if normalized else None
+
+
+def _wb_overlay_text_near_barcode(
+    img: "Image.Image",
+    *,
+    order_number: Optional[str] = None,
+    product_size: Optional[str] = None,
+) -> "Image.Image":
+    """
+    Добавляет текст (номер заказа/размер) рядом со штрих-кодом:
+    - старается поставить блок максимально близко к верхней части контента;
+    - не выходит за границы изображения;
+    - подложка под текст снижает риск потери читаемости.
+    """
+    from PIL import ImageDraw, ImageFont
+
+    lines: list[str] = []
+    order_text = str(order_number or "").strip()
+    if order_text:
+        lines.append(order_text[:25])
+    size_text = _wb_label_size_text(product_size)
+    if size_text:
+        lines.append(f"Размер: {size_text}")
+    if not lines:
+        return img
+
+    w, h = img.size
+    if w <= 0 or h <= 0:
+        return img
+
+    draw = ImageDraw.Draw(img)
+
+    def _load_font(px: int, bold: bool) -> "ImageFont.FreeTypeFont | ImageFont.ImageFont":
+        import os
+
+        candidates = []
+        if bold:
+            candidates.extend(
+                [
+                    "C:/Windows/Fonts/arialbd.ttf",
+                    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                ]
+            )
+        candidates.extend(
+            [
+                "C:/Windows/Fonts/arial.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            ]
+        )
+        for p in candidates:
+            try:
+                if os.path.exists(p):
+                    return ImageFont.truetype(p, px)
+            except OSError:
+                continue
+        return ImageFont.load_default()
+
+    main_size = max(10, min(16, w // 18))
+    secondary_size = max(9, min(14, main_size - 1))
+    fonts = [
+        _load_font(main_size if idx == 0 else secondary_size, bold=(idx == 0))
+        for idx, _ in enumerate(lines)
+    ]
+
+    line_metrics: list[tuple[int, int]] = []
+    total_h = 0
+    for line, font in zip(lines, fonts):
+        bbox = draw.textbbox((0, 0), line, font=font)
+        tw = max(1, bbox[2] - bbox[0])
+        th = max(1, bbox[3] - bbox[1])
+        line_metrics.append((tw, th))
+        total_h += th + 1
+    if total_h > 0:
+        total_h -= 1
+
+    # Ищем верх контента (полосы штрих-кода/текста), чтобы поджать подписи ближе к нему.
+    top_content_y: Optional[int] = None
+    threshold = 245
+    min_dark = max(2, int(w * 0.08))
+    try:
+        pix = img.load()
+        for y in range(h):
+            dark = 0
+            for x in range(w):
+                p = pix[x, y]
+                v = (p if isinstance(p, int) else max(p[:3]))
+                if v < threshold:
+                    dark += 1
+                    if dark >= min_dark:
+                        top_content_y = y
+                        break
+            if top_content_y is not None:
+                break
+    except Exception:
+        top_content_y = None
+
+    y = 1 if top_content_y is None else max(1, top_content_y - total_h - 1)
+    x_pad = max(2, int(w * 0.02))
+    line_gap = 1
+    for idx, (line, font) in enumerate(zip(lines, fonts)):
+        tw, th = line_metrics[idx]
+        x = (w - tw) // 2
+        x = max(x_pad, min(x, max(x_pad, w - x_pad - tw)))
+        y = max(0, min(y, max(0, h - th - 1)))
+        # Белая подложка защищает читаемость при печати поверх тёмных зон.
+        draw.rectangle(
+            (
+                max(0, x - 1),
+                max(0, y - 1),
+                min(w - 1, x + tw + 1),
+                min(h - 1, y + th + 1),
+            ),
+            fill=(255, 255, 255),
+        )
+        draw.text((x, y), line, fill=(0, 0, 0), font=font)
+        y += th + line_gap
+        if y >= h - 1:
+            break
+    return img
+
+
 def _ozon_product_size(
     p: dict, order_id: Optional[int] = None, offer_id: str = "", order_size: Optional[str] = None
 ) -> Optional[str]:
@@ -2027,6 +2155,7 @@ def _wb_sticker_to_png(
     label_width_mm: int = 58,
     label_height_mm: int = 40,
     order_number: str | None = None,
+    product_size: str | None = None,
     rotate: int = 90,
 ) -> bytes:
     """
@@ -2034,7 +2163,7 @@ def _wb_sticker_to_png(
     """
     import io
 
-    from PIL import Image, ImageDraw, ImageFont
+    from PIL import Image
 
     img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     iw, ih = img.size
@@ -2058,27 +2187,9 @@ def _wb_sticker_to_png(
     out = Image.new("RGB", (new_w, new_h), (255, 255, 255))
     out.paste(img, (0, 0))
 
-    if order_number and str(order_number).strip():
-        import os
-
-        draw = ImageDraw.Draw(out)
-        font_paths = [
-            "C:/Windows/Fonts/arialbd.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        ]
-        font = None
-        for p in font_paths:
-            try:
-                if os.path.exists(p):
-                    font = ImageFont.truetype(p, 10)
-                    break
-            except OSError:
-                pass
-        if font:
-            num_text = str(order_number).strip()[:25]
-            bbox = draw.textbbox((0, 0), num_text, font=font)
-            tw = bbox[2] - bbox[0]
-            draw.text(((new_w - tw) / 2, 4), num_text, fill=(0, 0, 0), font=font)
+    out = _wb_overlay_text_near_barcode(
+        out, order_number=order_number, product_size=product_size
+    )
 
     buf = io.BytesIO()
     out.save(buf, format="PNG")
@@ -2120,6 +2231,7 @@ def _wb_sticker_to_pdf(
     label_width_mm: int = 58,
     label_height_mm: int = 40,
     order_number: str | None = None,
+    product_size: str | None = None,
     rotate: int = 90,
     top_margin_mm: float = 6.0,
     scale_factor: float = 1.0,
@@ -2362,6 +2474,11 @@ def _wb_sticker_to_pdf(
         if max_h < ih:
             img = img.crop((0, 0, iw, max_h))
             iw, ih = img.size
+
+    # Добавляем номер отправления и размер максимально близко к штрих-коду.
+    img = _wb_overlay_text_near_barcode(
+        img, order_number=order_number, product_size=product_size
+    )
 
     # Лист альбомной ориентации: ширина×высота = label_width_mm×label_height_mm (например 58×40).
     # Прижать к верхнему левому углу.
@@ -2817,9 +2934,11 @@ async def get_order_label(
             )
         order_num = order.posting_number or order.external_id or ""
         if format == "png":
+            wb_size = _wb_label_size_text((order.extra_data or {}).get("size"))
             content = _wb_sticker_to_png(
                 content, label_width_mm=w, label_height_mm=h,
                 order_number=order_num, rotate=wb_rotate,
+                product_size=wb_size,
             )
             return Response(
                 content=content,
@@ -2834,6 +2953,7 @@ async def get_order_label(
         content = _wb_sticker_to_pdf(
             content, label_width_mm=w, label_height_mm=h,
             order_number=order_num, rotate=wb_rotate,
+            product_size=_wb_label_size_text((order.extra_data or {}).get("size")),
             scale_factor=scale_factor,
         )
         return Response(
