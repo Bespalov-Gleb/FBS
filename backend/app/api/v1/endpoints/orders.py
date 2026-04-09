@@ -1786,15 +1786,140 @@ def _wrap_text(text: str, max_chars: int = 28) -> list[str]:
     return lines
 
 
-def _barcode_article_line(article: str = "", size: Optional[str] = None) -> str:
-    """Строка подписи для ШК товара: артикул и рядом размер."""
-    article_text = str(article or "").strip()
+def _fit_font_size_to_width(
+    text: str,
+    *,
+    font_name: str,
+    max_width: float,
+    max_size: float,
+    min_size: float,
+) -> float:
+    """Подобрать размер шрифта, чтобы текст влезал в max_width."""
+    from reportlab.pdfbase import pdfmetrics
+
+    if not text:
+        return max_size
+    sz = max_size
+    while sz > min_size:
+        if pdfmetrics.stringWidth(text, font_name, sz) <= max_width:
+            return sz
+        sz -= 0.5
+    return min_size
+
+
+def _ellipsize_to_width(text: str, *, font_name: str, font_size: float, max_width: float) -> str:
+    """Обрезать текст по ширине с добавлением '...'."""
+    from reportlab.pdfbase import pdfmetrics
+
+    if not text:
+        return ""
+    if pdfmetrics.stringWidth(text, font_name, font_size) <= max_width:
+        return text
+    ell = "..."
+    ell_w = pdfmetrics.stringWidth(ell, font_name, font_size)
+    if ell_w >= max_width:
+        return ""
+    out = text
+    while out and (pdfmetrics.stringWidth(out, font_name, font_size) + ell_w > max_width):
+        out = out[:-1]
+    return (out + ell) if out else ""
+
+
+def _draw_article_and_size_line(
+    c,
+    *,
+    label_w: float,
+    y: float,
+    margin: float,
+    article: str,
+    size: Optional[str],
+    is_wb: bool,
+) -> None:
+    """
+    Отрисовка подписи над ШК:
+    - WB: артикул + размер с адаптивной подгонкой по ширине.
+    - Ozon/прочие: только артикул (центрированно).
+    """
+    from reportlab.lib.units import mm
+    from reportlab.pdfbase import pdfmetrics
+
+    article_text = re.sub(r"\s+", " ", str(article or "").strip())
+    if not article_text and not size:
+        return
+
+    available_w = max(1.0, label_w - 2 * margin)
+    article_font = "Helvetica"
+    size_font = "Helvetica-Bold"
+
+    if not is_wb:
+        fs = _fit_font_size_to_width(
+            article_text,
+            font_name=article_font,
+            max_width=available_w,
+            max_size=9.0,
+            min_size=6.0,
+        )
+        out = _ellipsize_to_width(article_text, font_name=article_font, font_size=fs, max_width=available_w)
+        if out:
+            c.setFont(article_font, fs)
+            c.drawCentredString(label_w / 2, y, out)
+        return
+
     size_text = _sanitize_size(size)
-    if size_text:
-        size_text = re.sub(r"\s+", " ", size_text).strip()[:16]
-    if article_text and size_text:
-        return f"{article_text}  {size_text}"[:34]
-    return (article_text or size_text or "")[:34]
+    size_text = re.sub(r"\s+", " ", size_text).strip()[:16] if size_text else ""
+
+    # Если размера нет, WB ведём как обычный single-line.
+    if not size_text:
+        fs = _fit_font_size_to_width(
+            article_text,
+            font_name=article_font,
+            max_width=available_w,
+            max_size=9.0,
+            min_size=6.0,
+        )
+        out = _ellipsize_to_width(article_text, font_name=article_font, font_size=fs, max_width=available_w)
+        if out:
+            c.setFont(article_font, fs)
+            c.drawCentredString(label_w / 2, y, out)
+        return
+
+    gap = 1.2 * mm
+    # Размеру даём ограниченную, но гарантированную полосу.
+    size_lane_max = max(available_w * 0.28, 9 * mm)
+    size_lane_max = min(size_lane_max, available_w * 0.45)
+    size_fs = _fit_font_size_to_width(
+        size_text,
+        font_name=size_font,
+        max_width=size_lane_max,
+        max_size=9.0,
+        min_size=6.0,
+    )
+    size_out = _ellipsize_to_width(size_text, font_name=size_font, font_size=size_fs, max_width=size_lane_max)
+    size_w = pdfmetrics.stringWidth(size_out, size_font, size_fs) if size_out else 0.0
+
+    article_lane = max(available_w - size_w - gap, available_w * 0.45)
+    article_fs = _fit_font_size_to_width(
+        article_text,
+        font_name=article_font,
+        max_width=article_lane,
+        max_size=9.0,
+        min_size=6.0,
+    )
+    article_out = _ellipsize_to_width(
+        article_text, font_name=article_font, font_size=article_fs, max_width=article_lane
+    )
+    article_w = pdfmetrics.stringWidth(article_out, article_font, article_fs) if article_out else 0.0
+
+    total_w = article_w + (gap + size_w if article_out and size_out else 0.0)
+    x_left = (label_w - total_w) / 2
+    x_left = max(margin, min(x_left, label_w - margin - total_w))
+
+    if article_out:
+        c.setFont(article_font, article_fs)
+        c.drawString(x_left, y, article_out)
+    if size_out:
+        c.setFont(size_font, size_fs)
+        c.drawString(x_left + article_w + (gap if article_out else 0.0), y, size_out)
 
 
 def _create_barcode_drawing(
@@ -1930,11 +2055,16 @@ def _generate_product_barcode_pdf(
     renderPDF.draw(bc_product, c, 0, 0)
     c.restoreState()
 
-    article_text = _barcode_article_line(article, size)
     ay = max(margin + digits_gap, barcode_bottom - article_gap)
-    if article_text:
-        c.setFont("Helvetica", article_font_size)
-        c.drawCentredString(label_w / 2, ay, article_text)
+    _draw_article_and_size_line(
+        c,
+        label_w=label_w,
+        y=ay,
+        margin=margin,
+        article=str(article or "").strip(),
+        size=size,
+        is_wb=is_wb_barcode,
+    )
     ty = max(margin, ay - digits_gap)
     c.setFont("Helvetica-Bold", digits_font_size)
     c.drawCentredString(label_w / 2, ty, str(display_code)[:20])
@@ -2020,11 +2150,16 @@ def _generate_multi_product_barcode_pdf(
         renderPDF.draw(bc_product, c, 0, 0)
         c.restoreState()
 
-        article_text = _barcode_article_line(article, size)
         ay = max(margin + digits_gap, barcode_bottom - article_gap)
-        if article_text:
-            c.setFont("Helvetica", article_font_size)
-            c.drawCentredString(label_w / 2, ay, article_text)
+        _draw_article_and_size_line(
+            c,
+            label_w=label_w,
+            y=ay,
+            margin=margin,
+            article=str(article or "").strip(),
+            size=size,
+            is_wb=is_wb_barcode,
+        )
         ty = max(margin, ay - digits_gap)
         c.setFont("Helvetica-Bold", digits_font_size)
         c.drawCentredString(label_w / 2, ty, str(display_code)[:20])
