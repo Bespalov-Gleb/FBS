@@ -14,11 +14,13 @@ from openpyxl.worksheet.properties import PageSetupProperties
 
 OZON_FIRST_COLUMN = "Номер заказа"
 WB_FIRST_COLUMN = "№ задания"
-OZON_ARTICLE_COLUMN = "Артикул"
-OZON_QTY_COLUMN = "Количество"
-WB_SIZE_COLUMN = "Размер"
-WB_ARTICLE_COLUMN = "Артикул продавца"
 ROWS_PER_COLUMN = 67
+
+# Возможные подписи столбцов в выгрузках (первое совпадение в строке заголовка побеждает).
+OZON_ARTICLE_NAMES = ("Артикул",)
+OZON_QTY_NAMES = ("Количество", "Кол-во", "Количество товара")
+WB_SIZE_NAMES = ("Размер", "Размер товара")
+WB_ARTICLE_NAMES = ("Артикул продавца", "Артикул селлера")
 
 
 def _is_csv(file_path: Path) -> bool:
@@ -46,6 +48,19 @@ def _header_map_from_row(header_row: list) -> dict[str, int]:
         if normalized:
             mapping[normalized] = idx
     return mapping
+
+
+def _pick_column(header_map: dict[str, int], candidates: tuple[str, ...]) -> int | None:
+    for name in candidates:
+        key = _normalize_header(name)
+        if key and key in header_map:
+            return header_map[key]
+    return None
+
+
+def _open_xlsx(path: Path):
+    """Обычный режим чтения: при read_only=True openpyxl обрезает строки до одной ячейки в части выгрузок WB."""
+    return load_workbook(path, read_only=False, data_only=True)
 
 
 @dataclass(slots=True)
@@ -90,7 +105,7 @@ def detect_source_type(file_path: Path) -> str:
         first_cell = matrix[0][0] if matrix[0] else None
         first_header = _normalize_header(first_cell)
     else:
-        wb = load_workbook(file_path, read_only=True, data_only=True)
+        wb = _open_xlsx(file_path)
         ws = wb.active
         first_header = _normalize_header(ws.cell(row=1, column=1).value)
         wb.close()
@@ -116,20 +131,20 @@ def parse_ozon_articles(file_path: Path) -> list[str]:
         header_map = _header_map_from_row(matrix[0])
         data_iter = matrix[1:]
     else:
-        wb = load_workbook(file_path, read_only=True, data_only=True)
+        wb = _open_xlsx(file_path)
         ws = wb.active
         header_map = _header_map(ws.iter_rows(min_row=1, max_row=1, values_only=True))
         data_iter = ws.iter_rows(min_row=2, values_only=True)
 
-    if OZON_ARTICLE_COLUMN not in header_map or OZON_QTY_COLUMN not in header_map:
+    article_idx = _pick_column(header_map, OZON_ARTICLE_NAMES)
+    qty_idx = _pick_column(header_map, OZON_QTY_NAMES)
+    if article_idx is None or qty_idx is None:
         if not _is_csv(file_path):
             wb.close()
         raise ValueError(
-            f"Файл {file_path.name}: ожидаются столбцы '{OZON_ARTICLE_COLUMN}' и '{OZON_QTY_COLUMN}'."
+            f"Файл {file_path.name}: не найдены столбцы Ozon. Нужны артикул "
+            f"({', '.join(OZON_ARTICLE_NAMES)}) и количество ({', '.join(OZON_QTY_NAMES)})."
         )
-
-    article_idx = header_map[OZON_ARTICLE_COLUMN]
-    qty_idx = header_map[OZON_QTY_COLUMN]
 
     rows: list[tuple[str, int]] = []
     for row in data_iter:
@@ -171,20 +186,20 @@ def parse_wb_articles(file_path: Path) -> list[str]:
         header_map = _header_map_from_row(matrix[0])
         data_iter = matrix[1:]
     else:
-        wb = load_workbook(file_path, read_only=True, data_only=True)
+        wb = _open_xlsx(file_path)
         ws = wb.active
         header_map = _header_map(ws.iter_rows(min_row=1, max_row=1, values_only=True))
         data_iter = ws.iter_rows(min_row=2, values_only=True)
 
-    if WB_SIZE_COLUMN not in header_map or WB_ARTICLE_COLUMN not in header_map:
+    size_idx = _pick_column(header_map, WB_SIZE_NAMES)
+    article_idx = _pick_column(header_map, WB_ARTICLE_NAMES)
+    if size_idx is None or article_idx is None:
         if not _is_csv(file_path):
             wb.close()
         raise ValueError(
-            f"Файл {file_path.name}: ожидаются столбцы '{WB_SIZE_COLUMN}' и '{WB_ARTICLE_COLUMN}'."
+            f"Файл {file_path.name}: не найдены столбцы WB. Нужны размер "
+            f"({', '.join(WB_SIZE_NAMES)}) и артикул продавца ({', '.join(WB_ARTICLE_NAMES)})."
         )
-
-    size_idx = header_map[WB_SIZE_COLUMN]
-    article_idx = header_map[WB_ARTICLE_COLUMN]
 
     result: list[str] = []
     for row in data_iter:
