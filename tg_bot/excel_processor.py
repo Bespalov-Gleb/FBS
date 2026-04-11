@@ -234,6 +234,7 @@ def _fill_sheet(ws, sheet_label: str, articles: list[str]) -> None:
     ws.cell(row=1, column=white_start, value=f"{sheet_label}_white")
     _write_blocks(ws, start_column=white_start, values=white_articles)
 
+    _autofit_columns(ws)
     _apply_print_setup(ws)
 
 
@@ -248,11 +249,23 @@ def _write_blocks(ws, start_column: int, values: Iterable[str]) -> int:
         column = start_column + block
         ws.cell(row=row_in_block, column=column, value=value)
 
-    end_column = start_column + ((len(values) - 1) // ROWS_PER_COLUMN)
-    for col in range(start_column, end_column + 1):
-        ws.column_dimensions[get_column_letter(col)].width = 25
+    return start_column + ((len(values) - 1) // ROWS_PER_COLUMN)
 
-    return end_column
+
+def _autofit_columns(ws, min_width: float = 8.0, max_width: float = 72.0) -> None:
+    """Подбор ширины столбцов по длине текста (openpyxl не умеет настоящий Excel AutoFit)."""
+    max_col = ws.max_column or 1
+    max_row = ws.max_row or 1
+    for col in range(1, max_col + 1):
+        letter = get_column_letter(col)
+        longest = 0
+        for row in range(1, max_row + 1):
+            val = ws.cell(row=row, column=col).value
+            if val is not None:
+                longest = max(longest, len(str(val)))
+        # Небольшой запас под отступы и шрифт по умолчанию
+        width = min(max(longest + 2.5, min_width), max_width)
+        ws.column_dimensions[letter].width = width
 
 
 def _apply_print_setup(ws) -> None:
