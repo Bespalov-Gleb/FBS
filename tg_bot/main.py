@@ -8,11 +8,24 @@ from pathlib import Path
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
-from aiogram.types import FSInputFile, Message
+from aiogram.types import FSInputFile, KeyboardButton, Message, ReplyKeyboardMarkup
 
 from excel_processor import process_files
 
 logging.basicConfig(level=logging.INFO)
+
+# Тексты кнопок (должны совпадать с фильтрами F.text)
+BTN_BUILD = "Собрать таблицу"
+BTN_CLEAR = "Очистить файлы"
+
+
+def main_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=BTN_BUILD), KeyboardButton(text=BTN_CLEAR)],
+        ],
+        resize_keyboard=True,
+    )
 
 BASE_DIR = Path(__file__).resolve().parent
 UPLOADS_DIR = BASE_DIR / "uploads"
@@ -42,19 +55,23 @@ def _sanitize_filename(name: str) -> str:
 async def start_handler(message: Message) -> None:
     await message.answer(
         "Отправьте Excel-файлы Ozon/WB одним или несколькими сообщениями.\n"
-        "После загрузки введите /build для формирования итоговой таблицы.\n"
-        "Команда /clear очищает текущий набор файлов."
+        "После загрузки нажмите «Собрать таблицу».\n"
+        "«Очистить файлы» — удалить текущий набор загруженных файлов.",
+        reply_markup=main_keyboard(),
     )
 
 
-async def clear_handler(message: Message) -> None:
+async def clear_user_files(message: Message) -> None:
     user_id = message.from_user.id
     files = USER_FILES.get(user_id, [])
     for p in files:
         if p.exists():
             p.unlink()
     USER_FILES[user_id] = []
-    await message.answer("Список загруженных файлов очищен.")
+    await message.answer(
+        "Список загруженных файлов очищен.",
+        reply_markup=main_keyboard(),
+    )
 
 
 async def doc_handler(message: Message, bot: Bot) -> None:
@@ -76,28 +93,41 @@ async def doc_handler(message: Message, bot: Bot) -> None:
 
     await bot.download(message.document, destination=destination)
     USER_FILES[message.from_user.id].append(destination)
-    await message.answer(f"Файл принят: {destination.name}")
+    await message.answer(
+        f"Файл принят: {destination.name}",
+        reply_markup=main_keyboard(),
+    )
 
 
-async def build_handler(message: Message) -> None:
+async def build_result(message: Message) -> None:
     user_id = message.from_user.id
     files = USER_FILES.get(user_id, [])
     if not files:
-        await message.answer("Нет загруженных файлов. Сначала отправьте Excel, затем /build.")
+        await message.answer(
+            "Нет загруженных файлов. Сначала отправьте Excel, затем «Собрать таблицу».",
+            reply_markup=main_keyboard(),
+        )
         return
 
-    await message.answer("Обрабатываю файлы, это может занять до минуты...")
+    await message.answer(
+        "Обрабатываю файлы, это может занять до минуты...",
+        reply_markup=main_keyboard(),
+    )
 
     user_output_dir = OUTPUTS_DIR / str(user_id)
     try:
         output_file, counts = process_files(files, user_output_dir)
     except Exception as exc:
-        await message.answer(f"Ошибка при обработке: {exc}")
+        await message.answer(
+            f"Ошибка при обработке: {exc}",
+            reply_markup=main_keyboard(),
+        )
         return
 
     await message.answer_document(
         FSInputFile(output_file),
         caption=f"Готово. Ozon: {counts['ozon']}, WB: {counts['wb']}",
+        reply_markup=main_keyboard(),
     )
 
 
@@ -106,8 +136,8 @@ async def main() -> None:
     dp = Dispatcher()
 
     dp.message.register(start_handler, Command("start"))
-    dp.message.register(clear_handler, Command("clear"))
-    dp.message.register(build_handler, Command("build"))
+    dp.message.register(clear_user_files, F.text == BTN_CLEAR)
+    dp.message.register(build_result, F.text == BTN_BUILD)
     dp.message.register(doc_handler, F.document)
 
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
