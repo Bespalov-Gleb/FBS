@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from collections import defaultdict
+import shutil
 from pathlib import Path
 
 from aiogram import Bot, Dispatcher, F
@@ -31,8 +31,24 @@ BASE_DIR = Path(__file__).resolve().parent
 UPLOADS_DIR = BASE_DIR / "uploads"
 OUTPUTS_DIR = BASE_DIR / "outputs"
 
-# user_id -> list of uploaded file paths
-USER_FILES: dict[int, list[Path]] = defaultdict(list)
+INPUT_SUFFIXES = {".xlsx", ".csv"}
+
+
+def _user_upload_dir(user_id: int) -> Path:
+    return UPLOADS_DIR / str(user_id)
+
+
+def _list_staged_files(user_id: int) -> list[Path]:
+    """Файлы с диска — источник истины (переживает перезапуск контейнера)."""
+    d = _user_upload_dir(user_id)
+    if not d.is_dir():
+        return []
+    files = [
+        p
+        for p in d.iterdir()
+        if p.is_file() and p.suffix.lower() in INPUT_SUFFIXES
+    ]
+    return sorted(files, key=lambda p: p.name.lower())
 
 
 def _get_token() -> str:
@@ -54,7 +70,7 @@ def _sanitize_filename(name: str) -> str:
 
 async def start_handler(message: Message) -> None:
     await message.answer(
-        "Отправьте Excel-файлы Ozon/WB одним или несколькими сообщениями.\n"
+        "Отправьте файлы Ozon/WB (.xlsx или .csv) одним или несколькими сообщениями.\n"
         "После загрузки нажмите «Собрать таблицу».\n"
         "«Очистить файлы» — удалить текущий набор загруженных файлов.",
         reply_markup=main_keyboard(),
@@ -63,11 +79,9 @@ async def start_handler(message: Message) -> None:
 
 async def clear_user_files(message: Message) -> None:
     user_id = message.from_user.id
-    files = USER_FILES.get(user_id, [])
-    for p in files:
-        if p.exists():
-            p.unlink()
-    USER_FILES[user_id] = []
+    d = _user_upload_dir(user_id)
+    if d.is_dir():
+        shutil.rmtree(d, ignore_errors=True)
     await message.answer(
         "Список загруженных файлов очищен.",
         reply_markup=main_keyboard(),
@@ -92,7 +106,11 @@ async def doc_handler(message: Message, bot: Bot) -> None:
             counter += 1
 
     await bot.download(message.document, destination=destination)
-    USER_FILES[message.from_user.id].append(destination)
+    logging.info(
+        "Файл сохранён: user_id=%s path=%s",
+        message.from_user.id,
+        destination,
+    )
     await message.answer(
         f"Файл принят: {destination.name}",
         reply_markup=main_keyboard(),
@@ -101,10 +119,11 @@ async def doc_handler(message: Message, bot: Bot) -> None:
 
 async def build_result(message: Message) -> None:
     user_id = message.from_user.id
-    files = USER_FILES.get(user_id, [])
+    files = _list_staged_files(user_id)
     if not files:
         await message.answer(
-            "Нет загруженных файлов. Сначала отправьте Excel, затем «Собрать таблицу».",
+            "Нет загруженных файлов. Отправьте файлы Excel или CSV (Ozon/WB), "
+            "дождитесь ответа «Файл принят», затем нажмите «Собрать таблицу».",
             reply_markup=main_keyboard(),
         )
         return

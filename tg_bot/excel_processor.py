@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import csv
+import io
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -17,6 +19,33 @@ OZON_QTY_COLUMN = "Количество"
 WB_SIZE_COLUMN = "Размер"
 WB_ARTICLE_COLUMN = "Артикул продавца"
 ROWS_PER_COLUMN = 67
+
+
+def _is_csv(file_path: Path) -> bool:
+    return file_path.suffix.lower() == ".csv"
+
+
+def _csv_matrix(file_path: Path) -> list[list[str]]:
+    raw = file_path.read_text(encoding="utf-8-sig", errors="replace")
+    if not raw.strip():
+        return []
+    sample = raw[:8192]
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=";,\t")
+        delimiter = dialect.delimiter
+    except csv.Error:
+        delimiter = ";"
+    reader = csv.reader(io.StringIO(raw), delimiter=delimiter)
+    return [list(row) for row in reader]
+
+
+def _header_map_from_row(header_row: list) -> dict[str, int]:
+    mapping: dict[str, int] = {}
+    for idx, value in enumerate(header_row):
+        normalized = _normalize_header(value)
+        if normalized:
+            mapping[normalized] = idx
+    return mapping
 
 
 @dataclass(slots=True)
@@ -54,10 +83,17 @@ def process_files(input_paths: list[Path], output_dir: Path) -> tuple[Path, dict
 
 
 def detect_source_type(file_path: Path) -> str:
-    wb = load_workbook(file_path, read_only=True, data_only=True)
-    ws = wb.active
-    first_header = _normalize_header(ws.cell(row=1, column=1).value)
-    wb.close()
+    if _is_csv(file_path):
+        matrix = _csv_matrix(file_path)
+        if not matrix or not matrix[0]:
+            raise ValueError(f"Файл {file_path.name}: пустой или некорректный CSV.")
+        first_cell = matrix[0][0] if matrix[0] else None
+        first_header = _normalize_header(first_cell)
+    else:
+        wb = load_workbook(file_path, read_only=True, data_only=True)
+        ws = wb.active
+        first_header = _normalize_header(ws.cell(row=1, column=1).value)
+        wb.close()
 
     if first_header == _normalize_header(OZON_FIRST_COLUMN):
         return "ozon"
@@ -71,12 +107,23 @@ def detect_source_type(file_path: Path) -> str:
 
 
 def parse_ozon_articles(file_path: Path) -> list[str]:
-    wb = load_workbook(file_path, read_only=True, data_only=True)
-    ws = wb.active
-    header_map = _header_map(ws.iter_rows(min_row=1, max_row=1, values_only=True))
+    if _is_csv(file_path):
+        matrix = _csv_matrix(file_path)
+        if len(matrix) < 2:
+            raise ValueError(
+                f"Файл {file_path.name}: в CSV нет строк данных под заголовком."
+            )
+        header_map = _header_map_from_row(matrix[0])
+        data_iter = matrix[1:]
+    else:
+        wb = load_workbook(file_path, read_only=True, data_only=True)
+        ws = wb.active
+        header_map = _header_map(ws.iter_rows(min_row=1, max_row=1, values_only=True))
+        data_iter = ws.iter_rows(min_row=2, values_only=True)
 
     if OZON_ARTICLE_COLUMN not in header_map or OZON_QTY_COLUMN not in header_map:
-        wb.close()
+        if not _is_csv(file_path):
+            wb.close()
         raise ValueError(
             f"Файл {file_path.name}: ожидаются столбцы '{OZON_ARTICLE_COLUMN}' и '{OZON_QTY_COLUMN}'."
         )
@@ -85,9 +132,12 @@ def parse_ozon_articles(file_path: Path) -> list[str]:
     qty_idx = header_map[OZON_QTY_COLUMN]
 
     rows: list[tuple[str, int]] = []
-    for row in ws.iter_rows(min_row=2, values_only=True):
-        article_raw = row[article_idx] if article_idx < len(row) else None
-        qty_raw = row[qty_idx] if qty_idx < len(row) else None
+    for row in data_iter:
+        if row is None:
+            continue
+        row_list = list(row) if not isinstance(row, list) else row
+        article_raw = row_list[article_idx] if article_idx < len(row_list) else None
+        qty_raw = row_list[qty_idx] if qty_idx < len(row_list) else None
 
         article = str(article_raw).strip() if article_raw is not None else ""
         if not article:
@@ -96,7 +146,8 @@ def parse_ozon_articles(file_path: Path) -> list[str]:
         qty = _parse_qty(qty_raw)
         rows.append((article, qty))
 
-    wb.close()
+    if not _is_csv(file_path):
+        wb.close()
 
     current_count = len(rows)
     qty_sum = sum(qty for _, qty in rows)
@@ -111,12 +162,23 @@ def parse_ozon_articles(file_path: Path) -> list[str]:
 
 
 def parse_wb_articles(file_path: Path) -> list[str]:
-    wb = load_workbook(file_path, read_only=True, data_only=True)
-    ws = wb.active
-    header_map = _header_map(ws.iter_rows(min_row=1, max_row=1, values_only=True))
+    if _is_csv(file_path):
+        matrix = _csv_matrix(file_path)
+        if len(matrix) < 2:
+            raise ValueError(
+                f"Файл {file_path.name}: в CSV нет строк данных под заголовком."
+            )
+        header_map = _header_map_from_row(matrix[0])
+        data_iter = matrix[1:]
+    else:
+        wb = load_workbook(file_path, read_only=True, data_only=True)
+        ws = wb.active
+        header_map = _header_map(ws.iter_rows(min_row=1, max_row=1, values_only=True))
+        data_iter = ws.iter_rows(min_row=2, values_only=True)
 
     if WB_SIZE_COLUMN not in header_map or WB_ARTICLE_COLUMN not in header_map:
-        wb.close()
+        if not _is_csv(file_path):
+            wb.close()
         raise ValueError(
             f"Файл {file_path.name}: ожидаются столбцы '{WB_SIZE_COLUMN}' и '{WB_ARTICLE_COLUMN}'."
         )
@@ -125,9 +187,12 @@ def parse_wb_articles(file_path: Path) -> list[str]:
     article_idx = header_map[WB_ARTICLE_COLUMN]
 
     result: list[str] = []
-    for row in ws.iter_rows(min_row=2, values_only=True):
-        article_raw = row[article_idx] if article_idx < len(row) else None
-        size_raw = row[size_idx] if size_idx < len(row) else None
+    for row in data_iter:
+        if row is None:
+            continue
+        row_list = list(row) if not isinstance(row, list) else row
+        article_raw = row_list[article_idx] if article_idx < len(row_list) else None
+        size_raw = row_list[size_idx] if size_idx < len(row_list) else None
 
         article = str(article_raw).strip() if article_raw is not None else ""
         size = str(size_raw).strip() if size_raw is not None else ""
@@ -136,7 +201,8 @@ def parse_wb_articles(file_path: Path) -> list[str]:
             continue
         result.append(f"{article}_{size}".strip("_"))
 
-    wb.close()
+    if not _is_csv(file_path):
+        wb.close()
     return result
 
 
