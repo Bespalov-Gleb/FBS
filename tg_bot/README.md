@@ -47,6 +47,8 @@
    - `TELEGRAM_BOT_TOKEN=<token>`
 3. Поднять контейнер:
    - `docker compose up -d --build`
+
+На сервере каталоги `./uploads` и `./outputs` монтируются с хоста: при старте контейнера entrypoint выставляет на них владельца `botuser` (uid 1000), чтобы процесс бота мог создавать подпапки пользователей. После обновления образа выполните `docker compose up -d --build` ещё раз.
 4. Логи:
    - `docker compose logs -f tg-bot`
 5. Остановка:
