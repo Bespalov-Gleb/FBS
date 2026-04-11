@@ -1,0 +1,12 @@
+services:
+  tg-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fbs_tg_bot
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+    volumes:
+      - ./uploads:/app/uploads
+      - ./outputs:/app/outputs
+    restart: unless-stopped
