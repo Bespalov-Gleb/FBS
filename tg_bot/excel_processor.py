@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Iterable
 
 from openpyxl import Workbook, load_workbook
+from openpyxl.styles import Alignment
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.page import PageMargins
 from openpyxl.worksheet.properties import PageSetupProperties
@@ -21,6 +22,9 @@ OZON_ARTICLE_NAMES = ("Артикул",)
 OZON_QTY_NAMES = ("Количество", "Кол-во", "Количество товара")
 WB_SIZE_NAMES = ("Размер", "Размер товара")
 WB_ARTICLE_NAMES = ("Артикул продавца", "Артикул селлера")
+
+# Итоговый лист: текст слева (как в типовой печати списков).
+_ALIGN_LEFT = Alignment(horizontal="left", vertical="center", wrap_text=False)
 
 
 def _is_csv(file_path: Path) -> bool:
@@ -235,6 +239,7 @@ def _fill_sheet(ws, sheet_label: str, articles: list[str]) -> None:
     _write_blocks(ws, start_column=white_start, values=white_articles)
 
     _autofit_columns(ws)
+    _apply_left_alignment(ws)
     _apply_print_setup(ws)
 
 
@@ -266,6 +271,14 @@ def _autofit_columns(ws, min_width: float = 8.0, max_width: float = 72.0) -> Non
         # Небольшой запас под отступы и шрифт по умолчанию
         width = min(max(longest + 2.5, min_width), max_width)
         ws.column_dimensions[letter].width = width
+
+
+def _apply_left_alignment(ws) -> None:
+    max_col = ws.max_column or 1
+    max_row = ws.max_row or 1
+    for row in range(1, max_row + 1):
+        for col in range(1, max_col + 1):
+            ws.cell(row=row, column=col).alignment = _ALIGN_LEFT
 
 
 def _apply_print_setup(ws) -> None:
