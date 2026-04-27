@@ -26,6 +26,7 @@ const schema = z.object({
 type FormData = z.infer<typeof schema>;
 
 export default function LoginPage() {
+  const devAuthBypass = import.meta.env.VITE_DEV_AUTH_BYPASS === '1';
   const navigate = useNavigate();
   const location = useLocation();
   const dispatch = useDispatch();
@@ -33,11 +34,11 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (accessToken) {
+    if (devAuthBypass || accessToken) {
       const from = (location.state as { from?: { pathname: string } })?.from?.pathname ?? '/assembly';
       navigate(from, { replace: true });
     }
-  }, [accessToken, location.state, navigate]);
+  }, [devAuthBypass, accessToken, location.state, navigate]);
 
   const {
     register,

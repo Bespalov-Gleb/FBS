@@ -4,6 +4,10 @@
 from app.models.audit_log import AuditLog
 from app.models.base import BaseModel
 from app.models.invite_code import InviteCode
+from app.models.kiz_group import KizGroup
+from app.models.kiz_parser_error import KizParserError
+from app.models.kiz_pool_item import KizCodeStatus, KizPoolItem
+from app.models.kiz_product_mapping import KizProductMapping
 from app.models.marketplace import Marketplace, MarketplaceType
 from app.models.order import Order, OrderStatus
 from app.models.print_settings import PrintSettings
@@ -20,6 +24,11 @@ __all__ = [
     "UserMarketplaceAccess",
     "Marketplace",
     "MarketplaceType",
+    "KizGroup",
+    "KizCodeStatus",
+    "KizPoolItem",
+    "KizProductMapping",
+    "KizParserError",
     "Order",
     "OrderStatus",
     "Warehouse",

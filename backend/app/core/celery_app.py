@@ -20,9 +20,9 @@ celery_app.conf.update(
     task_track_started=True,
     beat_schedule_filename="/app/logs/celerybeat-schedule",  # записываемая директория (избегаем Permission denied)
     beat_schedule={
-        "sync-orders-every-5-min": {
+        "sync-orders-every-hour": {
             "task": "app.tasks.sync_tasks.sync_all_marketplaces",
-            "schedule": 300.0,  # каждые 5 минут
+            "schedule": 3600.0,  # не чаще одного раза в час
         },
     },
 )

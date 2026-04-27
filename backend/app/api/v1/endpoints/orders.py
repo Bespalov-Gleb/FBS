@@ -25,6 +25,7 @@ from app.repositories.order_repository import OrderRepository
 from app.schemas.order import OrderCompleteRequest, OrderProductItem, OrderResponse, OrdersListResponse
 from app.services.marketplace.wildberries import WildberriesClient
 from app.services.order_complete_service import OrderCompleteService
+from app.services.order_sync_guard import ManualSyncLockTimeout, SyncCooldownError
 from app.services.order_sync_service import OrderSyncService
 
 router = APIRouter(prefix="/orders", tags=["Orders"])
@@ -1650,7 +1651,22 @@ async def sync_orders(
     Доступ: администратор (свои магазины) или упаковщик (магазины владельца по доступу).
     """
     marketplace = _marketplace_for_order_sync(marketplace_id, current_user, db)
-    count = await OrderSyncService.sync_marketplace_orders(marketplace, db)
+    try:
+        count = await OrderSyncService.sync_marketplace_orders(
+            marketplace,
+            db,
+            sync_source="manual",
+        )
+    except SyncCooldownError as e:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Синхронизацию можно запускать не чаще 1 раза в час. Повторите через {e.seconds_left} сек.",
+        ) from e
+    except ManualSyncLockTimeout as e:
+        raise HTTPException(
+            status_code=409,
+            detail="Сейчас уже идёт синхронизация этого маркетплейса. Повторите чуть позже.",
+        ) from e
     return {"synced": count, "marketplace_id": marketplace_id}
 
 
@@ -1675,9 +1691,31 @@ async def sync_all_orders(
     total = 0
     results = []
     for mp in marketplaces:
-        count = await OrderSyncService.sync_marketplace_orders(mp, db)
-        total += count
-        results.append({"marketplace_id": mp.id, "synced": count})
+        try:
+            count = await OrderSyncService.sync_marketplace_orders(
+                mp,
+                db,
+                sync_source="manual",
+            )
+            results.append({"marketplace_id": mp.id, "synced": count})
+            total += count
+        except SyncCooldownError as e:
+            results.append(
+                {
+                    "marketplace_id": mp.id,
+                    "synced": 0,
+                    "skipped": "cooldown",
+                    "seconds_left": e.seconds_left,
+                }
+            )
+        except ManualSyncLockTimeout:
+            results.append(
+                {
+                    "marketplace_id": mp.id,
+                    "synced": 0,
+                    "skipped": "lock_busy",
+                }
+            )
     
     return {"total_synced": total, "results": results}
 
@@ -1721,7 +1759,8 @@ async def complete_order(
             kiz_list = [str(kiz_code).strip()[:_kiz_max]]
     required_count = order.quantity
     if mp.is_kiz_enabled:
-        if len(kiz_list) < required_count:
+        # Если КИЗ не переданы вручную — сервис подберёт их автоматически из пула группы (FIFO).
+        if kiz_list and len(kiz_list) < required_count:
             raise HTTPException(
                 400,
                 detail=f"Нужен КИЗ для каждого товара: введите {required_count} код(ов) маркировки.",

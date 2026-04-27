@@ -12,6 +12,7 @@ from app.config import settings
 from app.core.database import get_db
 from app.core.exceptions import ForbiddenException, UnauthorizedException
 from app.core.security import decode_token
+from app.core.security import get_password_hash
 from app.models.user import User, UserRole
 from app.repositories.user_repository import UserRepository
 
@@ -21,7 +22,7 @@ security = HTTPBearer()
 
 def get_current_user(
     db: Session = Depends(get_db),
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(HTTPBearer(auto_error=False)),
 ) -> User:
     """
     Получение текущего пользователя из JWT токена
@@ -36,6 +37,28 @@ def get_current_user(
     Raises:
         UnauthorizedException: Если токен невалидный или пользователь не найден
     """
+    if settings.DEV_AUTH_BYPASS and credentials is None:
+        admin_user = db.query(User).filter(User.role == UserRole.ADMIN, User.is_active == True).first()
+        if admin_user:
+            return admin_user
+        any_active_user = db.query(User).filter(User.is_active == True).first()
+        if any_active_user:
+            return any_active_user
+        bootstrap_admin = User(
+            email=settings.FIRST_SUPERUSER_EMAIL,
+            hashed_password=get_password_hash(settings.FIRST_SUPERUSER_PASSWORD),
+            full_name=settings.FIRST_SUPERUSER_FULLNAME,
+            role=UserRole.ADMIN,
+            is_active=True,
+        )
+        db.add(bootstrap_admin)
+        db.commit()
+        db.refresh(bootstrap_admin)
+        return bootstrap_admin
+
+    if credentials is None:
+        raise UnauthorizedException(message="Authorization header missing")
+
     token = credentials.credentials
     payload = decode_token(token)
     

@@ -6,6 +6,8 @@ import MarketplacesPage from './pages/MarketplacesPage';
 import UsersPage from './pages/UsersPage';
 import PrintSettingsPage from './pages/PrintSettingsPage';
 import AccountPage from './pages/AccountPage';
+import TableBuilderPage from './pages/TableBuilderPage';
+import KizGroupsPage from './pages/KizGroupsPage';
 import AppLayout from './components/layout/AppLayout';
 import ProtectedRoute from './components/layout/ProtectedRoute';
 
@@ -26,6 +28,8 @@ function App() {
         <Route path="assembly" element={<AssemblyPage />} />
         <Route path="account" element={<AccountPage />} />
         <Route path="marketplaces" element={<MarketplacesPage />} />
+        <Route path="table-builder" element={<TableBuilderPage />} />
+        <Route path="kiz-groups" element={<KizGroupsPage />} />
         <Route path="print-settings" element={<PrintSettingsPage />} />
         <Route path="users" element={<UsersPage />} />
       </Route>

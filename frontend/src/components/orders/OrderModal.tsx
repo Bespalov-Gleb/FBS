@@ -236,15 +236,13 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
 
   const handleComplete = async () => {
     const trimmed = kizCodes.map((k) => normalizeKizInput(k).slice(0, KIZ_MAX_LENGTH)).filter(Boolean);
-    if (isKizRequired && trimmed.length < (order.quantity ?? 1)) {
-      setError(`Нужен КИЗ для каждого товара: введите ${order.quantity ?? 1} код(ов) маркировки`);
-      return;
-    }
     setError(null);
     setCompleting(true);
     try {
       const payload = isKizRequired
-        ? (trimmed.length === 1 ? { kiz_code: trimmed[0] } : { kiz_codes: trimmed })
+        ? (trimmed.length === 0
+          ? undefined
+          : (trimmed.length === 1 ? { kiz_code: trimmed[0] } : { kiz_codes: trimmed }))
         : undefined;
       await ordersApi.complete(order.id, payload);
       onComplete();
@@ -375,11 +373,14 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
           )}
           {isKizRequired && !isCompleted && (
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+              <Typography variant="caption" color="text.secondary">
+                КИЗ подставляется автоматически по настройкам администратора (FIFO). Поля ниже можно использовать только как ручное переопределение.
+              </Typography>
               {kizCodes.map((code, i) => (
                 <TextField
                   key={i}
                   inputRef={(el) => { kizInputRefs.current[i] = el; }}
-                  label={kizCount > 1 ? `КИЗ товара ${i + 1}` : 'КИЗ (отсканируйте или введите)'}
+                  label={kizCount > 1 ? `КИЗ товара ${i + 1} (опционально)` : 'КИЗ (опционально)'}
                   value={code}
                   onChange={(e) => {
                     const next = [...kizCodes];
@@ -422,7 +423,7 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
             <Button
               variant="contained"
               onClick={handleComplete}
-              disabled={completing || (isKizRequired && kizCodes.filter((k) => k.trim()).length < (order.quantity ?? 1))}
+              disabled={completing}
             >
               Собрано
             </Button>

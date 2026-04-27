@@ -21,6 +21,8 @@ import {
   Store,
   Print,
   People,
+  TableChart,
+  QrCode2,
 } from '@mui/icons-material';
 import { palette } from '../../theme/theme';
 import { logout } from '../../store/authSlice';
@@ -32,6 +34,8 @@ const menuItems = [
   { path: '/assembly', label: 'Сборка', icon: <Inventory2 />, roles: ['admin', 'packer'] },
   { path: '/account', label: 'Учетная запись', icon: <Person />, roles: ['admin', 'packer'] },
   { path: '/marketplaces', label: 'Маркетплейсы', icon: <Store />, roles: ['admin', 'packer'] },
+  { path: '/table-builder', label: 'Формирование таблицы', icon: <TableChart />, roles: ['admin', 'packer'] },
+  { path: '/kiz-groups', label: 'КИЗ-группы', icon: <QrCode2 />, roles: ['admin'] },
   { path: '/print-settings', label: 'Диспетчер печати', icon: <Print />, roles: ['admin', 'packer'] },
   { path: '/users', label: 'Пользователи', icon: <People />, roles: ['admin'] },
 ];

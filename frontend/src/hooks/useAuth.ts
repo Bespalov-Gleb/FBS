@@ -5,17 +5,18 @@ import { setUser, logout } from '../store/authSlice';
 import type { RootState } from '../store';
 
 export function useAuth() {
+  const devAuthBypass = import.meta.env.VITE_DEV_AUTH_BYPASS === '1';
   const dispatch = useDispatch();
   const { user, accessToken } = useSelector((state: RootState) => state.auth);
 
   useEffect(() => {
-    if (accessToken && !user) {
+    if ((accessToken || devAuthBypass) && !user) {
       authApi
         .me()
         .then((me) => dispatch(setUser(me)))
         .catch(() => dispatch(logout()));
     }
-  }, [accessToken, user, dispatch]);
+  }, [accessToken, devAuthBypass, user, dispatch]);
 
   return { user, accessToken };
 }

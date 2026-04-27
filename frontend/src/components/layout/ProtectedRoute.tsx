@@ -7,10 +7,11 @@ interface ProtectedRouteProps {
 }
 
 export default function ProtectedRoute({ children }: ProtectedRouteProps) {
+  const devAuthBypass = import.meta.env.VITE_DEV_AUTH_BYPASS === '1';
   const accessToken = useSelector((state: RootState) => state.auth.accessToken);
   const location = useLocation();
 
-  if (!accessToken) {
+  if (!devAuthBypass && !accessToken) {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 

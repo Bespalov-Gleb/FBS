@@ -4,7 +4,18 @@
 import enum
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, Enum, ForeignKey, Integer, JSON, String, Text
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Integer,
+    JSON,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import relationship
 
 from app.models.base import BaseModel
@@ -23,6 +34,13 @@ class Order(BaseModel):
     """Модель заказа"""
     
     __tablename__ = "orders"
+    __table_args__ = (
+        UniqueConstraint(
+            "marketplace_id",
+            "external_id",
+            name="uq_orders_marketplace_external_id",
+        ),
+    )
     
     # Связь с маркетплейсом
     marketplace_id = Column(

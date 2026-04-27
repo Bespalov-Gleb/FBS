@@ -53,16 +53,17 @@ const schema = z
 type FormData = z.infer<typeof schema>;
 
 export default function RegisterPage() {
+  const devAuthBypass = import.meta.env.VITE_DEV_AUTH_BYPASS === '1';
   const navigate = useNavigate();
   const dispatch = useDispatch();
   const accessToken = useSelector((state: RootState) => state.auth.accessToken);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (accessToken) {
+    if (devAuthBypass || accessToken) {
       navigate('/assembly', { replace: true });
     }
-  }, [accessToken, navigate]);
+  }, [devAuthBypass, accessToken, navigate]);
 
   const {
     register,

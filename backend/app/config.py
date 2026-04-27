@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     APP_VERSION: str = "0.1.0"
     DEBUG: bool = False
     ENVIRONMENT: str = "production"
+    DEV_AUTH_BYPASS: bool = False
 
     # API
     API_V1_PREFIX: str = "/api/v1"

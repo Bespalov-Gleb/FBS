@@ -5,7 +5,9 @@ import asyncio
 import os
 import random
 from datetime import datetime
+from typing import Literal
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.security import decrypt_api_key
@@ -16,6 +18,12 @@ from app.repositories.warehouse_repository import WarehouseRepository
 from app.services.marketplace.base import MarketplaceOrder
 from app.services.marketplace.ozon import OzonClient
 from app.services.marketplace.wildberries import WildberriesClient
+from app.services.order_sync_guard import (
+    AutoSyncCancelled,
+    ManualSyncLockTimeout,
+    OrderSyncGuard,
+    SyncCooldownError,
+)
 from app.services.warehouse_service import WarehouseService
 from app.utils.cache import cache_get, cache_set
 from app.utils.logger import logger
@@ -26,9 +34,86 @@ class OrderSyncService:
 
     _OZON_ENRICH_CACHE_TTL = 12 * 3600
     _WB_CARD_CACHE_TTL = 24 * 3600
+    _MIN_INTERVAL_SEC = int(os.environ.get("ORDER_SYNC_MIN_INTERVAL_SEC", "3600") or 3600)
 
     @staticmethod
-    async def sync_marketplace_orders(marketplace: Marketplace, db: Session) -> int:
+    def _assert_sync_interval(marketplace: Marketplace, *, source: str) -> None:
+        """Запрет запуска чаще одного раза в min interval."""
+        if not marketplace.last_sync_at:
+            return
+        elapsed = (datetime.utcnow() - marketplace.last_sync_at).total_seconds()
+        seconds_left = int(OrderSyncService._MIN_INTERVAL_SEC - elapsed)
+        if seconds_left <= 0:
+            return
+        if source == "manual":
+            raise SyncCooldownError(seconds_left)
+        raise AutoSyncCancelled(
+            f"Auto sync skipped due cooldown marketplace={marketplace.id}, wait={seconds_left}s"
+        )
+
+    @staticmethod
+    def _check_auto_cancel(sync_source: str, marketplace_id: int) -> None:
+        """Кооперативная отмена автосинка, если запрошен ручной."""
+        if sync_source == "auto":
+            OrderSyncGuard.ensure_auto_not_cancelled(marketplace_id)
+
+    @staticmethod
+    async def sync_marketplace_orders(
+        marketplace: Marketplace,
+        db: Session,
+        *,
+        sync_source: Literal["auto", "manual"] = "manual",
+    ) -> int:
+        if sync_source == "auto" and OrderSyncGuard.should_skip_auto(marketplace.id):
+            logger.info(
+                "Skip auto sync for marketplace %s: manual sync has priority",
+                marketplace.id,
+            )
+            return 0
+
+        manual_priority = sync_source == "manual"
+        lock_token: str | None = None
+        if manual_priority:
+            OrderSyncGuard.request_manual_priority(marketplace.id)
+
+        try:
+            try:
+                lock_token = OrderSyncGuard.acquire_lock(marketplace.id, sync_source)
+            except ManualSyncLockTimeout as e:
+                logger.warning("Manual sync lock timeout marketplace=%s: %s", marketplace.id, e)
+                raise
+            if lock_token is None:
+                logger.info("Skip auto sync for marketplace %s: lock is busy", marketplace.id)
+                return 0
+
+            db.refresh(marketplace)
+            OrderSyncService._assert_sync_interval(marketplace, source=sync_source)
+            return await OrderSyncService._sync_marketplace_orders_unlocked(
+                marketplace,
+                db,
+                sync_source=sync_source,
+            )
+        except AutoSyncCancelled as e:
+            db.rollback()
+            logger.info(
+                "Sync cancelled for marketplace %s (source=%s): %s",
+                marketplace.id,
+                sync_source,
+                e,
+            )
+            return 0
+        finally:
+            OrderSyncGuard.release_lock(marketplace.id, lock_token)
+            if manual_priority:
+                OrderSyncGuard.clear_manual_priority(marketplace.id)
+
+    @staticmethod
+    async def _sync_marketplace_orders_unlocked(
+        marketplace: Marketplace,
+        db: Session,
+        *,
+        sync_source: Literal["auto", "manual"] = "manual",
+    ) -> int:
         """
         Синхронизация заказов для одного маркетплейса.
         
@@ -39,6 +124,7 @@ class OrderSyncService:
         Returns:
             int: Количество созданных/обновлённых заказов
         """
+        OrderSyncService._check_auto_cancel(sync_source, marketplace.id)
         # Ozon: разнести старт синка между Celery-воркерами (один Client-Id — общий per-second лимит)
         if marketplace.type == MarketplaceType.OZON:
             try:
@@ -48,6 +134,7 @@ class OrderSyncService:
             if _jit > 0:
                 await asyncio.sleep(random.uniform(0, _jit))
 
+        OrderSyncService._check_auto_cancel(sync_source, marketplace.id)
         # 1. Синхронизируем склады
         await WarehouseService.sync_warehouses(marketplace, db)
 
@@ -59,7 +146,8 @@ class OrderSyncService:
                 _oz_gap = 0.22
             if _oz_gap > 0:
                 await asyncio.sleep(_oz_gap)
-        
+        OrderSyncService._check_auto_cancel(sync_source, marketplace.id)
+
         api_key = decrypt_api_key(marketplace.api_key)
         order_repo = OrderRepository(db)
         count = 0
@@ -82,6 +170,7 @@ class OrderSyncService:
                 orders = []
                 offset = 0
                 while True:
+                    OrderSyncService._check_auto_cancel(sync_source, marketplace.id)
                     batch, has_next = await client.get_orders_unfulfilled_by_status(
                         status=ozon_sync_status,
                         limit=1000, offset=offset
@@ -355,6 +444,7 @@ class OrderSyncService:
                             logger.info("Ozon size MISSING: ... and %s more orders", len(still_missing) - 3)
                 api_external_ids = {mo.external_id for mo in orders}
                 for mo in orders:
+                    OrderSyncService._check_auto_cancel(sync_source, marketplace.id)
                     count += OrderSyncService._upsert_order(
                         db, order_repo, marketplace, mo,
                         skip_metadata_if_exists=True,
@@ -366,6 +456,7 @@ class OrderSyncService:
                     off = 0
                     marked_delivered = 0
                     while True:
+                        OrderSyncService._check_auto_cancel(sync_source, marketplace.id)
                         batch, has_next = await client.get_orders_delivered_or_delivering(
                             limit=1000, offset=off, days_back=30
                         )
@@ -410,6 +501,7 @@ class OrderSyncService:
                 # WB отдаёт complete, но мы больше не вызываем supply API при сборке —
                 # статус меняется только локально, синк не должен его сбрасывать.
                 for ext_id, wb_status in status_updates.items():
+                    OrderSyncService._check_auto_cancel(sync_source, marketplace.id)
                     if wb_status == "complete":
                         existing_order = order_repo.get_by_external_id(marketplace.id, ext_id)
                         if existing_order and existing_order.collected_in_app:
@@ -440,6 +532,7 @@ class OrderSyncService:
                     # Случайный сдвиг 0–4s, чтобы воркеры не шли в ногу
                     await asyncio.sleep(random.uniform(0, 4))
                     for idx, nm_id in enumerate(nm_ids_to_fetch):
+                        OrderSyncService._check_auto_cancel(sync_source, marketplace.id)
                         _res = await client.get_product_card_content_api(nm_id)
                         nm_to_card[nm_id] = _res
                         if isinstance(_res, dict) and _res:
@@ -473,6 +566,7 @@ class OrderSyncService:
                 if orders_new:
                     logger.info(f"WB product images: {with_images}/{len(orders_new)} orders got photo")
                 for mo in orders_new:
+                    OrderSyncService._check_auto_cancel(sync_source, marketplace.id)
                     count += OrderSyncService._upsert_order(
                         db, order_repo, marketplace, mo,
                     )
@@ -487,10 +581,16 @@ class OrderSyncService:
         else:
             logger.warning(f"Unknown marketplace type: {marketplace.type}")
             return 0
-        
+
+        OrderSyncService._check_auto_cancel(sync_source, marketplace.id)
         marketplace.update_sync_time()
         db.commit()
-        logger.info(f"Synced {count} orders for marketplace {marketplace.id}")
+        logger.info(
+            "Synced %s orders for marketplace %s (source=%s)",
+            count,
+            marketplace.id,
+            sync_source,
+        )
         return count
 
     @staticmethod
@@ -554,20 +654,41 @@ class OrderSyncService:
             )
             return 1
 
-        order_repo.create(
-            marketplace_id=marketplace.id,
-            external_id=mo.external_id,
-            posting_number=mo.posting_number,
-            article=mo.article,
-            product_name=mo.product_name,
-            quantity=mo.quantity,
-            warehouse_id=warehouse_id,
-            warehouse_name=mo.warehouse_name,
-            marketplace_status=mp_status_for_db,
-            marketplace_created_at=mo.created_at,
-            metadata=mo.metadata,
-            status=order_status,
-        )
+        try:
+            order_repo.create(
+                marketplace_id=marketplace.id,
+                external_id=mo.external_id,
+                posting_number=mo.posting_number,
+                article=mo.article,
+                product_name=mo.product_name,
+                quantity=mo.quantity,
+                warehouse_id=warehouse_id,
+                warehouse_name=mo.warehouse_name,
+                marketplace_status=mp_status_for_db,
+                marketplace_created_at=mo.created_at,
+                metadata=mo.metadata,
+                status=order_status,
+            )
+        except IntegrityError:
+            # Защита от гонки при параллельных sync: запись уже могла появиться
+            # между get_by_external_id() и create().
+            db.rollback()
+            existing_after_race = order_repo.get_by_external_id(marketplace.id, mo.external_id)
+            if existing_after_race:
+                status_to_set = (
+                    order_status if existing_after_race.status != OrderStatus.COMPLETED else None
+                )
+                metadata_to_set = None if skip_metadata_if_exists else mo.metadata
+                order_repo.update_from_marketplace(
+                    existing_after_race,
+                    status=status_to_set,
+                    marketplace_status=mp_status_for_db,
+                    warehouse_id=warehouse_id,
+                    warehouse_name=mo.warehouse_name,
+                    metadata=metadata_to_set,
+                )
+            else:
+                raise
         return 1
 
     @staticmethod

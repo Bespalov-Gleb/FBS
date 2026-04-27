@@ -38,7 +38,11 @@ def sync_all_marketplaces(self):
         for mp in marketplaces:
             try:
                 count = run_async(
-                    OrderSyncService.sync_marketplace_orders(mp, db),
+                    OrderSyncService.sync_marketplace_orders(
+                        mp,
+                        db,
+                        sync_source="auto",
+                    ),
                 )
                 total += count
             except Exception as e:
@@ -64,7 +68,13 @@ def sync_marketplace_orders_task(self, marketplace_id: int):
         ).first()
         if not mp:
             return {"synced": 0, "error": "Marketplace not found"}
-        count = run_async(OrderSyncService.sync_marketplace_orders(mp, db))
+        count = run_async(
+            OrderSyncService.sync_marketplace_orders(
+                mp,
+                db,
+                sync_source="auto",
+            )
+        )
         return {"synced": count, "marketplace_id": marketplace_id}
     finally:
         db.close()
