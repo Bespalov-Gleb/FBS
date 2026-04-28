@@ -66,6 +66,16 @@ export const kizGroupsApi = {
     return data;
   },
 
+  async clearGroupItems(groupId: number): Promise<{ ok: boolean; deleted_pool: number; deleted_errors: number }> {
+    const { data } = await apiClient.delete(`/kiz-groups/${groupId}/items`);
+    return data;
+  },
+
+  async deleteGroup(groupId: number): Promise<{ ok: boolean }> {
+    const { data } = await apiClient.delete(`/kiz-groups/${groupId}`);
+    return data;
+  },
+
   async upsertProductMapping(payload: {
     marketplace_id: number;
     article: string;

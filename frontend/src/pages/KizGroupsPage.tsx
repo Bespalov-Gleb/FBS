@@ -26,6 +26,8 @@ import FileUpload from '@mui/icons-material/FileUpload';
 import Save from '@mui/icons-material/Save';
 import Download from '@mui/icons-material/Download';
 import UploadFile from '@mui/icons-material/UploadFile';
+import DeleteSweep from '@mui/icons-material/DeleteSweep';
+import DeleteForever from '@mui/icons-material/DeleteForever';
 import { marketplacesApi } from '../api/marketplaces';
 import { kizGroupsApi, type KizGroup, type KizGroupPayload } from '../api/kizGroups';
 import { useSelector } from 'react-redux';
@@ -140,6 +142,35 @@ export default function KizGroupsPage() {
     onError: () => setNotice({ text: 'Не удалось сохранить соответствие товара.', severity: 'error' }),
   });
 
+  const clearGroupItemsMutation = useMutation({
+    mutationFn: async (groupId: number) => kizGroupsApi.clearGroupItems(groupId),
+    onSuccess: (res) => {
+      setNotice({
+        text: `Содержимое группы очищено. Удалено КИЗ: ${res.deleted_pool}, ошибок: ${res.deleted_errors}.`,
+        severity: 'success',
+      });
+      queryClient.invalidateQueries({ queryKey: ['kiz-groups'] });
+    },
+    onError: (error: unknown) => {
+      setNotice({ text: error instanceof Error ? error.message : 'Ошибка очистки группы.', severity: 'error' });
+    },
+  });
+
+  const deleteGroupMutation = useMutation({
+    mutationFn: async (groupId: number) => kizGroupsApi.deleteGroup(groupId),
+    onSuccess: () => {
+      setNotice({ text: 'Группа удалена.', severity: 'success' });
+      if (editingId) {
+        setEditingId(null);
+        setForm(defaultForm);
+      }
+      queryClient.invalidateQueries({ queryKey: ['kiz-groups'] });
+    },
+    onError: (error: unknown) => {
+      setNotice({ text: error instanceof Error ? error.message : 'Ошибка удаления группы.', severity: 'error' });
+    },
+  });
+
   const importMappingsMutation = useMutation({
     mutationFn: async () => {
       if (!importFile) throw new Error('Выберите файл импорта.');
@@ -173,6 +204,20 @@ export default function KizGroupsPage() {
   const handleUploadPdfs = (groupId: number, files: FileList | null) => {
     if (!files || files.length === 0) return;
     uploadPdfMutation.mutate({ groupId, files: Array.from(files) });
+  };
+
+  const handleClearGroupItems = (group: KizGroup) => {
+    const ok = window.confirm(
+      `Очистить содержимое группы "${group.name}"? Будут удалены все загруженные КИЗ и ошибки парсинга.`,
+    );
+    if (!ok) return;
+    clearGroupItemsMutation.mutate(group.id);
+  };
+
+  const handleDeleteGroup = (group: KizGroup) => {
+    const ok = window.confirm(`Удалить группу "${group.name}"? Это действие нельзя отменить.`);
+    if (!ok) return;
+    deleteGroupMutation.mutate(group.id);
   };
 
   if (user?.role !== 'admin') {
@@ -329,6 +374,24 @@ export default function KizGroupsPage() {
                           accept=".pdf"
                           onChange={(e) => handleUploadPdfs(g.id, e.target.files)}
                         />
+                      </Button>
+                      <Button
+                        size="small"
+                        color="warning"
+                        startIcon={<DeleteSweep />}
+                        onClick={() => handleClearGroupItems(g)}
+                        disabled={clearGroupItemsMutation.isPending}
+                      >
+                        Очистить
+                      </Button>
+                      <Button
+                        size="small"
+                        color="error"
+                        startIcon={<DeleteForever />}
+                        onClick={() => handleDeleteGroup(g)}
+                        disabled={deleteGroupMutation.isPending}
+                      >
+                        Удалить
                       </Button>
                     </Stack>
                   </TableCell>

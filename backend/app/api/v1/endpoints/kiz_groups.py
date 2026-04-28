@@ -320,6 +320,53 @@ async def upload_kiz_pdfs(
     }
 
 
+@router.delete("/{group_id}/items")
+def clear_kiz_group_items(
+    group_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = CurrentAdminUser,
+):
+    group = (
+        db.query(KizGroup)
+        .filter(KizGroup.id == group_id, KizGroup.user_id == current_user.id)
+        .first()
+    )
+    if not group:
+        raise HTTPException(status_code=404, detail="Группа не найдена.")
+
+    deleted_pool = (
+        db.query(KizPoolItem)
+        .filter(KizPoolItem.group_id == group_id)
+        .delete(synchronize_session=False)
+    )
+    deleted_errors = (
+        db.query(KizParserError)
+        .filter(KizParserError.group_id == group_id)
+        .delete(synchronize_session=False)
+    )
+    db.commit()
+    return {"ok": True, "deleted_pool": deleted_pool, "deleted_errors": deleted_errors}
+
+
+@router.delete("/{group_id}")
+def delete_kiz_group(
+    group_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = CurrentAdminUser,
+):
+    group = (
+        db.query(KizGroup)
+        .filter(KizGroup.id == group_id, KizGroup.user_id == current_user.id)
+        .first()
+    )
+    if not group:
+        raise HTTPException(status_code=404, detail="Группа не найдена.")
+
+    db.delete(group)
+    db.commit()
+    return {"ok": True}
+
+
 @router.post("/product-mappings")
 def upsert_product_mapping(
     payload: ProductGroupMappingUpsert,

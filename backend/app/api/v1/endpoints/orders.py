@@ -10,6 +10,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.database import get_db
@@ -29,6 +30,11 @@ from app.services.order_sync_guard import ManualSyncLockTimeout, SyncCooldownErr
 from app.services.order_sync_service import OrderSyncService
 
 router = APIRouter(prefix="/orders", tags=["Orders"])
+
+
+def _is_scanned_kiz_missing_table(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return "scanned_kiz" in msg and ("does not exist" in msg or "undefinedtable" in msg)
 
 
 def _get_effective_user_and_access(
@@ -360,11 +366,17 @@ def get_kiz_scans_count(
     Количество отсканированных КИЗ в таблице пользователя.
     Для отображения в UI (счётчик перед скачиванием).
     """
-    count = (
-        db.query(ScannedKiz)
-        .filter(ScannedKiz.user_id == current_user.id)
-        .count()
-    )
+    try:
+        count = (
+            db.query(ScannedKiz)
+            .filter(ScannedKiz.user_id == current_user.id)
+            .count()
+        )
+    except ProgrammingError as exc:
+        if _is_scanned_kiz_missing_table(exc):
+            db.rollback()
+            return {"count": 0}
+        raise
     return {"count": count}
 
 
@@ -377,12 +389,18 @@ def clear_kiz_scans(
     Очистить таблицу отсканированных КИЗ.
     Начать новый рабочий день с чистой таблицей.
     """
-    deleted = (
-        db.query(ScannedKiz)
-        .filter(ScannedKiz.user_id == current_user.id)
-        .delete()
-    )
-    db.commit()
+    try:
+        deleted = (
+            db.query(ScannedKiz)
+            .filter(ScannedKiz.user_id == current_user.id)
+            .delete()
+        )
+        db.commit()
+    except ProgrammingError as exc:
+        if _is_scanned_kiz_missing_table(exc):
+            db.rollback()
+            return {"ok": True, "deleted": 0}
+        raise
     return {"ok": True, "deleted": deleted}
 
 
@@ -422,7 +440,16 @@ def add_kiz_scan(
         marketplace_id=data.marketplace_id,
     )
     db.add(sk)
-    db.commit()
+    try:
+        db.commit()
+    except ProgrammingError as exc:
+        if _is_scanned_kiz_missing_table(exc):
+            db.rollback()
+            raise HTTPException(
+                503,
+                detail="Таблица scanned_kiz отсутствует. Примените миграции backend.",
+            ) from exc
+        raise
     return {"ok": True, "id": sk.id}
 
 
@@ -453,7 +480,14 @@ def kiz_export(
     )
     if marketplace_id:
         query = query.filter(ScannedKiz.marketplace_id == marketplace_id)
-    rows = query.order_by(ScannedKiz.created_at.asc()).limit(10000).all()
+    try:
+        rows = query.order_by(ScannedKiz.created_at.asc()).limit(10000).all()
+    except ProgrammingError as exc:
+        if _is_scanned_kiz_missing_table(exc):
+            db.rollback()
+            rows = []
+        else:
+            raise
 
     mp_type = None
     if marketplace_id:
