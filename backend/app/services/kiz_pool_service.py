@@ -21,6 +21,9 @@ _BRACKETED_KIZ_RE = re.compile(
     r"\(01\)\d{14}\(21\)[A-Za-z0-9]{1,40}(?:\(91\)[A-Za-z0-9]{1,20})?(?:\(92\)[A-Za-z0-9]{1,120})?"
 )
 _ALNUM_31_RE = re.compile(r"\b[A-Za-z0-9]{31}\b")
+# Для ваших этикеток: строка под кодом, начинается с 01 + 14 цифр и содержит хвост
+# (в хвосте могут быть символы типа & или )).
+_TAIL_KIZ_RE = re.compile(r"^01\d{14}[^\s]{6,220}$")
 
 
 @dataclass(slots=True)
@@ -65,12 +68,22 @@ def _normalize_kiz(raw: str) -> str:
 def _extract_kiz_from_text(page_text: str | None) -> str | None:
     if not page_text:
         return None
+
+    # 1) Сначала ищем "хвост" из подписи под кодом (самый стабильный для данного шаблона).
+    # Проверяем по строкам и токенам.
+    for line in page_text.splitlines():
+        token = "".join(line.split())
+        if _TAIL_KIZ_RE.match(token):
+            return _normalize_kiz(token)
+
     compact = " ".join(page_text.split())
+
+    # 2) Формат с AI в скобках.
     bracketed = _BRACKETED_KIZ_RE.search(compact)
     if bracketed:
         return _normalize_kiz(bracketed.group(0))
 
-    # В части цифровых PDF КИЗ печатается как 31-символьный алфанумерический код.
+    # 3) Фолбэк: 31-символьный алфанумерический код (исторический формат части выгрузок).
     short_code = _ALNUM_31_RE.search(compact)
     if short_code:
         return _normalize_kiz(short_code.group(0))

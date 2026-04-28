@@ -21,6 +21,7 @@ import {
   TableRow,
   TextField,
   Typography,
+  CircularProgress,
 } from '@mui/material';
 import FileUpload from '@mui/icons-material/FileUpload';
 import Save from '@mui/icons-material/Save';
@@ -72,6 +73,7 @@ export default function KizGroupsPage() {
   const [search, setSearch] = useState('');
   const [notice, setNotice] = useState<Notice | null>(null);
   const [importFile, setImportFile] = useState<File | null>(null);
+  const [uploadingGroupId, setUploadingGroupId] = useState<number | null>(null);
 
   const { data: groups = [] } = useQuery({
     queryKey: ['kiz-groups'],
@@ -121,6 +123,9 @@ export default function KizGroupsPage() {
 
   const uploadPdfMutation = useMutation({
     mutationFn: async (args: { groupId: number; files: File[] }) => kizGroupsApi.uploadPdf(args.groupId, args.files),
+    onMutate: (args) => {
+      setUploadingGroupId(args.groupId);
+    },
     onSuccess: (res) => {
       setNotice({
         text: `Импорт завершен. Добавлено: ${res.imported}, дубликаты: ${res.duplicates}, ошибки: ${res.errors}.`,
@@ -130,6 +135,9 @@ export default function KizGroupsPage() {
     },
     onError: (error: unknown) => {
       setNotice({ text: error instanceof Error ? error.message : 'Ошибка загрузки PDF.', severity: 'error' });
+    },
+    onSettled: () => {
+      setUploadingGroupId(null);
     },
   });
 
@@ -350,6 +358,14 @@ export default function KizGroupsPage() {
                     <Typography variant="caption" color="text.secondary">
                       {g.color || '—'} / {g.size || '—'} / {g.cut_type || '—'}
                     </Typography>
+                    {uploadingGroupId === g.id && (
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
+                        <CircularProgress size={14} />
+                        <Typography variant="caption" color="text.secondary">
+                          Парсинг PDF, подождите...
+                        </Typography>
+                      </Box>
+                    )}
                   </TableCell>
                   <TableCell>
                     <Stack direction="row" spacing={0.5} flexWrap="wrap">
@@ -380,7 +396,7 @@ export default function KizGroupsPage() {
                         color="warning"
                         startIcon={<DeleteSweep />}
                         onClick={() => handleClearGroupItems(g)}
-                        disabled={clearGroupItemsMutation.isPending}
+                        disabled={clearGroupItemsMutation.isPending || uploadingGroupId === g.id}
                       >
                         Очистить
                       </Button>
@@ -389,7 +405,7 @@ export default function KizGroupsPage() {
                         color="error"
                         startIcon={<DeleteForever />}
                         onClick={() => handleDeleteGroup(g)}
-                        disabled={deleteGroupMutation.isPending}
+                        disabled={deleteGroupMutation.isPending || uploadingGroupId === g.id}
                       >
                         Удалить
                       </Button>
