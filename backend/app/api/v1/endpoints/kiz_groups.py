@@ -55,6 +55,24 @@ class ProductGroupMappingUpsert(BaseModel):
     size: Optional[str] = ""
     group_id: int
 
+
+def _split_article_and_size(article: str | None) -> tuple[str, str]:
+    """
+    Размер извлекаем из артикула по последнему '_' (например ABC123_XL).
+    Если шаблон не распознан, считаем, что размера нет.
+    """
+    raw = (article or "").strip()
+    if not raw:
+        return "", ""
+    if "_" not in raw:
+        return raw, ""
+    base, size = raw.rsplit("_", 1)
+    base = base.strip()
+    size = size.strip()
+    if not base or not size:
+        return raw, ""
+    return base, size
+
 def _group_to_response(
     group: KizGroup,
     *,
@@ -368,12 +386,11 @@ def export_products_for_mapping(
             Order.marketplace_id,
             Marketplace.name.label("marketplace_name"),
             Order.article,
-            Order.size,
             func.max(Order.product_name).label("product_name"),
         )
         .join(Marketplace, Marketplace.id == Order.marketplace_id)
         .filter(Marketplace.user_id == current_user.id)
-        .group_by(Order.marketplace_id, Marketplace.name, Order.article, Order.size)
+        .group_by(Order.marketplace_id, Marketplace.name, Order.article)
         .order_by(Marketplace.name.asc(), Order.article.asc())
         .all()
     )
@@ -394,14 +411,15 @@ def export_products_for_mapping(
     )
 
     for row in products:
+        article_base, size = _split_article_and_size(row.article)
         mapping = (
             db.query(KizProductMapping, KizGroup.name)
             .join(KizGroup, KizGroup.id == KizProductMapping.group_id)
             .filter(
                 KizProductMapping.user_id == current_user.id,
                 KizProductMapping.marketplace_id == row.marketplace_id,
-                KizProductMapping.article == (row.article or ""),
-                KizProductMapping.size == ((row.size or "").strip()),
+                KizProductMapping.article == article_base,
+                KizProductMapping.size == size,
             )
             .first()
         )
@@ -411,8 +429,8 @@ def export_products_for_mapping(
             [
                 row.marketplace_id,
                 row.marketplace_name,
-                row.article or "",
-                row.size or "",
+                article_base,
+                size,
                 row.product_name or "",
                 group_id,
                 group_name,
@@ -629,12 +647,11 @@ def list_products_for_mapping(
             Order.marketplace_id,
             Marketplace.name.label("marketplace_name"),
             Order.article,
-            Order.size,
             func.max(Order.product_name).label("product_name"),
         )
         .join(Marketplace, Marketplace.id == Order.marketplace_id)
         .filter(Marketplace.user_id == current_user.id)
-        .group_by(Order.marketplace_id, Marketplace.name, Order.article, Order.size)
+        .group_by(Order.marketplace_id, Marketplace.name, Order.article)
         .order_by(Marketplace.name.asc(), Order.article.asc())
     )
     if search.strip():
@@ -644,14 +661,14 @@ def list_products_for_mapping(
 
     out = []
     for row in rows:
-        size = (row.size or "").strip()
+        article_base, size = _split_article_and_size(row.article)
         mapping = (
             db.query(KizProductMapping, KizGroup.name)
             .join(KizGroup, KizGroup.id == KizProductMapping.group_id)
             .filter(
                 KizProductMapping.user_id == current_user.id,
                 KizProductMapping.marketplace_id == row.marketplace_id,
-                KizProductMapping.article == (row.article or ""),
+                KizProductMapping.article == article_base,
                 KizProductMapping.size == size,
             )
             .first()
@@ -660,7 +677,7 @@ def list_products_for_mapping(
             {
                 "marketplace_id": row.marketplace_id,
                 "marketplace_name": row.marketplace_name,
-                "article": row.article or "",
+                "article": article_base,
                 "size": size,
                 "product_name": row.product_name or "",
                 "group_id": mapping[0].group_id if mapping else None,

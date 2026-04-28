@@ -39,6 +39,20 @@ def _normalize_size(size: str | None) -> str:
     return (size or "").strip()
 
 
+def _split_article_and_size(article: str | None) -> tuple[str, str]:
+    raw = (article or "").strip()
+    if not raw:
+        return "", ""
+    if "_" not in raw:
+        return raw, ""
+    base, size = raw.rsplit("_", 1)
+    base = base.strip()
+    size = size.strip()
+    if not base or not size:
+        return raw, ""
+    return base, size
+
+
 def _normalize_kiz(raw: str) -> str:
     s = (raw or "").replace("\r", "").replace("\n", "").replace("\t", "").strip()
     if s.startswith(("]C1", "]c1", "]D2", "]d2", "]Q3", "]q3")):
@@ -177,11 +191,12 @@ def assign_kiz_codes_fifo_for_order(
         raise ValueError("Для заказа не определен маркетплейс.")
 
     owner_user_id = order.marketplace.user_id
-    article = _normalize_value(order.article)
-    if not article:
+    article_raw = _normalize_value(order.article)
+    if not article_raw:
         raise ValueError("В заказе отсутствует артикул для подбора КИЗ.")
 
-    size = _normalize_size(order.size)
+    article, size_from_article = _split_article_and_size(article_raw)
+    size = _normalize_size(size_from_article)
 
     mapping_q = db.query(KizProductMapping).filter(
         KizProductMapping.user_id == owner_user_id,
