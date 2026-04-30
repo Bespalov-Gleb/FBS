@@ -135,8 +135,10 @@ def _resolve_group_for_order(db: Session, order: Order) -> KizGroup:
     # 1) Совместимость со старыми маппингами: полный артикул как есть.
     candidates.append((article_raw, ""))
     # 2) Новый формат: базовый артикул + размер из хвоста.
-    if article and size:
-        candidates.append((article, size))
+    if article and size_from_article:
+        candidates.append((article, size_from_article))
+    if article and size_from_order:
+        candidates.append((article, size_from_order))
     # 3) Фолбэк на базовый артикул без размера.
     if article:
         candidates.append((article, ""))
