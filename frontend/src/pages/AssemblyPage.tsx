@@ -133,9 +133,27 @@ export default function AssemblyPage() {
       queryClient.invalidateQueries({ queryKey: ['orders-completed'] });
       queryClient.invalidateQueries({ queryKey: ['orders-stats'] });
       queryClient.invalidateQueries({ queryKey: ['marketplaces'] });
-      setSnackbar({
-        message: `Синхронизация завершена: обновлено записей ~${data.total_synced ?? 0}`,
-      });
+      const totalSynced = data.total_synced ?? 0;
+      const totalMp = data.total_marketplaces ?? data.results?.length ?? 0;
+      const cooldownCount = data.cooldown_count ?? data.results?.filter((r) => r.skipped === 'cooldown').length ?? 0;
+      const lockBusyCount = data.lock_busy_count ?? data.results?.filter((r) => r.skipped === 'lock_busy').length ?? 0;
+      const syncedMp = data.synced_marketplaces ?? data.results?.filter((r) => (r.synced ?? 0) > 0).length ?? 0;
+
+      if (totalMp === 0) {
+        setSnackbar({ message: 'Синхронизация не запущена: нет доступных маркетплейсов.' });
+        return;
+      }
+      if (totalSynced > 0) {
+        setSnackbar({
+          message: `Синк завершен: +${totalSynced} заказов, магазинов с обновлениями: ${syncedMp}/${totalMp}.`,
+        });
+        return;
+      }
+
+      const parts: string[] = ['Синк не дал новых заказов.'];
+      if (cooldownCount > 0) parts.push(`cooldown: ${cooldownCount}`);
+      if (lockBusyCount > 0) parts.push(`lock_busy: ${lockBusyCount}`);
+      setSnackbar({ message: parts.join(' ') });
     },
     onError: () => {
       setSnackbar({ message: 'Не удалось синхронизировать заказы (нет прав или ошибка сервера)' });

@@ -1738,6 +1738,8 @@ async def sync_all_orders(
     
     total = 0
     results = []
+    cooldown_count = 0
+    lock_busy_count = 0
     for mp in marketplaces:
         try:
             count = await OrderSyncService.sync_marketplace_orders(
@@ -1748,6 +1750,7 @@ async def sync_all_orders(
             results.append({"marketplace_id": mp.id, "synced": count})
             total += count
         except SyncCooldownError as e:
+            cooldown_count += 1
             results.append(
                 {
                     "marketplace_id": mp.id,
@@ -1757,6 +1760,7 @@ async def sync_all_orders(
                 }
             )
         except ManualSyncLockTimeout:
+            lock_busy_count += 1
             results.append(
                 {
                     "marketplace_id": mp.id,
@@ -1764,8 +1768,28 @@ async def sync_all_orders(
                     "skipped": "lock_busy",
                 }
             )
-    
-    return {"total_synced": total, "results": results}
+
+    payload = {
+        "total_synced": total,
+        "results": results,
+        "total_marketplaces": len(marketplaces),
+        "synced_marketplaces": len([r for r in results if (r.get("synced") or 0) > 0]),
+        "cooldown_count": cooldown_count,
+        "lock_busy_count": lock_busy_count,
+    }
+    logger.info(
+        "Manual sync/all summary",
+        extra={
+            "user_id": current_user.id,
+            "effective_user_id": eff_id,
+            "total_marketplaces": payload["total_marketplaces"],
+            "total_synced": payload["total_synced"],
+            "synced_marketplaces": payload["synced_marketplaces"],
+            "cooldown_count": payload["cooldown_count"],
+            "lock_busy_count": payload["lock_busy_count"],
+        },
+    )
+    return payload
 
 
 @router.get("/{order_id}/kiz-suggest")

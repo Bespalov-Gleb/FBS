@@ -53,6 +53,22 @@ export interface OrdersListResponse {
   total: number;
 }
 
+export interface SyncAllResultItem {
+  marketplace_id: number;
+  synced: number;
+  skipped?: 'cooldown' | 'lock_busy' | string;
+  seconds_left?: number;
+}
+
+export interface SyncAllResponse {
+  total_synced: number;
+  results: SyncAllResultItem[];
+  total_marketplaces?: number;
+  synced_marketplaces?: number;
+  cooldown_count?: number;
+  lock_busy_count?: number;
+}
+
 /** Сериализация params с массивами: marketplace_ids=1&marketplace_ids=2 для FastAPI */
 function stringifyOrdersParams(params: OrdersParams): string {
   const pairs: string[] = [];
@@ -112,8 +128,8 @@ export const ordersApi = {
     return data;
   },
 
-  syncAll: async (): Promise<{ total_synced: number }> => {
-    const { data } = await apiClient.post<{ total_synced: number }>('/orders/sync/all');
+  syncAll: async (): Promise<SyncAllResponse> => {
+    const { data } = await apiClient.post<SyncAllResponse>('/orders/sync/all');
     return data;
   },
 
