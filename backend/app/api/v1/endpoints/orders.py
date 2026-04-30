@@ -1,7 +1,7 @@
 """
 API endpoints для заказов и синхронизации
 """
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional
 import os
 import re
@@ -26,6 +26,7 @@ from app.repositories.order_repository import OrderRepository
 from app.schemas.order import OrderCompleteRequest, OrderProductItem, OrderResponse, OrdersListResponse
 from app.services.marketplace.wildberries import WildberriesClient
 from app.services.order_complete_service import OrderCompleteService
+from app.services.kiz_pool_service import suggest_kiz_codes_fifo_for_order
 from app.services.order_sync_guard import ManualSyncLockTimeout, SyncCooldownError
 from app.services.order_sync_service import OrderSyncService
 
@@ -457,6 +458,9 @@ def add_kiz_scan(
 def kiz_export(
     marketplace_id: Optional[int] = Query(None, description="Фильтр по маркетплейсу (обязателен для формата WB/Ozon)"),
     export_format: str = Query("xlsx", description="xlsx | txt"),
+    created_from: Optional[datetime] = Query(None, description="Начало периода created_at (ISO)"),
+    created_to: Optional[datetime] = Query(None, description="Конец периода created_at (ISO)"),
+    today_only: bool = Query(False, description="Только записи за сегодня"),
     db: Session = Depends(get_db),
     current_user: User = CurrentUser,
 ):
@@ -478,6 +482,16 @@ def kiz_export(
         .options(joinedload(ScannedKiz.marketplace))
         .filter(ScannedKiz.user_id == current_user.id)
     )
+    if today_only:
+        now = datetime.utcnow()
+        day_start = datetime(now.year, now.month, now.day)
+        day_end = day_start + timedelta(days=1)
+        query = query.filter(ScannedKiz.created_at >= day_start, ScannedKiz.created_at < day_end)
+    else:
+        if created_from is not None:
+            query = query.filter(ScannedKiz.created_at >= created_from)
+        if created_to is not None:
+            query = query.filter(ScannedKiz.created_at <= created_to)
     if marketplace_id:
         query = query.filter(ScannedKiz.marketplace_id == marketplace_id)
     try:
@@ -1752,6 +1766,27 @@ async def sync_all_orders(
             )
     
     return {"total_synced": total, "results": results}
+
+
+@router.get("/{order_id}/kiz-suggest")
+def suggest_kiz_for_order(
+    order_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = CurrentUser,
+):
+    order = _get_order_for_user(order_id, current_user, db)
+    mp = order.marketplace
+    if not mp or not mp.is_kiz_enabled:
+        return {"kiz_codes": []}
+    try:
+        codes = suggest_kiz_codes_fifo_for_order(
+            db,
+            order=order,
+            required_count=order.quantity,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"kiz_codes": codes}
 
 
 @router.post("/{order_id}/complete")

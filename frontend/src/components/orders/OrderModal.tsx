@@ -87,6 +87,7 @@ function normalizeKizInput(raw: string): string {
 export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate = true, labelFormat: labelFormatProp, agentAvailable = false, defaultPrinter, onClose, onComplete }: OrderModalProps) {
   const kizCount = order?.quantity ?? 1;
   const [kizCodes, setKizCodes] = useState<string[]>(() => Array.from({ length: kizCount }, () => ''));
+  const [loadingSuggestedKiz, setLoadingSuggestedKiz] = useState(false);
   const [completing, setCompleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [imageError, setImageError] = useState(false);
@@ -104,6 +105,7 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
     if (order) {
       const n = order.quantity ?? 1;
       setKizCodes(Array.from({ length: n }, () => ''));
+      setLoadingSuggestedKiz(false);
       setError(null);
       setImageError(false);
       kizPrintedRef.current = new Set();
@@ -112,6 +114,29 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
       prevKizValuesRef.current = [];
     }
   }, [order?.id]);
+
+  useEffect(() => {
+    if (!order || !isKizRequired || isCompleted) return;
+    let cancelled = false;
+    setLoadingSuggestedKiz(true);
+    ordersApi.suggestKizCodes(order.id)
+      .then((codes) => {
+        if (cancelled || !codes.length) return;
+        const prepared = Array.from({ length: order.quantity ?? 1 }, (_, i) =>
+          normalizeKizInput(codes[i] ?? '').slice(0, KIZ_MAX_LENGTH),
+        );
+        setKizCodes(prepared);
+      })
+      .catch(() => {
+        // Ошибку покажет backend при финальном "Собрано", здесь не блокируем работу.
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingSuggestedKiz(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [order?.id, isKizRequired, isCompleted]);
 
   // Фокус на первое поле КИЗ при открытии модалки (после рендера полей)
   useEffect(() => {
@@ -376,6 +401,11 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
               <Typography variant="caption" color="text.secondary">
                 КИЗ подставляется автоматически по настройкам администратора (FIFO). Поля ниже можно использовать только как ручное переопределение.
               </Typography>
+              {loadingSuggestedKiz && (
+                <Typography variant="caption" color="text.secondary">
+                  Подбираем КИЗ из пула...
+                </Typography>
+              )}
               {kizCodes.map((code, i) => (
                 <TextField
                   key={i}

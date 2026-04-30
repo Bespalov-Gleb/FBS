@@ -41,8 +41,8 @@ type GroupFormState = {
   color: string;
   size: string;
   cut_type: string;
-  parser_markers: string;
   marketplace_ids: number[];
+  articleFilters: Array<{ name: string; marker: string }>;
 };
 
 const defaultForm: GroupFormState = {
@@ -50,20 +50,9 @@ const defaultForm: GroupFormState = {
   color: '',
   size: '',
   cut_type: '',
-  parser_markers: '',
   marketplace_ids: [],
+  articleFilters: [],
 };
-
-function parseMarkers(raw: string): Record<string, unknown> | null {
-  const text = raw.trim();
-  if (!text) return null;
-  try {
-    const parsed = JSON.parse(text);
-    return parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : null;
-  } catch {
-    throw new Error('Поле "Параметры парсера" должно быть валидным JSON.');
-  }
-}
 
 export default function KizGroupsPage() {
   const user = useSelector((state: RootState) => state.auth.user);
@@ -100,7 +89,16 @@ export default function KizGroupsPage() {
         color: form.color.trim() || null,
         size: form.size.trim() || null,
         cut_type: form.cut_type.trim() || null,
-        parser_markers: parseMarkers(form.parser_markers),
+        parser_markers:
+          form.articleFilters.length > 0
+            ? {
+                article_contains: Object.fromEntries(
+                  form.articleFilters
+                    .map((r) => [r.name.trim(), r.marker.trim()])
+                    .filter(([name, marker]) => !!name && !!marker),
+                ),
+              }
+            : null,
         marketplace_ids: form.marketplace_ids,
       };
       if (!payload.name) throw new Error('Введите название группы.');
@@ -204,8 +202,16 @@ export default function KizGroupsPage() {
       color: group.color ?? '',
       size: group.size ?? '',
       cut_type: group.cut_type ?? '',
-      parser_markers: group.parser_markers ? JSON.stringify(group.parser_markers, null, 2) : '',
       marketplace_ids: group.marketplace_ids,
+      articleFilters: (() => {
+        const articleContains = group.parser_markers && typeof group.parser_markers === 'object'
+          ? (group.parser_markers.article_contains as Record<string, unknown> | undefined)
+          : undefined;
+        if (!articleContains || typeof articleContains !== 'object') return [];
+        return Object.entries(articleContains)
+          .map(([name, marker]) => ({ name, marker: String(marker ?? '') }))
+          .filter((r) => r.name.trim() && r.marker.trim());
+      })(),
     });
   };
 
@@ -295,13 +301,100 @@ export default function KizGroupsPage() {
           </Box>
           <TextField
             sx={{ mt: 1.5 }}
-            label="Параметры парсера (JSON, опционально)"
-            multiline
-            minRows={3}
-            value={form.parser_markers}
-            onChange={(e) => setForm((prev) => ({ ...prev, parser_markers: e.target.value }))}
+            label="Новый параметр (например material)"
+            value=""
+            onChange={() => {}}
+            placeholder="Добавьте правила ниже"
             fullWidth
+            disabled
           />
+          <Stack sx={{ mt: 1.5 }} spacing={1}>
+            <Typography variant="subtitle2">
+              Фильтры по артикулу (КИЗ применяется, если артикул содержит подстроку)
+            </Typography>
+            {form.articleFilters.map((rule, idx) => (
+              <Stack key={`${idx}-${rule.name}`} direction={{ xs: 'column', md: 'row' }} spacing={1}>
+                <TextField
+                  label="Параметр"
+                  value={rule.name}
+                  onChange={(e) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      articleFilters: prev.articleFilters.map((r, i) =>
+                        i === idx ? { ...r, name: e.target.value } : r,
+                      ),
+                    }))
+                  }
+                  fullWidth
+                  size="small"
+                />
+                <TextField
+                  label="Подстрока в артикуле"
+                  value={rule.marker}
+                  onChange={(e) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      articleFilters: prev.articleFilters.map((r, i) =>
+                        i === idx ? { ...r, marker: e.target.value } : r,
+                      ),
+                    }))
+                  }
+                  fullWidth
+                  size="small"
+                />
+                <Button
+                  color="error"
+                  onClick={() =>
+                    setForm((prev) => ({
+                      ...prev,
+                      articleFilters: prev.articleFilters.filter((_, i) => i !== idx),
+                    }))
+                  }
+                >
+                  Удалить
+                </Button>
+              </Stack>
+            ))}
+            <Button
+              variant="outlined"
+              onClick={() =>
+                setForm((prev) => ({
+                  ...prev,
+                  articleFilters: [...prev.articleFilters, { name: '', marker: '' }],
+                }))
+              }
+              sx={{ alignSelf: 'flex-start' }}
+            >
+              Добавить параметр
+            </Button>
+          </Stack>
+          <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+            Пример: параметр material + подстрока xlop. Тогда группа сработает только для артикулов, где есть xlop.
+          </Typography>
+          <Box sx={{ mt: 0.5 }}>
+            <TextField
+              label="Параметры парсера (readonly preview)"
+              value={
+                form.articleFilters.length > 0
+                  ? JSON.stringify(
+                      {
+                        article_contains: Object.fromEntries(
+                          form.articleFilters
+                            .map((r) => [r.name.trim(), r.marker.trim()])
+                            .filter(([name, marker]) => !!name && !!marker),
+                        ),
+                      },
+                      null,
+                      2,
+                    )
+                  : '{}'
+              }
+              multiline
+              minRows={2}
+              InputProps={{ readOnly: true }}
+              fullWidth
+            />
+          </Box>
           <Stack direction="row" spacing={1} sx={{ mt: 1.5 }}>
             <Button
               variant="contained"

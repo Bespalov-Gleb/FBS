@@ -163,17 +163,31 @@ export const ordersApi = {
 
   /** Выгрузка КИЗ собранных заказов (Excel или TXT). */
   getKizExportBlob: async (
-    options?: { marketplace_id?: number; format?: 'xlsx' | 'txt' },
+    options?: {
+      marketplace_id?: number;
+      format?: 'xlsx' | 'txt';
+      created_from?: string;
+      created_to?: string;
+      today_only?: boolean;
+    },
   ): Promise<Blob> => {
     const params: Record<string, string | number> = {
       export_format: options?.format ?? 'xlsx',
     };
     if (options?.marketplace_id != null) params.marketplace_id = options.marketplace_id;
+    if (options?.created_from) params.created_from = options.created_from;
+    if (options?.created_to) params.created_to = options.created_to;
+    if (options?.today_only) params.today_only = 1;
     const { data } = await apiClient.get('/orders/kiz-export', {
       params,
       responseType: 'blob',
     });
     return data;
+  },
+
+  suggestKizCodes: async (orderId: number): Promise<string[]> => {
+    const { data } = await apiClient.get<{ kiz_codes: string[] }>(`/orders/${orderId}/kiz-suggest`);
+    return Array.isArray(data?.kiz_codes) ? data.kiz_codes : [];
   },
 
   /** Штрихкод товара (только Ozon). 404 для WB. PNG. */

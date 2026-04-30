@@ -56,6 +56,50 @@ def _split_article_and_size(article: str | None) -> tuple[str, str]:
     return base, size
 
 
+def _extract_article_contains_rules(parser_markers: dict | None) -> dict[str, str]:
+    if not isinstance(parser_markers, dict):
+        return {}
+    raw_rules = parser_markers.get("article_contains")
+    if not isinstance(raw_rules, dict):
+        return {}
+
+    cleaned: dict[str, str] = {}
+    for key, value in raw_rules.items():
+        k = str(key or "").strip()
+        v = str(value or "").strip()
+        if k and v:
+            cleaned[k] = v
+    return cleaned
+
+
+def _ensure_article_matches_group_rules(article_raw: str, parser_markers: dict | None) -> None:
+    """
+    Группа может задавать произвольные правила article_contains:
+    {
+      "article_contains": {
+        "material": "xlop",
+        "fit": "unisex"
+      }
+    }
+    Тогда КИЗ из группы используется только если артикул содержит все подстроки.
+    """
+    rules = _extract_article_contains_rules(parser_markers)
+    if not rules:
+        return
+
+    article_lc = (article_raw or "").lower()
+    failed: list[str] = []
+    for param, marker in rules.items():
+        if marker.lower() not in article_lc:
+            failed.append(f"{param}={marker}")
+
+    if failed:
+        raise ValueError(
+            "Артикул не подходит под параметры группы: "
+            + ", ".join(failed)
+        )
+
+
 def _normalize_kiz(raw: str) -> str:
     s = (raw or "").replace("\r", "").replace("\n", "").replace("\t", "").strip()
     if s.startswith(("]C1", "]c1", "]D2", "]d2", "]Q3", "]q3")):
@@ -63,6 +107,57 @@ def _normalize_kiz(raw: str) -> str:
     while s and (ord(s[0]) < 32) and (s[0] != "\x1d"):
         s = s[1:]
     return s[:255]
+
+
+def _resolve_group_for_order(db: Session, order: Order) -> KizGroup:
+    if not order.marketplace:
+        raise ValueError("Для заказа не определен маркетплейс.")
+
+    owner_user_id = order.marketplace.user_id
+    article_raw = _normalize_value(order.article)
+    if not article_raw:
+        raise ValueError("В заказе отсутствует артикул для подбора КИЗ.")
+
+    article, size_from_article = _split_article_and_size(article_raw)
+    size = _normalize_size(size_from_article)
+
+    mapping_q = db.query(KizProductMapping).filter(
+        KizProductMapping.user_id == owner_user_id,
+        KizProductMapping.marketplace_id == order.marketplace_id,
+        KizProductMapping.article == article,
+    )
+
+    mapping = None
+    if size:
+        mapping = mapping_q.filter(KizProductMapping.size == size).first()
+    if not mapping:
+        mapping = mapping_q.filter(KizProductMapping.size == "").first()
+    if not mapping:
+        raise ValueError(
+            f"Для товара '{article}' не настроена группа КИЗ. Обратитесь к администратору."
+        )
+
+    group = db.query(KizGroup).filter(
+        KizGroup.id == mapping.group_id,
+        KizGroup.user_id == owner_user_id,
+        KizGroup.is_active == True,
+    ).first()
+    if not group:
+        raise ValueError("Назначенная группа КИЗ не найдена или неактивна.")
+    _ensure_article_matches_group_rules(article_raw, group.parser_markers)
+
+    group_has_marketplace = (
+        db.query(kiz_group_marketplaces)
+        .filter(
+            kiz_group_marketplaces.c.group_id == group.id,
+            kiz_group_marketplaces.c.marketplace_id == order.marketplace_id,
+        )
+        .first()
+        is not None
+    )
+    if not group_has_marketplace:
+        raise ValueError("Группа КИЗ не привязана к магазину текущего заказа.")
+    return group
 
 
 def _extract_kiz_from_text(page_text: str | None) -> str | None:
@@ -200,52 +295,7 @@ def assign_kiz_codes_fifo_for_order(
     required_count: int,
     completed_by_user_id: int,
 ) -> list[str]:
-    if not order.marketplace:
-        raise ValueError("Для заказа не определен маркетплейс.")
-
-    owner_user_id = order.marketplace.user_id
-    article_raw = _normalize_value(order.article)
-    if not article_raw:
-        raise ValueError("В заказе отсутствует артикул для подбора КИЗ.")
-
-    article, size_from_article = _split_article_and_size(article_raw)
-    size = _normalize_size(size_from_article)
-
-    mapping_q = db.query(KizProductMapping).filter(
-        KizProductMapping.user_id == owner_user_id,
-        KizProductMapping.marketplace_id == order.marketplace_id,
-        KizProductMapping.article == article,
-    )
-
-    mapping = None
-    if size:
-        mapping = mapping_q.filter(KizProductMapping.size == size).first()
-    if not mapping:
-        mapping = mapping_q.filter(KizProductMapping.size == "").first()
-    if not mapping:
-        raise ValueError(
-            f"Для товара '{article}' не настроена группа КИЗ. Обратитесь к администратору."
-        )
-
-    group = db.query(KizGroup).filter(
-        KizGroup.id == mapping.group_id,
-        KizGroup.user_id == owner_user_id,
-        KizGroup.is_active == True,
-    ).first()
-    if not group:
-        raise ValueError("Назначенная группа КИЗ не найдена или неактивна.")
-
-    group_has_marketplace = (
-        db.query(kiz_group_marketplaces)
-        .filter(
-            kiz_group_marketplaces.c.group_id == group.id,
-            kiz_group_marketplaces.c.marketplace_id == order.marketplace_id,
-        )
-        .first()
-        is not None
-    )
-    if not group_has_marketplace:
-        raise ValueError("Группа КИЗ не привязана к магазину текущего заказа.")
+    group = _resolve_group_for_order(db, order)
 
     pool_items = (
         db.query(KizPoolItem)
@@ -273,3 +323,62 @@ def assign_kiz_codes_fifo_for_order(
         item.used_by_user_id = completed_by_user_id
         result.append(item.code)
     return result
+
+
+def suggest_kiz_codes_fifo_for_order(
+    db: Session,
+    *,
+    order: Order,
+    required_count: int,
+) -> list[str]:
+    group = _resolve_group_for_order(db, order)
+    pool_items = (
+        db.query(KizPoolItem)
+        .filter(
+            KizPoolItem.group_id == group.id,
+            KizPoolItem.status == KizCodeStatus.FREE,
+        )
+        .order_by(KizPoolItem.id.asc())
+        .limit(required_count)
+        .all()
+    )
+    if len(pool_items) < required_count:
+        available = len(pool_items)
+        raise ValueError(
+            f"В группе '{group.name}' недостаточно КИЗ. Нужно: {required_count}, доступно: {available}."
+        )
+    return [item.code for item in pool_items]
+
+
+def mark_kiz_codes_used_for_order(
+    db: Session,
+    *,
+    order: Order,
+    kiz_codes: Iterable[str],
+    completed_by_user_id: int,
+) -> None:
+    normalized = [_normalize_kiz(code) for code in kiz_codes if _normalize_kiz(code)]
+    if not normalized:
+        return
+
+    now = datetime.utcnow()
+    items = (
+        db.query(KizPoolItem)
+        .filter(KizPoolItem.code.in_(normalized))
+        .with_for_update(skip_locked=True)
+        .all()
+    )
+    by_code = {item.code: item for item in items}
+    missing = [code for code in normalized if code not in by_code]
+    if missing:
+        raise ValueError("Часть КИЗ не найдена в пуле: " + ", ".join(missing[:3]))
+
+    for code in normalized:
+        item = by_code[code]
+        if item.status == KizCodeStatus.USED and item.used_order_id != order.id:
+            raise ValueError(f"КИЗ уже использован в другом заказе: {code}")
+        if item.status == KizCodeStatus.FREE:
+            item.status = KizCodeStatus.USED
+            item.used_at = now
+            item.used_order_id = order.id
+            item.used_by_user_id = completed_by_user_id

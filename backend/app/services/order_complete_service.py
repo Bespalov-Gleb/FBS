@@ -11,7 +11,7 @@ from app.core.security import decrypt_api_key
 from app.models.marketplace import MarketplaceType
 from app.models.order import Order
 from app.models.scanned_kiz import ScannedKiz
-from app.services.kiz_pool_service import assign_kiz_codes_fifo_for_order
+from app.services.kiz_pool_service import assign_kiz_codes_fifo_for_order, mark_kiz_codes_used_for_order
 from app.services.marketplace.wildberries import WildberriesClient
 from app.utils.logger import logger
 
@@ -81,6 +81,13 @@ class OrderCompleteService:
                 db,
                 order=order,
                 required_count=order.quantity,
+                completed_by_user_id=user_id,
+            )
+        if order.marketplace and order.marketplace.is_kiz_enabled and kiz_list:
+            mark_kiz_codes_used_for_order(
+                db,
+                order=order,
+                kiz_codes=kiz_list,
                 completed_by_user_id=user_id,
             )
         first_kiz = kiz_list[0] if kiz_list else None
