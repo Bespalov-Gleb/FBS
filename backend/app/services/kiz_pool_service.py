@@ -120,21 +120,29 @@ def _resolve_group_for_order(db: Session, order: Order) -> KizGroup:
 
     article, size_from_article = _split_article_and_size(article_raw)
     size = _normalize_size(size_from_article)
-
-    mapping_q = db.query(KizProductMapping).filter(
-        KizProductMapping.user_id == owner_user_id,
-        KizProductMapping.marketplace_id == order.marketplace_id,
-        KizProductMapping.article == article,
-    )
+    candidates: list[tuple[str, str]] = []
+    # 1) Совместимость со старыми маппингами: полный артикул как есть.
+    candidates.append((article_raw, ""))
+    # 2) Новый формат: базовый артикул + размер из хвоста.
+    if article and size:
+        candidates.append((article, size))
+    # 3) Фолбэк на базовый артикул без размера.
+    if article:
+        candidates.append((article, ""))
 
     mapping = None
-    if size:
-        mapping = mapping_q.filter(KizProductMapping.size == size).first()
-    if not mapping:
-        mapping = mapping_q.filter(KizProductMapping.size == "").first()
+    for candidate_article, candidate_size in candidates:
+        mapping = db.query(KizProductMapping).filter(
+            KizProductMapping.user_id == owner_user_id,
+            KizProductMapping.marketplace_id == order.marketplace_id,
+            KizProductMapping.article == candidate_article,
+            KizProductMapping.size == candidate_size,
+        ).first()
+        if mapping:
+            break
     if not mapping:
         raise ValueError(
-            f"Для товара '{article}' не настроена группа КИЗ. Обратитесь к администратору."
+            f"Для товара '{article_raw}' не настроена группа КИЗ. Обратитесь к администратору."
         )
 
     group = db.query(KizGroup).filter(

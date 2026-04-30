@@ -88,6 +88,7 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
   const kizCount = order?.quantity ?? 1;
   const [kizCodes, setKizCodes] = useState<string[]>(() => Array.from({ length: kizCount }, () => ''));
   const [loadingSuggestedKiz, setLoadingSuggestedKiz] = useState(false);
+  const [suggestedKizReason, setSuggestedKizReason] = useState<string | null>(null);
   const [completing, setCompleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [imageError, setImageError] = useState(false);
@@ -106,6 +107,7 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
       const n = order.quantity ?? 1;
       setKizCodes(Array.from({ length: n }, () => ''));
       setLoadingSuggestedKiz(false);
+      setSuggestedKizReason(null);
       setError(null);
       setImageError(false);
       kizPrintedRef.current = new Set();
@@ -120,10 +122,12 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
     let cancelled = false;
     setLoadingSuggestedKiz(true);
     ordersApi.suggestKizCodes(order.id)
-      .then((codes) => {
-        if (cancelled || !codes.length) return;
+      .then(({ kiz_codes, reason }) => {
+        if (cancelled) return;
+        setSuggestedKizReason(reason ?? null);
+        if (!kiz_codes.length) return;
         const prepared = Array.from({ length: order.quantity ?? 1 }, (_, i) =>
-          normalizeKizInput(codes[i] ?? '').slice(0, KIZ_MAX_LENGTH),
+          normalizeKizInput(kiz_codes[i] ?? '').slice(0, KIZ_MAX_LENGTH),
         );
         setKizCodes(prepared);
       })
@@ -404,6 +408,11 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
               {loadingSuggestedKiz && (
                 <Typography variant="caption" color="text.secondary">
                   Подбираем КИЗ из пула...
+                </Typography>
+              )}
+              {!loadingSuggestedKiz && suggestedKizReason && (
+                <Typography variant="caption" color="warning.main">
+                  Автоподбор КИЗ: {suggestedKizReason}
                 </Typography>
               )}
               {kizCodes.map((code, i) => (

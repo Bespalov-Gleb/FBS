@@ -1777,7 +1777,7 @@ def suggest_kiz_for_order(
     order = _get_order_for_user(order_id, current_user, db)
     mp = order.marketplace
     if not mp or not mp.is_kiz_enabled:
-        return {"kiz_codes": []}
+        return {"kiz_codes": [], "reason": None}
     try:
         codes = suggest_kiz_codes_fifo_for_order(
             db,
@@ -1785,8 +1785,9 @@ def suggest_kiz_for_order(
             required_count=order.quantity,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"kiz_codes": codes}
+        # Для UI автоподстановки не ломаем запрос ошибкой 400 — возвращаем причину.
+        return {"kiz_codes": [], "reason": str(exc)}
+    return {"kiz_codes": codes, "reason": None}
 
 
 @router.post("/{order_id}/complete")

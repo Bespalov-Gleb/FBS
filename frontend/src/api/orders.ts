@@ -185,9 +185,12 @@ export const ordersApi = {
     return data;
   },
 
-  suggestKizCodes: async (orderId: number): Promise<string[]> => {
-    const { data } = await apiClient.get<{ kiz_codes: string[] }>(`/orders/${orderId}/kiz-suggest`);
-    return Array.isArray(data?.kiz_codes) ? data.kiz_codes : [];
+  suggestKizCodes: async (orderId: number): Promise<{ kiz_codes: string[]; reason: string | null }> => {
+    const { data } = await apiClient.get<{ kiz_codes?: string[]; reason?: string | null }>(`/orders/${orderId}/kiz-suggest`);
+    return {
+      kiz_codes: Array.isArray(data?.kiz_codes) ? data.kiz_codes : [],
+      reason: typeof data?.reason === 'string' ? data.reason : null,
+    };
   },
 
   /** Штрихкод товара (только Ozon). 404 для WB. PNG. */
