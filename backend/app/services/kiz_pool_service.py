@@ -46,6 +46,13 @@ def _normalize_size_for_match(size: str | None) -> str:
     return _normalize_size(size).lower()
 
 
+def _contains_token(haystack: str, token: str | None) -> bool:
+    t = (token or "").strip().lower()
+    if not t:
+        return True
+    return t in (haystack or "").lower()
+
+
 def _split_article_and_size(article: str | None) -> tuple[str, str]:
     raw = (article or "").strip()
     if not raw:
@@ -175,9 +182,39 @@ def _resolve_group_for_order(db: Session, order: Order) -> KizGroup:
         if mapping:
             break
     if not mapping:
-        raise ValueError(
-            f"Для товара '{article_raw}' не настроена группа КИЗ. Обратитесь к администратору."
+        # Fallback: если явного product-mapping нет, пробуем подобрать по параметрам группы
+        # (color/size/cut_type + привязка к магазину). Это нужно для сценария "white + L".
+        size_text = _normalize_size(size_from_order or size_from_article)
+        groups = (
+            db.query(KizGroup)
+            .join(kiz_group_marketplaces, kiz_group_marketplaces.c.group_id == KizGroup.id)
+            .filter(
+                KizGroup.user_id == owner_user_id,
+                KizGroup.is_active == True,
+                kiz_group_marketplaces.c.marketplace_id == order.marketplace_id,
+            )
+            .all()
         )
+        matched_groups: list[KizGroup] = []
+        for g in groups:
+            if not _contains_token(article_raw, g.color):
+                continue
+            if not (_contains_token(size_text, g.size) or _contains_token(article_raw, g.size)):
+                continue
+            if not _contains_token(article_raw, g.cut_type):
+                continue
+            try:
+                _ensure_article_matches_group_rules(article_raw, g.parser_markers)
+            except ValueError:
+                continue
+            matched_groups.append(g)
+
+        if len(matched_groups) == 1:
+            mapping = type("TmpMapping", (), {"group_id": matched_groups[0].id})()
+        else:
+            raise ValueError(
+                f"Для товара '{article_raw}' не настроена группа КИЗ. Обратитесь к администратору."
+            )
 
     group = db.query(KizGroup).filter(
         KizGroup.id == mapping.group_id,
