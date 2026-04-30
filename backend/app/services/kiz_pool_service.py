@@ -42,6 +42,10 @@ def _normalize_size(size: str | None) -> str:
     return (size or "").strip()
 
 
+def _normalize_size_for_match(size: str | None) -> str:
+    return _normalize_size(size).lower()
+
+
 def _split_article_and_size(article: str | None) -> tuple[str, str]:
     raw = (article or "").strip()
     if not raw:
@@ -119,7 +123,14 @@ def _resolve_group_for_order(db: Session, order: Order) -> KizGroup:
         raise ValueError("В заказе отсутствует артикул для подбора КИЗ.")
 
     article, size_from_article = _split_article_and_size(article_raw)
-    size = _normalize_size(size_from_article)
+    size_from_order = _normalize_size((order.extra_data or {}).get("size"))
+
+    # В некоторых заказах размер приходит как "L / 48-52": нужен матч по подстроке.
+    size_candidates: list[str] = []
+    for raw_size in (size_from_order, size_from_article):
+        normalized = _normalize_size_for_match(raw_size)
+        if normalized and normalized not in size_candidates:
+            size_candidates.append(normalized)
     candidates: list[tuple[str, str]] = []
     # 1) Совместимость со старыми маппингами: полный артикул как есть.
     candidates.append((article_raw, ""))
@@ -132,12 +143,33 @@ def _resolve_group_for_order(db: Session, order: Order) -> KizGroup:
 
     mapping = None
     for candidate_article, candidate_size in candidates:
-        mapping = db.query(KizProductMapping).filter(
+        rows = db.query(KizProductMapping).filter(
             KizProductMapping.user_id == owner_user_id,
             KizProductMapping.marketplace_id == order.marketplace_id,
             KizProductMapping.article == candidate_article,
-            KizProductMapping.size == candidate_size,
-        ).first()
+        ).all()
+        if not rows:
+            continue
+
+        candidate_size_norm = _normalize_size_for_match(candidate_size)
+
+        def matches_size(row_size: str) -> bool:
+            row_norm = _normalize_size_for_match(row_size)
+            # Пустой размер в маппинге — универсальный фолбэк.
+            if not row_norm:
+                return True
+            # Точное совпадение по "ожидаемому" candidate_size (для старой логики).
+            if candidate_size_norm and row_norm == candidate_size_norm:
+                return True
+            # Гибкое совпадение по любому размеру из заказа: подстрока в обе стороны.
+            for s in size_candidates:
+                if row_norm in s or s in row_norm:
+                    return True
+            return False
+
+        # Приоритет: более специфичные правила (непустой размер) выше универсального фолбэка.
+        rows_sorted = sorted(rows, key=lambda r: (0 if _normalize_size_for_match(r.size) else 1, r.id))
+        mapping = next((r for r in rows_sorted if matches_size(r.size)), None)
         if mapping:
             break
     if not mapping:
