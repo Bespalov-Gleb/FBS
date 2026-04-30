@@ -38,15 +38,15 @@ class OrderSyncService:
 
     @staticmethod
     def _assert_sync_interval(marketplace: Marketplace, *, source: str) -> None:
-        """Запрет запуска чаще одного раза в min interval."""
+        """Ограничение частоты только для авто-синка. Ручной sync — всегда по нажатию."""
+        if source == "manual":
+            return
         if not marketplace.last_sync_at:
             return
         elapsed = (datetime.utcnow() - marketplace.last_sync_at).total_seconds()
         seconds_left = int(OrderSyncService._MIN_INTERVAL_SEC - elapsed)
         if seconds_left <= 0:
             return
-        if source == "manual":
-            raise SyncCooldownError(seconds_left)
         raise AutoSyncCancelled(
             f"Auto sync skipped due cooldown marketplace={marketplace.id}, wait={seconds_left}s"
         )
