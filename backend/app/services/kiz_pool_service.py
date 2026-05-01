@@ -117,7 +117,26 @@ def _normalize_kiz(raw: str) -> str:
         s = s[3:]
     while s and (ord(s[0]) < 32) and (s[0] != "\x1d"):
         s = s[1:]
+    # Некоторые сканеры отдают разделитель GS как кавычку/апостроф.
+    # Для хранения оставляем как есть, но убираем "явно случайные" внешние кавычки.
+    s = s.strip('"').strip("'")
     return s[:255]
+
+
+def _kiz_equivalent_candidates(raw: str) -> list[str]:
+    """Варианты одного и того же КИЗ для сопоставления с пулом."""
+    base = _normalize_kiz(raw)
+    if not base:
+        return []
+    candidates = {base}
+    # Частые варианты представления разделителя GS.
+    candidates.add(base.replace('"', "\x1d"))
+    candidates.add(base.replace("'", "\x1d"))
+    candidates.add(base.replace(">", "\x1d"))
+    # В некоторых выгрузках разделителя нет вовсе.
+    for sep in ('"', "'", ">", "\x1d"):
+        candidates.add(base.replace(sep, ""))
+    return [c for c in candidates if c]
 
 
 def _resolve_group_for_order(db: Session, order: Order) -> KizGroup:
@@ -441,14 +460,35 @@ def mark_kiz_codes_used_for_order(
         return
 
     now = datetime.utcnow()
-    items = (
+    initial_items = (
         db.query(KizPoolItem)
         .filter(KizPoolItem.code.in_(normalized))
         .with_for_update(skip_locked=True)
         .all()
     )
-    by_code = {item.code: item for item in items}
+    by_code = {item.code: item for item in initial_items}
     missing = [code for code in normalized if code not in by_code]
+
+    if missing:
+        variants_by_original: dict[str, list[str]] = {
+            code: _kiz_equivalent_candidates(code) for code in missing
+        }
+        variant_set = {v for variants in variants_by_original.values() for v in variants}
+        if variant_set:
+            variant_items = (
+                db.query(KizPoolItem)
+                .filter(KizPoolItem.code.in_(list(variant_set)))
+                .with_for_update(skip_locked=True)
+                .all()
+            )
+            variant_by_code = {item.code: item for item in variant_items}
+            for original in missing:
+                for variant in variants_by_original.get(original, []):
+                    if variant in variant_by_code:
+                        by_code[original] = variant_by_code[variant]
+                        break
+        missing = [code for code in normalized if code not in by_code]
+
     if missing:
         raise ValueError("Часть КИЗ не найдена в пуле: " + ", ".join(missing[:3]))
 

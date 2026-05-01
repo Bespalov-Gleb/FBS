@@ -1865,6 +1865,8 @@ async def complete_order(
         )
     except Exception as e:
         from app.core.exceptions import MarketplaceAPIException
+        if isinstance(e, ValueError):
+            raise HTTPException(status_code=400, detail=str(e))
         if isinstance(e, MarketplaceAPIException):
             status = e.status_code
             detail = e.detail if e.detail else str(e)
