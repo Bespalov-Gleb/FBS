@@ -10,6 +10,7 @@ from app.core.exceptions import MarketplaceAPIException
 from app.core.security import decrypt_api_key
 from app.models.marketplace import MarketplaceType
 from app.models.order import Order
+from app.models.print_settings import PrintSettings
 from app.models.scanned_kiz import ScannedKiz
 from app.services.kiz_pool_service import assign_kiz_codes_fifo_for_order, mark_kiz_codes_used_for_order
 from app.services.marketplace.wildberries import WildberriesClient
@@ -57,6 +58,17 @@ def _add_to_scanned_kiz(db: Session, user_id: int, kiz_code: str, order: Order) 
     db.add(sk)
 
 
+def _is_auto_kiz_autofill_enabled(db: Session, user_id: int) -> bool:
+    """
+    Глобальный флаг из print_settings.
+    True по умолчанию, если настройка еще не сохранена.
+    """
+    ps = db.query(PrintSettings).filter(PrintSettings.user_id == user_id).first()
+    if not ps or ps.auto_kiz_autofill is None:
+        return True
+    return ps.auto_kiz_autofill == "true"
+
+
 class OrderCompleteService:
     """Отметка заказа как собранного; для WB с КИЗ — вызов API перед коммитом."""
 
@@ -74,8 +86,14 @@ class OrderCompleteService:
         при ошибке API исключение, коммита нет.
         Ozon: только локально.
         """
+        auto_kiz_autofill_enabled = _is_auto_kiz_autofill_enabled(db, user_id)
         kiz_list = [_normalize_kiz(k)[:KIZ_STORAGE_MAX] for k in kiz_codes if k and _normalize_kiz(k)]
-        if order.marketplace and order.marketplace.is_kiz_enabled and not kiz_list:
+        if (
+            order.marketplace
+            and order.marketplace.is_kiz_enabled
+            and auto_kiz_autofill_enabled
+            and not kiz_list
+        ):
             # Автоматический подбор КИЗ из пула группы (FIFO) по настройкам администратора.
             kiz_list = assign_kiz_codes_fifo_for_order(
                 db,
@@ -83,7 +101,12 @@ class OrderCompleteService:
                 required_count=order.quantity,
                 completed_by_user_id=user_id,
             )
-        if order.marketplace and order.marketplace.is_kiz_enabled and kiz_list:
+        if (
+            order.marketplace
+            and order.marketplace.is_kiz_enabled
+            and auto_kiz_autofill_enabled
+            and kiz_list
+        ):
             mark_kiz_codes_used_for_order(
                 db,
                 order=order,
