@@ -60,6 +60,8 @@ interface OrderModalProps {
   marketplaces: Marketplace[];
   /** Автопечать дубля КИЗ после скана (из диспетчера печати) */
   autoPrintKizDuplicate?: boolean;
+  /** Автоподстановка КИЗ в заказе (глобальная настройка) */
+  autoKizAutofill?: boolean;
   /** Формат этикетки 58/80 мм для WB */
   labelFormat?: '58mm' | '80mm';
   /** Режим печати этикеток: as_is_fit → fit, standard_58x40_noscale → noscale */
@@ -84,11 +86,12 @@ function normalizeKizInput(raw: string): string {
   return s;
 }
 
-export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate = true, labelFormat: labelFormatProp, agentAvailable = false, defaultPrinter, onClose, onComplete }: OrderModalProps) {
+export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate = true, autoKizAutofill = true, labelFormat: labelFormatProp, agentAvailable = false, defaultPrinter, onClose, onComplete }: OrderModalProps) {
   const kizCount = order?.quantity ?? 1;
   const [kizCodes, setKizCodes] = useState<string[]>(() => Array.from({ length: kizCount }, () => ''));
   const [loadingSuggestedKiz, setLoadingSuggestedKiz] = useState(false);
   const [suggestedKizReason, setSuggestedKizReason] = useState<string | null>(null);
+  const [kizManuallyEdited, setKizManuallyEdited] = useState(false);
   const [completing, setCompleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [imageError, setImageError] = useState(false);
@@ -108,6 +111,7 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
       setKizCodes(Array.from({ length: n }, () => ''));
       setLoadingSuggestedKiz(false);
       setSuggestedKizReason(null);
+      setKizManuallyEdited(false);
       setError(null);
       setImageError(false);
       kizPrintedRef.current = new Set();
@@ -118,7 +122,7 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
   }, [order?.id]);
 
   useEffect(() => {
-    if (!order || !isKizRequired || isCompleted) return;
+    if (!order || !isKizRequired || isCompleted || !autoKizAutofill || kizManuallyEdited) return;
     let cancelled = false;
     setLoadingSuggestedKiz(true);
     ordersApi.suggestKizCodes(order.id)
@@ -126,6 +130,7 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
         if (cancelled) return;
         setSuggestedKizReason(reason ?? null);
         if (!kiz_codes.length) return;
+        if (kizManuallyEdited) return;
         const prepared = Array.from({ length: order.quantity ?? 1 }, (_, i) =>
           normalizeKizInput(kiz_codes[i] ?? '').slice(0, KIZ_MAX_LENGTH),
         );
@@ -140,7 +145,7 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
     return () => {
       cancelled = true;
     };
-  }, [order?.id, isKizRequired, isCompleted]);
+  }, [order?.id, isKizRequired, isCompleted, autoKizAutofill, kizManuallyEdited]);
 
   // Фокус на первое поле КИЗ при открытии модалки (после рендера полей)
   useEffect(() => {
@@ -424,6 +429,7 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
                   onChange={(e) => {
                     const next = [...kizCodes];
                     next[i] = normalizeKizInput(e.target.value).slice(0, KIZ_MAX_LENGTH);
+                    setKizManuallyEdited(true);
                     setKizCodes(next);
                   }}
                   fullWidth

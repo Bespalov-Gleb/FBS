@@ -93,6 +93,7 @@ export interface PrintSettings {
   label_format?: '58mm' | '80mm';
   auto_print_on_click?: boolean;
   auto_print_kiz_duplicate?: boolean;
+  auto_kiz_autofill?: boolean;
   printer_dpi?: number;  // 203 или 300 — DPI принтера
   /** as_is_fit — этикетки от маркетплейсов без обработки, агенту fit; standard_58x40_noscale — лист 58×40, noscale */
   label_print_mode?: 'as_is_fit' | 'standard_58x40_noscale';

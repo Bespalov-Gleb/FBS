@@ -45,6 +45,7 @@ class PrintSettingsResponse(BaseModel):
     label_template: Optional[str] = None
     auto_print_on_click: Optional[bool] = None
     auto_print_kiz_duplicate: Optional[bool] = None
+    auto_kiz_autofill: Optional[bool] = None
     printer_dpi: Optional[int] = None  # 203 или 300 — DPI принтера
     print_scale: Optional[str] = None  # fit | shrink | noscale — для SumatraPDF
     label_print_mode: Optional[str] = None  # as_is_fit | standard_58x40_noscale — путь печати этикеток
@@ -62,6 +63,7 @@ class PrintSettingsUpdate(BaseModel):
     label_template: Optional[str] = None
     auto_print_on_click: Optional[bool] = None
     auto_print_kiz_duplicate: Optional[bool] = None
+    auto_kiz_autofill: Optional[bool] = None
     printer_dpi: Optional[int] = None  # 203 или 300
     print_scale: Optional[str] = None  # fit | shrink | noscale
     label_print_mode: Optional[str] = None  # as_is_fit | standard_58x40_noscale
@@ -113,6 +115,7 @@ def get_print_settings(
     ).first()
     if not ps:
         return PrintSettingsResponse(
+            auto_kiz_autofill=True,
             printer_dpi=203,
             print_scale="fit",
             label_print_mode="standard_58x40_noscale",
@@ -128,6 +131,7 @@ def get_print_settings(
         label_template=ps.label_template,
         auto_print_on_click=ps.auto_print_on_click == "true" if ps.auto_print_on_click else None,
         auto_print_kiz_duplicate=ps.auto_print_kiz_duplicate == "true" if ps.auto_print_kiz_duplicate else None,
+        auto_kiz_autofill=ps.auto_kiz_autofill == "true" if ps.auto_kiz_autofill else None,
         printer_dpi=ps.printer_dpi or 203,
         print_scale=ps.print_scale or "fit",
         label_print_mode=ps.label_print_mode or "standard_58x40_noscale",
@@ -163,6 +167,8 @@ def update_print_settings(
         ps.auto_print_on_click = "true" if data.auto_print_on_click else "false"
     if data.auto_print_kiz_duplicate is not None:
         ps.auto_print_kiz_duplicate = "true" if data.auto_print_kiz_duplicate else "false"
+    if data.auto_kiz_autofill is not None:
+        ps.auto_kiz_autofill = "true" if data.auto_kiz_autofill else "false"
     if data.ozon_labels is not None:
         if data.ozon_labels.width_mm is not None:
             ps.ozon_width_mm = max(40, min(data.ozon_labels.width_mm, 120))
@@ -207,6 +213,7 @@ def update_print_settings(
         label_template=ps.label_template,
         auto_print_on_click=ps.auto_print_on_click == "true" if ps.auto_print_on_click else None,
         auto_print_kiz_duplicate=ps.auto_print_kiz_duplicate == "true" if ps.auto_print_kiz_duplicate else None,
+        auto_kiz_autofill=ps.auto_kiz_autofill == "true" if ps.auto_kiz_autofill else None,
         printer_dpi=ps.printer_dpi or 203,
         print_scale=ps.print_scale or "fit",
         label_print_mode=ps.label_print_mode or "standard_58x40_noscale",

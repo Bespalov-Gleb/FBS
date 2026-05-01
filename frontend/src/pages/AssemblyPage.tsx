@@ -396,6 +396,7 @@ export default function AssemblyPage() {
         order={selectedOrder}
         marketplaces={marketplaces}
         autoPrintKizDuplicate={printSettings?.auto_print_kiz_duplicate !== false}
+        autoKizAutofill={printSettings?.auto_kiz_autofill !== false}
         labelFormat={printSettings?.label_format}
         labelPrintMode={printSettings?.label_print_mode}
         agentAvailable={agentAvailable}

@@ -12,6 +12,7 @@ def test_get_print_settings_empty(
     assert response.status_code == 200
     data = response.json()
     assert data.get("default_printer") is None or data.get("default_printer") == ""
+    assert data.get("auto_kiz_autofill") is True
 
 
 def test_update_print_settings(client: TestClient, packer_headers: dict) -> None:
@@ -22,12 +23,14 @@ def test_update_print_settings(client: TestClient, packer_headers: dict) -> None
         json={
             "default_printer": "Zebra",
             "auto_print_on_click": True,
+            "auto_kiz_autofill": False,
         },
     )
     assert response.status_code == 200
     data = response.json()
     assert data.get("default_printer") == "Zebra"
     assert data.get("auto_print_on_click") is True
+    assert data.get("auto_kiz_autofill") is False
 
 
 def test_get_test_label(client: TestClient, packer_headers: dict) -> None:
