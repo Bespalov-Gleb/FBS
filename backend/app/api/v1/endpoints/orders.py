@@ -1859,6 +1859,13 @@ async def complete_order(
                 400,
                 detail=f"Нужен КИЗ для каждого товара: введите {required_count} код(ов) маркировки.",
             )
+        if mp.type == MarketplaceType.WILDBERRIES and kiz_list:
+            for kiz in kiz_list:
+                if len(_normalize_kiz_for_label(kiz)) < 31:
+                    raise HTTPException(
+                        400,
+                        detail="Для WB код КИЗ должен содержать не менее 31 символов.",
+                    )
     try:
         ok = await OrderCompleteService.complete_order(
             order, current_user.id, kiz_list, db,

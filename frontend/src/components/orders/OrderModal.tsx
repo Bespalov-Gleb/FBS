@@ -76,6 +76,7 @@ interface OrderModalProps {
 
 // Полный КИЗ нужен для WB API и корректного DataMatrix; 31 символ — только человекочитаемая часть.
 const KIZ_MAX_LENGTH = 255;
+const KIZ_WB_MIN_LENGTH = 31;
 
 function normalizeKizInput(raw: string): string {
   let s = (raw || '').replace(/[\r\n\t]/g, '').trim();
@@ -271,6 +272,14 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
   const handleComplete = async () => {
     const trimmed = kizCodes.map((k) => normalizeKizInput(k).slice(0, KIZ_MAX_LENGTH)).filter(Boolean);
     setError(null);
+    if (
+      order.marketplace_type === 'wildberries'
+      && isKizRequired
+      && trimmed.some((k) => k.length < KIZ_WB_MIN_LENGTH)
+    ) {
+      setError('Для WB код КИЗ должен содержать не менее 31 символов.');
+      return;
+    }
     setCompleting(true);
     try {
       const payload = isKizRequired
