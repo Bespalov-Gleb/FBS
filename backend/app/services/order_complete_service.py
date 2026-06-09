@@ -33,15 +33,8 @@ def _normalize_kiz(raw: str) -> str:
 
 
 def _kiz_31_for_wb(raw: str) -> str:
-    """
-    Укороченный КИЗ (31) для WB meta/sgtin:
-    - GS (0x1D) или '>' считаем разделителем между базовой частью и хвостом 91/92
-    - берём часть до разделителя, максимум 31 символ.
-    """
-    s = _normalize_kiz(raw).replace("\x1d", ">")
-    if ">" in s:
-        s = s.split(">", 1)[0]
-    return s[:31].strip()
+    """Укороченный КИЗ (31) для WB meta/sgtin — первые 31 символа нормализованного кода."""
+    return _normalize_kiz(raw)[:31]
 
 
 def _add_to_scanned_kiz(db: Session, user_id: int, kiz_code: str, order: Order) -> None:
