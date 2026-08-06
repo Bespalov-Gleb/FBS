@@ -7,6 +7,10 @@ import {
   Card,
   CardContent,
   Chip,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   FormControl,
   InputLabel,
   ListItemText,
@@ -29,10 +33,14 @@ import Download from '@mui/icons-material/Download';
 import UploadFile from '@mui/icons-material/UploadFile';
 import DeleteSweep from '@mui/icons-material/DeleteSweep';
 import DeleteForever from '@mui/icons-material/DeleteForever';
+import LocalPrintshop from '@mui/icons-material/LocalPrintshop';
 import { marketplacesApi } from '../api/marketplaces';
 import { kizGroupsApi, type KizGroup, type KizGroupPayload } from '../api/kizGroups';
+import { isPrintAgentAvailable, printViaAgent } from '../api/printAgent';
+import { printSettingsApi } from '../api/printSettings';
 import { useSelector } from 'react-redux';
 import type { RootState } from '../store';
+import axios from 'axios';
 
 type Notice = { text: string; severity: 'success' | 'error' };
 
@@ -63,6 +71,8 @@ export default function KizGroupsPage() {
   const [notice, setNotice] = useState<Notice | null>(null);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [uploadingGroupId, setUploadingGroupId] = useState<number | null>(null);
+  const [printGroup, setPrintGroup] = useState<KizGroup | null>(null);
+  const [printCount, setPrintCount] = useState('100');
 
   const { data: groups = [] } = useQuery({
     queryKey: ['kiz-groups'],
@@ -75,6 +85,10 @@ export default function KizGroupsPage() {
   const { data: products = [] } = useQuery({
     queryKey: ['kiz-products', search],
     queryFn: () => kizGroupsApi.listProducts(search),
+  });
+  const { data: printSettings } = useQuery({
+    queryKey: ['print-settings'],
+    queryFn: () => printSettingsApi.get(),
   });
 
   const groupOptions = useMemo(
@@ -192,6 +206,51 @@ export default function KizGroupsPage() {
     },
     onError: (error: unknown) => {
       setNotice({ text: error instanceof Error ? error.message : 'Ошибка импорта соответствий.', severity: 'error' });
+    },
+  });
+
+  const printFromGroupMutation = useMutation({
+    mutationFn: async ({ groupId, count }: { groupId: number; count: number }) => {
+      const agentOk = await isPrintAgentAvailable();
+      if (!agentOk) {
+        throw new Error('Print Agent недоступен. Запустите FBS Print Agent и повторите.');
+      }
+      const blob = await kizGroupsApi.printFromGroup(groupId, count);
+      const ok = await printViaAgent(
+        blob,
+        printSettings?.default_printer || undefined,
+        'noscale',
+        'kiz',
+        600_000,
+      );
+      if (!ok) {
+        throw new Error('Не удалось отправить PDF на принтер через Print Agent.');
+      }
+      return count;
+    },
+    onSuccess: (count) => {
+      setNotice({
+        text: `Отправлено на печать: ${count} КИЗ. Коды списаны из остатка.`,
+        severity: 'success',
+      });
+      setPrintGroup(null);
+      queryClient.invalidateQueries({ queryKey: ['kiz-groups'] });
+    },
+    onError: async (error: unknown) => {
+      let message = 'Ошибка печати КИЗ.';
+      if (axios.isAxiosError(error) && error.response?.data instanceof Blob) {
+        try {
+          const text = await error.response.data.text();
+          const parsed = JSON.parse(text) as { detail?: string };
+          if (parsed.detail) message = parsed.detail;
+        } catch {
+          /* leave default */
+        }
+      } else if (error instanceof Error && error.message) {
+        message = error.message;
+      }
+      setNotice({ text: message, severity: 'error' });
+      queryClient.invalidateQueries({ queryKey: ['kiz-groups'] });
     },
   });
 
@@ -472,8 +531,19 @@ export default function KizGroupsPage() {
                   <TableCell>{g.used_count}</TableCell>
                   <TableCell>{g.parser_errors_count}</TableCell>
                   <TableCell align="right">
-                    <Stack direction="row" spacing={1} justifyContent="flex-end">
+                    <Stack direction="row" spacing={1} justifyContent="flex-end" flexWrap="wrap">
                       <Button size="small" onClick={() => fillFormFromGroup(g)}>Редактировать</Button>
+                      <Button
+                        size="small"
+                        startIcon={<LocalPrintshop />}
+                        onClick={() => {
+                          setPrintGroup(g);
+                          setPrintCount(String(Math.min(100, Math.max(1, g.free_count || 1))));
+                        }}
+                        disabled={g.free_count <= 0 || printFromGroupMutation.isPending || uploadingGroupId === g.id}
+                      >
+                        Печать
+                      </Button>
                       <Button component="label" size="small" startIcon={<UploadFile />}>
                         PDF
                         <input
@@ -553,6 +623,7 @@ export default function KizGroupsPage() {
               <TableRow>
                 <TableCell>Магазин</TableCell>
                 <TableCell>Артикул</TableCell>
+                <TableCell>Цвет</TableCell>
                 <TableCell>Размер</TableCell>
                 <TableCell>Товар</TableCell>
                 <TableCell>Группа</TableCell>
@@ -560,9 +631,10 @@ export default function KizGroupsPage() {
             </TableHead>
             <TableBody>
               {products.map((row) => (
-                <TableRow key={`${row.marketplace_id}-${row.article}-${row.size}`}>
+                <TableRow key={`${row.marketplace_id}-${row.article}-${row.color ?? ''}-${row.size}`}>
                   <TableCell>{row.marketplace_name}</TableCell>
                   <TableCell>{row.article}</TableCell>
+                  <TableCell>{row.color || '—'}</TableCell>
                   <TableCell>{row.size || '—'}</TableCell>
                   <TableCell>{row.product_name}</TableCell>
                   <TableCell sx={{ minWidth: 240 }}>
@@ -603,6 +675,72 @@ export default function KizGroupsPage() {
           {notice?.text}
         </Alert>
       </Snackbar>
+
+      <Dialog
+        open={!!printGroup}
+        onClose={() => {
+          if (!printFromGroupMutation.isPending) setPrintGroup(null);
+        }}
+        fullWidth
+        maxWidth="xs"
+      >
+        <DialogTitle>Печать КИЗ из группы</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Группа «{printGroup?.name}». Доступно: {printGroup?.free_count ?? 0}.
+            Коды спишутся сразу при отправке на принтер.
+          </Typography>
+          <TextField
+            label="Количество"
+            type="number"
+            value={printCount}
+            onChange={(e) => setPrintCount(e.target.value)}
+            fullWidth
+            inputProps={{ min: 1, step: 1 }}
+            disabled={printFromGroupMutation.isPending}
+            autoFocus
+          />
+          {printFromGroupMutation.isPending && (
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 2 }}>
+              <CircularProgress size={18} />
+              <Typography variant="caption" color="text.secondary">
+                Формируем этикетки и отправляем на принтер...
+              </Typography>
+            </Box>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button
+            onClick={() => setPrintGroup(null)}
+            disabled={printFromGroupMutation.isPending}
+          >
+            Отмена
+          </Button>
+          <Button
+            variant="contained"
+            startIcon={<LocalPrintshop />}
+            disabled={printFromGroupMutation.isPending}
+            onClick={() => {
+              if (!printGroup) return;
+              const count = Number.parseInt(printCount, 10);
+              if (!Number.isFinite(count) || count < 1) {
+                setNotice({ text: 'Укажите количество больше 0.', severity: 'error' });
+                return;
+              }
+              if (count > (printGroup.free_count || 0)) {
+                setNotice({
+                  text: `Недостаточно КИЗ. Доступно: ${printGroup.free_count}.`,
+                  severity: 'error',
+                });
+                return;
+              }
+              printFromGroupMutation.mutate({ groupId: printGroup.id, count });
+            }}
+          >
+            Печать
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }

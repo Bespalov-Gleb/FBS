@@ -17,6 +17,7 @@ export type ProductMappingRow = {
   marketplace_id: number;
   marketplace_name: string;
   article: string;
+  color?: string;
   size: string;
   product_name: string;
   group_id: number | null;
@@ -111,6 +112,19 @@ export const kizGroupsApi = {
     const { data } = await apiClient.post('/kiz-groups/products/import', form, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
+    return data;
+  },
+
+  async printFromGroup(groupId: number, count: number): Promise<Blob> {
+    const { data } = await apiClient.post(
+      `/kiz-groups/${groupId}/print`,
+      { count },
+      {
+        responseType: 'blob',
+        // Генерация сотен этикеток может занять минуты
+        timeout: 600_000,
+      },
+    );
     return data;
   },
 };

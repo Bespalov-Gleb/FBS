@@ -50,12 +50,13 @@ export async function printViaAgent(
   printer?: string,
   printSettings?: 'noscale' | 'shrink' | 'fit',
   jobType?: 'barcode' | 'fbs' | 'kiz',
+  timeoutMs: number = PRINT_TIMEOUT_MS,
 ): Promise<boolean> {
   try {
     const base64 = await blobToBase64(blob);
     const mime = blob.type || 'application/pdf';
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), PRINT_TIMEOUT_MS);
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
     const body: Record<string, unknown> = { data: base64, printer: printer || undefined, mime };
     if (printSettings) body.print_settings = printSettings;
     if (jobType) body.job_type = jobType;

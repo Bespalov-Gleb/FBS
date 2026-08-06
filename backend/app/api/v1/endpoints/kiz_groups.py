@@ -19,10 +19,11 @@ from app.models.kiz_group import KizGroup, kiz_group_marketplaces
 from app.models.kiz_parser_error import KizParserError
 from app.models.kiz_pool_item import KizCodeStatus, KizPoolItem
 from app.models.kiz_product_mapping import KizProductMapping
-from app.models.marketplace import Marketplace
+from app.models.marketplace import Marketplace, MarketplaceType
 from app.models.order import Order
+from app.models.print_settings import PrintSettings
 from app.models.user import User
-from app.services.kiz_pool_service import import_kiz_codes_from_pdfs
+from app.services.kiz_pool_service import import_kiz_codes_from_pdfs, take_free_kiz_codes_for_manual_print
 
 router = APIRouter(prefix="/kiz-groups", tags=["KIZ Groups"])
 
@@ -56,10 +57,14 @@ class ProductGroupMappingUpsert(BaseModel):
     group_id: int
 
 
+class PrintFromGroupRequest(BaseModel):
+    count: int = Field(..., ge=1, description="Сколько КИЗ списать и распечатать")
+
+
 def _split_article_and_size(article: str | None) -> tuple[str, str]:
     """
-    Размер извлекаем из артикула по последнему '_' (например ABC123_XL).
-    Если шаблон не распознан, считаем, что размера нет.
+    Хвост артикула по последнему '_' (например ABC123_XL).
+    Если шаблон не распознан, считаем, что хвоста нет.
     """
     raw = (article or "").strip()
     if not raw:
@@ -72,6 +77,70 @@ def _split_article_and_size(article: str | None) -> tuple[str, str]:
     if not base or not size:
         return raw, ""
     return base, size
+
+
+def _is_wildberries(marketplace_type: MarketplaceType | str | None) -> bool:
+    if marketplace_type is None:
+        return False
+    if isinstance(marketplace_type, MarketplaceType):
+        return marketplace_type == MarketplaceType.WILDBERRIES
+    return str(marketplace_type).lower() == MarketplaceType.WILDBERRIES.value
+
+
+def _article_display_parts(
+    article: str | None,
+    *,
+    marketplace_type: MarketplaceType | str | None,
+    size_from_order: str | None,
+) -> tuple[str, str, str]:
+    """
+    (article_base, size, color) для таблицы привязки товаров.
+
+    WB: хвост артикула — цвет, размер — из extra_data.size (Content API / techSize).
+    Ozon и прочие: хвост артикула — размер, цвет пустой.
+    """
+    article_base, suffix = _split_article_and_size(article)
+    order_size = (size_from_order or "").strip()
+    if _is_wildberries(marketplace_type):
+        return article_base, order_size, suffix
+    return article_base, (order_size or suffix), ""
+
+
+def _find_product_mapping(
+    db: Session,
+    *,
+    user_id: int,
+    marketplace_id: int,
+    article: str,
+    size: str,
+    color: str = "",
+):
+    """Ищем маппинг по реальному размеру; для WB — фолбэк на старый маппинг по цвету в size."""
+    mapping = (
+        db.query(KizProductMapping, KizGroup.name)
+        .join(KizGroup, KizGroup.id == KizProductMapping.group_id)
+        .filter(
+            KizProductMapping.user_id == user_id,
+            KizProductMapping.marketplace_id == marketplace_id,
+            KizProductMapping.article == article,
+            KizProductMapping.size == size,
+        )
+        .first()
+    )
+    if mapping or not color or color == size:
+        return mapping
+    return (
+        db.query(KizProductMapping, KizGroup.name)
+        .join(KizGroup, KizGroup.id == KizProductMapping.group_id)
+        .filter(
+            KizProductMapping.user_id == user_id,
+            KizProductMapping.marketplace_id == marketplace_id,
+            KizProductMapping.article == article,
+            KizProductMapping.size == color,
+        )
+        .first()
+    )
+
 
 def _group_to_response(
     group: KizGroup,
@@ -320,6 +389,84 @@ async def upload_kiz_pdfs(
     }
 
 
+@router.post("/{group_id}/print")
+def print_kiz_from_group(
+    group_id: int,
+    payload: PrintFromGroupRequest,
+    db: Session = Depends(get_db),
+    current_user: User = CurrentAdminUser,
+):
+    """
+    Списать N свободных КИЗ из группы и вернуть multipage PDF этикеток для печати.
+    """
+    group = (
+        db.query(KizGroup)
+        .filter(KizGroup.id == group_id, KizGroup.user_id == current_user.id)
+        .first()
+    )
+    if not group:
+        raise HTTPException(status_code=404, detail="Группа не найдена.")
+
+    try:
+        codes = take_free_kiz_codes_for_manual_print(
+            db,
+            group=group,
+            count=payload.count,
+            used_by_user_id=current_user.id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    # Lazy import после списания-валидации: генерация DataMatrix / merge PDF.
+    from app.api.v1.endpoints.orders import (
+        _generate_kiz_label_pdf,
+        _kiz_31,
+        _normalize_kiz_for_label,
+        _rotate_pdf,
+    )
+    from pypdf import PdfReader, PdfWriter
+
+    ps = db.query(PrintSettings).filter(PrintSettings.user_id == current_user.id).first()
+    kiz_w = (ps.kiz_width_mm or 40) if ps else 40
+    kiz_h = (ps.kiz_height_mm or 35) if ps else 35
+    kiz_rot = (ps.kiz_rotate or 0) if ps else 0
+
+    writer = PdfWriter()
+    try:
+        for code in codes:
+            kiz = _normalize_kiz_for_label(code)
+            kiz_31 = _kiz_31(kiz)
+            if not kiz_31:
+                raise ValueError(f"Пустой КИЗ в пуле: {code!r}")
+            page_pdf = _generate_kiz_label_pdf(kiz, kiz_31, width_mm=kiz_w, height_mm=kiz_h)
+            if kiz_rot:
+                page_pdf = _rotate_pdf(page_pdf, kiz_rot)
+            reader = PdfReader(io.BytesIO(page_pdf))
+            for page in reader.pages:
+                writer.add_page(page)
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Не удалось сформировать этикетки КИЗ: {exc}",
+        ) from exc
+
+    db.commit()
+
+    buf = io.BytesIO()
+    writer.write(buf)
+    buf.seek(0)
+    safe_group = "".join(ch for ch in (group.name or "group")[:40] if ch.isalnum() or ch in "-_") or "group"
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'inline; filename="kiz-print-{safe_group}-{len(codes)}.pdf"',
+            "X-Printed-Count": str(len(codes)),
+        },
+    )
+
+
 @router.delete("/{group_id}/items")
 def clear_kiz_group_items(
     group_id: int,
@@ -428,17 +575,26 @@ def export_products_for_mapping(
     db: Session = Depends(get_db),
     current_user: User = CurrentAdminUser,
 ):
+    order_size_col = func.coalesce(Order.extra_data["size"].as_string(), "")
     products = (
         db.query(
             Order.marketplace_id,
             Marketplace.name.label("marketplace_name"),
+            Marketplace.type.label("marketplace_type"),
             Order.article,
             func.max(Order.product_name).label("product_name"),
+            order_size_col.label("order_size"),
         )
         .join(Marketplace, Marketplace.id == Order.marketplace_id)
         .filter(Marketplace.user_id == current_user.id)
-        .group_by(Order.marketplace_id, Marketplace.name, Order.article)
-        .order_by(Marketplace.name.asc(), Order.article.asc())
+        .group_by(
+            Order.marketplace_id,
+            Marketplace.name,
+            Marketplace.type,
+            Order.article,
+            order_size_col,
+        )
+        .order_by(Marketplace.name.asc(), Order.article.asc(), order_size_col.asc())
         .all()
     )
 
@@ -450,6 +606,7 @@ def export_products_for_mapping(
             "marketplace_id",
             "marketplace_name",
             "article",
+            "color",
             "size",
             "product_name",
             "group_id",
@@ -457,18 +614,24 @@ def export_products_for_mapping(
         ]
     )
 
+    seen_export: set[tuple[int, str, str, str]] = set()
     for row in products:
-        article_base, size = _split_article_and_size(row.article)
-        mapping = (
-            db.query(KizProductMapping, KizGroup.name)
-            .join(KizGroup, KizGroup.id == KizProductMapping.group_id)
-            .filter(
-                KizProductMapping.user_id == current_user.id,
-                KizProductMapping.marketplace_id == row.marketplace_id,
-                KizProductMapping.article == article_base,
-                KizProductMapping.size == size,
-            )
-            .first()
+        article_base, size, color = _article_display_parts(
+            row.article,
+            marketplace_type=row.marketplace_type,
+            size_from_order=row.order_size,
+        )
+        key = (row.marketplace_id, article_base, color, size)
+        if key in seen_export:
+            continue
+        seen_export.add(key)
+        mapping = _find_product_mapping(
+            db,
+            user_id=current_user.id,
+            marketplace_id=row.marketplace_id,
+            article=article_base,
+            size=size,
+            color=color,
         )
         group_id = mapping[0].group_id if mapping else ""
         group_name = mapping[1] if mapping else ""
@@ -477,6 +640,7 @@ def export_products_for_mapping(
                 row.marketplace_id,
                 row.marketplace_name,
                 article_base,
+                color,
                 size,
                 row.product_name or "",
                 group_id,
@@ -689,17 +853,26 @@ def list_products_for_mapping(
     db: Session = Depends(get_db),
     current_user: User = CurrentAdminUser,
 ):
+    order_size_col = func.coalesce(Order.extra_data["size"].as_string(), "")
     q = (
         db.query(
             Order.marketplace_id,
             Marketplace.name.label("marketplace_name"),
+            Marketplace.type.label("marketplace_type"),
             Order.article,
             func.max(Order.product_name).label("product_name"),
+            order_size_col.label("order_size"),
         )
         .join(Marketplace, Marketplace.id == Order.marketplace_id)
         .filter(Marketplace.user_id == current_user.id)
-        .group_by(Order.marketplace_id, Marketplace.name, Order.article)
-        .order_by(Marketplace.name.asc(), Order.article.asc())
+        .group_by(
+            Order.marketplace_id,
+            Marketplace.name,
+            Marketplace.type,
+            Order.article,
+            order_size_col,
+        )
+        .order_by(Marketplace.name.asc(), Order.article.asc(), order_size_col.asc())
     )
     if search.strip():
         term = f"%{search.strip()}%"
@@ -707,24 +880,31 @@ def list_products_for_mapping(
     rows = q.limit(limit).all()
 
     out = []
+    seen: set[tuple[int, str, str, str]] = set()
     for row in rows:
-        article_base, size = _split_article_and_size(row.article)
-        mapping = (
-            db.query(KizProductMapping, KizGroup.name)
-            .join(KizGroup, KizGroup.id == KizProductMapping.group_id)
-            .filter(
-                KizProductMapping.user_id == current_user.id,
-                KizProductMapping.marketplace_id == row.marketplace_id,
-                KizProductMapping.article == article_base,
-                KizProductMapping.size == size,
-            )
-            .first()
+        article_base, size, color = _article_display_parts(
+            row.article,
+            marketplace_type=row.marketplace_type,
+            size_from_order=row.order_size,
+        )
+        key = (row.marketplace_id, article_base, color, size)
+        if key in seen:
+            continue
+        seen.add(key)
+        mapping = _find_product_mapping(
+            db,
+            user_id=current_user.id,
+            marketplace_id=row.marketplace_id,
+            article=article_base,
+            size=size,
+            color=color,
         )
         out.append(
             {
                 "marketplace_id": row.marketplace_id,
                 "marketplace_name": row.marketplace_name,
                 "article": article_base,
+                "color": color,
                 "size": size,
                 "product_name": row.product_name or "",
                 "group_id": mapping[0].group_id if mapping else None,

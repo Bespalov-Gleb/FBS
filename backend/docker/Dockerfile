@@ -36,12 +36,15 @@ RUN poetry install --no-dev --no-interaction --no-ansi
 # Stage 2: Runtime
 FROM python:3.11-slim
 
-# Установка runtime зависимостей (libpq5, poppler для pdf2image — рендер Ozon FBS)
+# Установка runtime зависимостей:
+# libpq5 — PostgreSQL; poppler — pdf2image; ghostscript/zint — этикетки;
+# libdmtx0t64 — нативная lib для pylibdmtx (декодер DataMatrix при импорте PDF КИЗ).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
     poppler-utils \
     ghostscript \
     zint \
+    libdmtx0t64 \
     && rm -rf /var/lib/apt/lists/*
 
 # Создание пользователя для запуска приложения

@@ -7,8 +7,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterable
 
-from pdf2image import convert_from_bytes
-from pypdf import PdfReader, PdfWriter
 from sqlalchemy.orm import Session
 
 from app.models.kiz_group import KizGroup, kiz_group_marketplaces
@@ -285,10 +283,11 @@ def _extract_kiz_from_text(page_text: str | None) -> str | None:
 
 def _extract_kiz_from_datamatrix(page_pdf_bytes: bytes) -> str | None:
     try:
+        from pdf2image import convert_from_bytes
         from pylibdmtx.pylibdmtx import decode
     except Exception as exc:
         raise RuntimeError(
-            "Не удалось загрузить декодер DataMatrix (pylibdmtx)."
+            "Не удалось загрузить декодер DataMatrix (pylibdmtx/pdf2image)."
         ) from exc
 
     images = convert_from_bytes(
@@ -310,6 +309,8 @@ def _extract_kiz_from_datamatrix(page_pdf_bytes: bytes) -> str | None:
 
 
 def _page_to_pdf_bytes(page) -> bytes:
+    from pypdf import PdfWriter
+
     writer = PdfWriter()
     writer.add_page(page)
     buf = io.BytesIO()
@@ -324,6 +325,8 @@ def import_kiz_codes_from_pdfs(
     group: KizGroup,
     uploaded_files: Iterable[tuple[str, bytes]],
 ) -> UploadParseStats:
+    from pypdf import PdfReader
+
     stats = UploadParseStats()
 
     for filename, file_bytes in uploaded_files:
@@ -446,6 +449,48 @@ def suggest_kiz_codes_fifo_for_order(
             f"В группе '{group.name}' недостаточно КИЗ. Нужно: {required_count}, доступно: {available}."
         )
     return [item.code for item in pool_items]
+
+
+def take_free_kiz_codes_for_manual_print(
+    db: Session,
+    *,
+    group: KizGroup,
+    count: int,
+    used_by_user_id: int,
+) -> list[str]:
+    """
+    Списать N свободных КИЗ из группы (FIFO) под ручную печать.
+    used_order_id остаётся пустым — печать не привязана к заказу.
+    """
+    if count <= 0:
+        raise ValueError("Количество КИЗ должно быть больше 0.")
+
+    pool_items = (
+        db.query(KizPoolItem)
+        .filter(
+            KizPoolItem.group_id == group.id,
+            KizPoolItem.status == KizCodeStatus.FREE,
+        )
+        .order_by(KizPoolItem.id.asc())
+        .with_for_update(skip_locked=True)
+        .limit(count)
+        .all()
+    )
+    if len(pool_items) < count:
+        available = len(pool_items)
+        raise ValueError(
+            f"В группе '{group.name}' недостаточно КИЗ. Нужно: {count}, доступно: {available}."
+        )
+
+    now = datetime.utcnow()
+    result: list[str] = []
+    for item in pool_items:
+        item.status = KizCodeStatus.USED
+        item.used_at = now
+        item.used_order_id = None
+        item.used_by_user_id = used_by_user_id
+        result.append(item.code)
+    return result
 
 
 def mark_kiz_codes_used_for_order(

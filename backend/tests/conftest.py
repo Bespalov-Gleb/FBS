@@ -19,7 +19,18 @@ os.environ.setdefault("CELERY_RESULT_BACKEND", "redis://localhost:6379/2")
 from app.core.database import Base, engine, get_db
 from app.core.security import create_access_token, get_password_hash
 from app.main import app
-from app.models import audit_log, marketplace, order, print_settings, user, warehouse  # noqa: F401
+from app.models import (  # noqa: F401
+    audit_log,
+    kiz_group,
+    kiz_parser_error,
+    kiz_pool_item,
+    kiz_product_mapping,
+    marketplace,
+    order,
+    print_settings,
+    user,
+    warehouse,
+)
 from app.models.user import User, UserRole
 from app.repositories.user_repository import UserRepository
 
