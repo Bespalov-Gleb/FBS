@@ -85,6 +85,18 @@ def test_article_display_parts_ozon_keeps_size_in_suffix() -> None:
     assert color == ""
 
 
+def test_article_display_parts_ozon_color_from_markers() -> None:
+    base, size, color = _article_display_parts(
+        "cepi_cepi_white_L",
+        marketplace_type=MarketplaceType.OZON,
+        size_from_order=None,
+        color_markers=["manblack", "white", "black"],
+    )
+    assert color == "white"
+    assert size == "L"
+    assert base == "cepi_cepi"
+
+
 def test_article_display_parts_ozon_prefers_order_size() -> None:
     base, size, color = _article_display_parts(
         "SHIRT_XL",

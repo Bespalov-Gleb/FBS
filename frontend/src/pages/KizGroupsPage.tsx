@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Alert,
@@ -73,6 +73,7 @@ export default function KizGroupsPage() {
   const [uploadingGroupId, setUploadingGroupId] = useState<number | null>(null);
   const [printGroup, setPrintGroup] = useState<KizGroup | null>(null);
   const [printCount, setPrintCount] = useState('100');
+  const [colorMarkersText, setColorMarkersText] = useState('');
 
   const { data: groups = [] } = useQuery({
     queryKey: ['kiz-groups'],
@@ -90,11 +91,40 @@ export default function KizGroupsPage() {
     queryKey: ['print-settings'],
     queryFn: () => printSettingsApi.get(),
   });
+  const { data: colorMarkers = [] } = useQuery({
+    queryKey: ['kiz-color-markers'],
+    queryFn: () => kizGroupsApi.getColorMarkers(),
+  });
+
+  useEffect(() => {
+    setColorMarkersText(colorMarkers.join(', '));
+  }, [colorMarkers]);
 
   const groupOptions = useMemo(
     () => groups.map((g) => ({ id: g.id, name: g.name })),
     [groups],
   );
+
+  const saveColorMarkersMutation = useMutation({
+    mutationFn: async () => {
+      const markers = colorMarkersText
+        .split(/[,;\n]+/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      return kizGroupsApi.updateColorMarkers(markers);
+    },
+    onSuccess: () => {
+      setNotice({ text: 'Список цветов сохранён.', severity: 'success' });
+      queryClient.invalidateQueries({ queryKey: ['kiz-color-markers'] });
+      queryClient.invalidateQueries({ queryKey: ['kiz-products'] });
+    },
+    onError: (error: unknown) => {
+      setNotice({
+        text: error instanceof Error ? error.message : 'Не удалось сохранить цвета.',
+        severity: 'error',
+      });
+    },
+  });
 
   const saveGroupMutation = useMutation({
     mutationFn: async () => {
@@ -306,6 +336,38 @@ export default function KizGroupsPage() {
       <Typography variant="body2" color="text.secondary">
         Администратор настраивает группы, загружает PDF с КИЗ и связывает товары с группами.
       </Typography>
+
+      <Card>
+        <CardContent>
+          <Typography variant="h6" sx={{ mb: 1 }}>
+            Цвета в артикуле
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+            Подстроки для поиска цвета в артикуле (Ozon и fallback для WB). Через запятую, например:
+            white, black, manblack, beige. Сначала ищутся более длинные совпадения.
+          </Typography>
+          <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5} alignItems="flex-start">
+            <TextField
+              label="Список цветов"
+              value={colorMarkersText}
+              onChange={(e) => setColorMarkersText(e.target.value)}
+              fullWidth
+              multiline
+              minRows={2}
+              placeholder="white, black, manblack, beige"
+            />
+            <Button
+              variant="contained"
+              startIcon={<Save />}
+              onClick={() => saveColorMarkersMutation.mutate()}
+              disabled={saveColorMarkersMutation.isPending}
+              sx={{ whiteSpace: 'nowrap' }}
+            >
+              Сохранить цвета
+            </Button>
+          </Stack>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardContent>

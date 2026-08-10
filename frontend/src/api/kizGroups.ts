@@ -136,4 +136,16 @@ export const kizGroupsApi = {
       skipped: Number.isFinite(skipped) ? skipped : 0,
     };
   },
+
+  async getColorMarkers(): Promise<string[]> {
+    const { data } = await apiClient.get<{ color_markers: string[] }>('/kiz-groups/color-markers');
+    return data.color_markers ?? [];
+  },
+
+  async updateColorMarkers(colorMarkers: string[]): Promise<string[]> {
+    const { data } = await apiClient.put<{ color_markers: string[] }>('/kiz-groups/color-markers', {
+      color_markers: colorMarkers,
+    });
+    return data.color_markers ?? [];
+  },
 };

@@ -8,6 +8,7 @@ from app.models.kiz_group import KizGroup
 from app.models.kiz_parser_error import KizParserError
 from app.models.kiz_pool_item import KizCodeStatus, KizPoolItem
 from app.models.kiz_product_mapping import KizProductMapping
+from app.models.kiz_settings import KizSettings
 from app.models.marketplace import Marketplace, MarketplaceType
 from app.models.order import Order, OrderStatus
 from app.models.print_settings import PrintSettings
@@ -29,6 +30,7 @@ __all__ = [
     "KizPoolItem",
     "KizProductMapping",
     "KizParserError",
+    "KizSettings",
     "Order",
     "OrderStatus",
     "Warehouse",

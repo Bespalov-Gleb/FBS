@@ -19,6 +19,7 @@ from app.models.kiz_group import KizGroup, kiz_group_marketplaces
 from app.models.kiz_parser_error import KizParserError
 from app.models.kiz_pool_item import KizCodeStatus, KizPoolItem
 from app.models.kiz_product_mapping import KizProductMapping
+from app.models.kiz_settings import KizSettings
 from app.models.marketplace import Marketplace, MarketplaceType
 from app.models.order import Order
 from app.models.print_settings import PrintSettings
@@ -65,6 +66,66 @@ class PrintFromGroupRequest(BaseModel):
     count: int = Field(..., ge=1, description="Сколько КИЗ списать и распечатать")
 
 
+class ColorMarkersRequest(BaseModel):
+    color_markers: list[str] = Field(default_factory=list)
+
+
+class ColorMarkersResponse(BaseModel):
+    color_markers: list[str]
+
+
+DEFAULT_COLOR_MARKERS = [
+    "manblack",
+    "manwhite",
+    "girlblack",
+    "girlwhite",
+    "womanblack",
+    "womanwhite",
+    "black",
+    "white",
+    "beige",
+    "gray",
+    "grey",
+    "blue",
+    "red",
+    "green",
+    "pink",
+    "brown",
+    "yellow",
+    "orange",
+    "purple",
+    "navy",
+    "cream",
+    "khaki",
+]
+
+
+def _normalize_color_markers(raw: list[str] | None) -> list[str]:
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for item in raw or []:
+        marker = str(item or "").strip()
+        if not marker:
+            continue
+        key = marker.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(marker)
+    return cleaned
+
+
+def _get_or_create_kiz_settings(db: Session, user_id: int) -> KizSettings:
+    row = db.query(KizSettings).filter(KizSettings.user_id == user_id).first()
+    if row:
+        return row
+    row = KizSettings(user_id=user_id, color_markers=list(DEFAULT_COLOR_MARKERS))
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
 def _split_article_and_size(article: str | None) -> tuple[str, str]:
     """
     Хвост артикула по последнему '_' (например ABC123_XL).
@@ -109,23 +170,68 @@ def _normalize_color_token(raw: str | None) -> str:
     return s
 
 
+def _color_from_markers(article: str | None, markers: list[str] | None) -> str:
+    """Первая (самая длинная) подстрока цвета, найденная в артикуле."""
+    hay = (article or "").lower()
+    if not hay:
+        return ""
+    ordered = sorted(
+        _normalize_color_markers(markers),
+        key=lambda m: len(m),
+        reverse=True,
+    )
+    for marker in ordered:
+        if marker.lower() in hay:
+            return marker
+    return ""
+
+
+def _strip_color_from_article_base(article_base: str, color: str) -> str:
+    """Если база оканчивается на _color — убрать хвост для более чистого артикула."""
+    base = (article_base or "").strip()
+    c = (color or "").strip()
+    if not base or not c:
+        return base
+    suffix = f"_{c}"
+    if base.lower().endswith(suffix.lower()) and len(base) > len(suffix):
+        return base[: -len(suffix)].rstrip("_") or base
+    return base
+
+
 def _article_display_parts(
     article: str | None,
     *,
     marketplace_type: MarketplaceType | str | None,
     size_from_order: str | None,
+    color_markers: list[str] | None = None,
 ) -> tuple[str, str, str]:
     """
     (article_base, size, color) для таблицы привязки товаров.
 
-    WB: хвост артикула — цвет (без префикса пола), размер — из extra_data.size.
-    Ozon и прочие: хвост артикула — размер, цвет пустой (пока без эвристик).
+    WB: хвост артикула — цвет (без префикса пола), иначе поиск по color_markers;
+         размер — из extra_data.size.
+    Ozon: размер из order_size/хвоста; цвет — поиск color_markers в полном артикуле.
     """
-    article_base, suffix = _split_article_and_size(article)
+    raw = (article or "").strip()
+    article_base, suffix = _split_article_and_size(raw)
     order_size = (size_from_order or "").strip()
+    marker_color = _color_from_markers(raw, color_markers)
+
     if _is_wildberries(marketplace_type):
-        return article_base, order_size, _normalize_color_token(suffix)
-    return article_base, (order_size or suffix), ""
+        color = _normalize_color_token(suffix) or marker_color
+        if color:
+            article_base = _strip_color_from_article_base(article_base, color)
+            # хвост мог быть manblack, а color уже black — тоже срезать исходный suffix
+            if suffix and suffix.lower() != color.lower():
+                article_base = _strip_color_from_article_base(article_base, suffix)
+        return article_base, order_size, color
+
+    size = order_size or suffix
+    color = marker_color
+    if color:
+        # у Ozon цвет часто в середине/хвосте: cepi_cepi_white_L → base без white
+        article_base = _strip_color_from_article_base(article_base, color)
+    return article_base, size, color
 
 
 def _find_product_mapping(
@@ -235,6 +341,31 @@ def list_kiz_groups(
         )
         for g in groups
     ]
+
+
+@router.get("/color-markers", response_model=ColorMarkersResponse)
+def get_color_markers(
+    db: Session = Depends(get_db),
+    current_user: User = CurrentAdminUser,
+):
+    settings = _get_or_create_kiz_settings(db, current_user.id)
+    markers = _normalize_color_markers(settings.color_markers)
+    if not markers:
+        markers = list(DEFAULT_COLOR_MARKERS)
+    return ColorMarkersResponse(color_markers=markers)
+
+
+@router.put("/color-markers", response_model=ColorMarkersResponse)
+def update_color_markers(
+    payload: ColorMarkersRequest,
+    db: Session = Depends(get_db),
+    current_user: User = CurrentAdminUser,
+):
+    settings = _get_or_create_kiz_settings(db, current_user.id)
+    settings.color_markers = _normalize_color_markers(payload.color_markers)
+    db.commit()
+    db.refresh(settings)
+    return ColorMarkersResponse(color_markers=_normalize_color_markers(settings.color_markers))
 
 
 @router.post("", response_model=KizGroupResponse)
@@ -651,11 +782,15 @@ def export_products_for_mapping(
     )
 
     seen_export: set[tuple[int, str, str, str]] = set()
+    color_markers = _normalize_color_markers(
+        _get_or_create_kiz_settings(db, current_user.id).color_markers
+    ) or list(DEFAULT_COLOR_MARKERS)
     for row in products:
         article_base, size, color = _article_display_parts(
             row.article,
             marketplace_type=row.marketplace_type,
             size_from_order=row.order_size,
+            color_markers=color_markers,
         )
         key = (row.marketplace_id, article_base, color, size)
         if key in seen_export:
@@ -917,11 +1052,15 @@ def list_products_for_mapping(
 
     out = []
     seen: set[tuple[int, str, str, str]] = set()
+    color_markers = _normalize_color_markers(
+        _get_or_create_kiz_settings(db, current_user.id).color_markers
+    ) or list(DEFAULT_COLOR_MARKERS)
     for row in rows:
         article_base, size, color = _article_display_parts(
             row.article,
             marketplace_type=row.marketplace_type,
             size_from_order=row.order_size,
+            color_markers=color_markers,
         )
         key = (row.marketplace_id, article_base, color, size)
         if key in seen:

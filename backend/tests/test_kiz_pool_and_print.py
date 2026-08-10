@@ -374,3 +374,51 @@ def test_list_products_ozon_size_from_suffix_no_color(
     assert rows[0]["article"] == "SHIRT"
     assert rows[0]["size"] == "42"
     assert rows[0]["color"] == ""
+
+
+def test_list_products_ozon_color_from_settings_markers(
+    client: TestClient,
+    db_session: Session,
+    admin_user: User,
+    admin_headers: dict,
+) -> None:
+    mp = _make_ozon_marketplace(db_session, admin_user)
+    db_session.add(
+        Order(
+            marketplace_id=mp.id,
+            external_id="oz-2",
+            posting_number="post-2",
+            article="cepi_cepi_white_L",
+            product_name="Футболка",
+            quantity=1,
+            status=OrderStatus.AWAITING_PACKAGING,
+            extra_data={},
+        )
+    )
+    db_session.commit()
+
+    put = client.put(
+        "/api/v1/kiz-groups/color-markers",
+        headers=admin_headers,
+        json={"color_markers": ["white", "black"]},
+    )
+    assert put.status_code == 200, put.text
+
+    response = client.get("/api/v1/kiz-groups/products", headers=admin_headers)
+    assert response.status_code == 200, response.text
+    rows = response.json()
+    assert len(rows) == 1
+    assert rows[0]["color"] == "white"
+    assert rows[0]["size"] == "L"
+    assert rows[0]["article"] == "cepi_cepi"
+
+
+def test_color_markers_get_defaults(
+    client: TestClient,
+    admin_headers: dict,
+) -> None:
+    response = client.get("/api/v1/kiz-groups/color-markers", headers=admin_headers)
+    assert response.status_code == 200
+    markers = response.json()["color_markers"]
+    assert "white" in markers
+    assert "black" in markers

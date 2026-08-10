@@ -25,6 +25,7 @@ from app.models import (  # noqa: F401
     kiz_parser_error,
     kiz_pool_item,
     kiz_product_mapping,
+    kiz_settings,
     marketplace,
     order,
     print_settings,
