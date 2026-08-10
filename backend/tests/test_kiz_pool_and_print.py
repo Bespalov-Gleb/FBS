@@ -79,7 +79,7 @@ def test_take_free_kiz_codes_fifo_and_mark_used(
     )
     db_session.commit()
 
-    assert taken == ["CODE_A", "CODE_B"]
+    assert [item.code for item in taken] == ["CODE_A", "CODE_B"]
     items = (
         db_session.query(KizPoolItem)
         .filter(KizPoolItem.group_id == group.id)
@@ -167,6 +167,7 @@ def test_print_from_group_api_deducts_and_returns_pdf(
     assert response.status_code == 200, response.text
     assert response.headers.get("content-type", "").startswith("application/pdf")
     assert response.headers.get("X-Printed-Count") == "2"
+    assert response.headers.get("X-Skipped-Count") == "0"
     assert b"%PDF-1.4 merged-labels" in response.content
 
     db_session.expire_all()
@@ -188,6 +189,80 @@ def test_print_from_group_api_deducts_and_returns_pdf(
     )
     assert free_left == 1
     assert used == 2
+
+
+def test_print_from_group_skips_bad_codes_and_keeps_good(
+    client: TestClient,
+    db_session: Session,
+    admin_user: User,
+    admin_headers: dict,
+) -> None:
+    group = _make_group(db_session, admin_user, name="print-skip")
+    _add_free_codes(
+        db_session,
+        group.id,
+        [
+            "010460406000000021GOODCODE0000001",
+            "010460406000000021BADCODE00000002",
+            "010460406000000021GOODCODE0000003",
+        ],
+    )
+    db_session.commit()
+
+    fake_pypdf = types.ModuleType("pypdf")
+
+    class _FakeReader:
+        def __init__(self, *_a, **_k):
+            self.pages = [object()]
+
+    class _FakeWriter:
+        def add_page(self, _page):
+            return None
+
+        def write(self, buf):
+            buf.write(b"%PDF-1.4 partial")
+
+    fake_pypdf.PdfReader = _FakeReader
+    fake_pypdf.PdfWriter = _FakeWriter
+
+    def _gen(kiz, *_a, **_k):
+        if "BADCODE" in kiz:
+            raise ValueError("bwipp.GS1aiMissingCloseParen AIs must end with ')'")
+        return b"%PDF-1.4 ok"
+
+    with patch.dict(sys.modules, {"pypdf": fake_pypdf}), patch(
+        "app.api.v1.endpoints.orders._generate_kiz_label_pdf",
+        side_effect=_gen,
+    ), patch(
+        "app.api.v1.endpoints.orders._normalize_kiz_for_label",
+        side_effect=lambda x: x,
+    ), patch(
+        "app.api.v1.endpoints.orders._kiz_31",
+        side_effect=lambda x: (x or "")[:31],
+    ), patch(
+        "app.api.v1.endpoints.orders._rotate_pdf",
+        side_effect=lambda pdf, _rot: pdf,
+    ):
+        response = client.post(
+            f"/api/v1/kiz-groups/{group.id}/print",
+            headers=admin_headers,
+            json={"count": 3},
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.headers.get("X-Printed-Count") == "2"
+    assert response.headers.get("X-Skipped-Count") == "1"
+
+    db_session.expire_all()
+    items = (
+        db_session.query(KizPoolItem)
+        .filter(KizPoolItem.group_id == group.id)
+        .order_by(KizPoolItem.id.asc())
+        .all()
+    )
+    assert items[0].status == KizCodeStatus.USED
+    assert items[1].status == KizCodeStatus.FREE  # кривой вернули
+    assert items[2].status == KizCodeStatus.USED
 
 
 def test_print_from_group_api_not_enough(
@@ -265,7 +340,7 @@ def test_list_products_wb_splits_color_and_size(
     rows = response.json()
     by_article = {r["article"]: r for r in rows}
 
-    assert by_article["ALCOHOLICA"]["color"] == "manblack"
+    assert by_article["ALCOHOLICA"]["color"] == "black"
     assert by_article["ALCOHOLICA"]["size"] == "L"
     assert by_article["Always_relative"]["color"] == "white"
     assert by_article["Always_relative"]["size"] == "XL"

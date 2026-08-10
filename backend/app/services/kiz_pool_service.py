@@ -457,10 +457,11 @@ def take_free_kiz_codes_for_manual_print(
     group: KizGroup,
     count: int,
     used_by_user_id: int,
-) -> list[str]:
+) -> list[KizPoolItem]:
     """
     Списать N свободных КИЗ из группы (FIFO) под ручную печать.
     used_order_id остаётся пустым — печать не привязана к заказу.
+    Возвращает сами записи пула (чтобы при ошибке генерации этикетки вернуть код в FREE).
     """
     if count <= 0:
         raise ValueError("Количество КИЗ должно быть больше 0.")
@@ -483,14 +484,20 @@ def take_free_kiz_codes_for_manual_print(
         )
 
     now = datetime.utcnow()
-    result: list[str] = []
     for item in pool_items:
         item.status = KizCodeStatus.USED
         item.used_at = now
         item.used_order_id = None
         item.used_by_user_id = used_by_user_id
-        result.append(item.code)
-    return result
+    return pool_items
+
+
+def release_kiz_pool_item_to_free(item: KizPoolItem) -> None:
+    """Вернуть код в остаток (не удалось напечатать этикетку)."""
+    item.status = KizCodeStatus.FREE
+    item.used_at = None
+    item.used_order_id = None
+    item.used_by_user_id = None
 
 
 def mark_kiz_codes_used_for_order(

@@ -115,8 +115,11 @@ export const kizGroupsApi = {
     return data;
   },
 
-  async printFromGroup(groupId: number, count: number): Promise<Blob> {
-    const { data } = await apiClient.post(
+  async printFromGroup(
+    groupId: number,
+    count: number,
+  ): Promise<{ blob: Blob; printed: number; skipped: number }> {
+    const { data, headers } = await apiClient.post(
       `/kiz-groups/${groupId}/print`,
       { count },
       {
@@ -125,6 +128,12 @@ export const kizGroupsApi = {
         timeout: 600_000,
       },
     );
-    return data;
+    const printed = Number.parseInt(String(headers['x-printed-count'] ?? ''), 10);
+    const skipped = Number.parseInt(String(headers['x-skipped-count'] ?? ''), 10);
+    return {
+      blob: data,
+      printed: Number.isFinite(printed) ? printed : count,
+      skipped: Number.isFinite(skipped) ? skipped : 0,
+    };
   },
 };

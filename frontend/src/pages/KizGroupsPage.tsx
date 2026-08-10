@@ -215,7 +215,7 @@ export default function KizGroupsPage() {
       if (!agentOk) {
         throw new Error('Print Agent недоступен. Запустите FBS Print Agent и повторите.');
       }
-      const blob = await kizGroupsApi.printFromGroup(groupId, count);
+      const { blob, printed, skipped } = await kizGroupsApi.printFromGroup(groupId, count);
       const ok = await printViaAgent(
         blob,
         printSettings?.default_printer || undefined,
@@ -226,12 +226,15 @@ export default function KizGroupsPage() {
       if (!ok) {
         throw new Error('Не удалось отправить PDF на принтер через Print Agent.');
       }
-      return count;
+      return { printed, skipped, requested: count };
     },
-    onSuccess: (count) => {
+    onSuccess: ({ printed, skipped, requested }) => {
+      const skipPart = skipped > 0
+        ? ` Пропущено кривых: ${skipped} (вернулись в остаток).`
+        : '';
       setNotice({
-        text: `Отправлено на печать: ${count} КИЗ. Коды списаны из остатка.`,
-        severity: 'success',
+        text: `Отправлено на печать: ${printed} из ${requested} КИЗ.${skipPart}`,
+        severity: skipped > 0 ? 'success' : 'success',
       });
       setPrintGroup(null);
       queryClient.invalidateQueries({ queryKey: ['kiz-groups'] });

@@ -1351,12 +1351,19 @@ def _kiz_to_bwipp_gs1_datamatrix_string(raw: str) -> str:
         rest = tail[6:]
         if rest.startswith("92") and len(rest) >= 2:
             return f"(01){gtin}(21){serial}(91){key}(92){rest[2:]}"
-        return f"(01){gtin}(21){serial}(91){key}{rest}"
+        if not rest:
+            return f"(01){gtin}(21){serial}(91){key}"
+        # Хвост без явного AI 92 — всё равно оборачиваем, иначе BWIPP: GS1aiMissingCloseParen
+        return f"(01){gtin}(21){serial}(91){key}(92){rest}"
 
     if tail.startswith("93") and len(tail) >= 2:
         return f"(01){gtin}(21){serial}(93){tail[2:]}"
 
-    return f"(01){gtin}(21){serial}{tail}"
+    if tail.startswith("92") and len(tail) >= 2:
+        return f"(01){gtin}(21){serial}(92){tail[2:]}"
+
+    # Сырой хвост без AI ломает BWIPP — считаем его (92)
+    return f"(01){gtin}(21){serial}(92){tail}"
 
 
 def _generate_kiz_label_pdf(kiz_full: str, kiz_31: str, width_mm: int = 40, height_mm: int = 35) -> bytes:

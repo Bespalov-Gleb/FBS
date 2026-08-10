@@ -23,7 +23,11 @@ from app.models.marketplace import Marketplace, MarketplaceType
 from app.models.order import Order
 from app.models.print_settings import PrintSettings
 from app.models.user import User
-from app.services.kiz_pool_service import import_kiz_codes_from_pdfs, take_free_kiz_codes_for_manual_print
+from app.services.kiz_pool_service import (
+    import_kiz_codes_from_pdfs,
+    release_kiz_pool_item_to_free,
+    take_free_kiz_codes_for_manual_print,
+)
 
 router = APIRouter(prefix="/kiz-groups", tags=["KIZ Groups"])
 
@@ -87,6 +91,24 @@ def _is_wildberries(marketplace_type: MarketplaceType | str | None) -> bool:
     return str(marketplace_type).lower() == MarketplaceType.WILDBERRIES.value
 
 
+_GENDER_COLOR_PREFIXES = ("woman", "girl", "unisex", "male", "female", "man")
+
+
+def _normalize_color_token(raw: str | None) -> str:
+    """
+    Убрать пол из хвоста артикула WB: manblack → black, girlwhite → white.
+    Если после среза ничего не осталось — вернуть исходное значение.
+    """
+    s = (raw or "").strip()
+    if not s:
+        return ""
+    lower = s.lower()
+    for prefix in sorted(_GENDER_COLOR_PREFIXES, key=len, reverse=True):
+        if lower.startswith(prefix) and len(s) > len(prefix):
+            return s[len(prefix) :]
+    return s
+
+
 def _article_display_parts(
     article: str | None,
     *,
@@ -96,13 +118,13 @@ def _article_display_parts(
     """
     (article_base, size, color) для таблицы привязки товаров.
 
-    WB: хвост артикула — цвет, размер — из extra_data.size (Content API / techSize).
-    Ozon и прочие: хвост артикула — размер, цвет пустой.
+    WB: хвост артикула — цвет (без префикса пола), размер — из extra_data.size.
+    Ozon и прочие: хвост артикула — размер, цвет пустой (пока без эвристик).
     """
     article_base, suffix = _split_article_and_size(article)
     order_size = (size_from_order or "").strip()
     if _is_wildberries(marketplace_type):
-        return article_base, order_size, suffix
+        return article_base, order_size, _normalize_color_token(suffix)
     return article_base, (order_size or suffix), ""
 
 
@@ -398,6 +420,7 @@ def print_kiz_from_group(
 ):
     """
     Списать N свободных КИЗ из группы и вернуть multipage PDF этикеток для печати.
+    Кривые коды пропускаются и возвращаются в остаток; пачка не валится целиком.
     """
     group = (
         db.query(KizGroup)
@@ -408,7 +431,7 @@ def print_kiz_from_group(
         raise HTTPException(status_code=404, detail="Группа не найдена.")
 
     try:
-        codes = take_free_kiz_codes_for_manual_print(
+        pool_items = take_free_kiz_codes_for_manual_print(
             db,
             group=group,
             count=payload.count,
@@ -432,24 +455,33 @@ def print_kiz_from_group(
     kiz_rot = (ps.kiz_rotate or 0) if ps else 0
 
     writer = PdfWriter()
-    try:
-        for code in codes:
-            kiz = _normalize_kiz_for_label(code)
+    printed = 0
+    skipped_errors: list[str] = []
+
+    for item in pool_items:
+        try:
+            kiz = _normalize_kiz_for_label(item.code)
             kiz_31 = _kiz_31(kiz)
             if not kiz_31:
-                raise ValueError(f"Пустой КИЗ в пуле: {code!r}")
+                raise ValueError("пустой КИЗ после нормализации")
             page_pdf = _generate_kiz_label_pdf(kiz, kiz_31, width_mm=kiz_w, height_mm=kiz_h)
             if kiz_rot:
                 page_pdf = _rotate_pdf(page_pdf, kiz_rot)
             reader = PdfReader(io.BytesIO(page_pdf))
             for page in reader.pages:
                 writer.add_page(page)
-    except Exception as exc:
+            printed += 1
+        except Exception as exc:
+            release_kiz_pool_item_to_free(item)
+            preview = (item.code or "")[:24]
+            skipped_errors.append(f"{preview}… ({exc})")
+
+    if printed == 0:
         db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Не удалось сформировать этикетки КИЗ: {exc}",
-        ) from exc
+        detail = "Не удалось сформировать ни одной этикетки КИЗ."
+        if skipped_errors:
+            detail += " Примеры: " + "; ".join(skipped_errors[:3])
+        raise HTTPException(status_code=400, detail=detail)
 
     db.commit()
 
@@ -457,12 +489,16 @@ def print_kiz_from_group(
     writer.write(buf)
     buf.seek(0)
     safe_group = "".join(ch for ch in (group.name or "group")[:40] if ch.isalnum() or ch in "-_") or "group"
+    skipped = len(skipped_errors)
     return Response(
         content=buf.getvalue(),
         media_type="application/pdf",
         headers={
-            "Content-Disposition": f'inline; filename="kiz-print-{safe_group}-{len(codes)}.pdf"',
-            "X-Printed-Count": str(len(codes)),
+            "Content-Disposition": f'inline; filename="kiz-print-{safe_group}-{printed}.pdf"',
+            "X-Printed-Count": str(printed),
+            "X-Skipped-Count": str(skipped),
+            # CORS/axios: чтобы фронт мог читать кастомные заголовки
+            "Access-Control-Expose-Headers": "X-Printed-Count, X-Skipped-Count",
         },
     )
 

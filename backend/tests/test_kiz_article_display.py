@@ -44,8 +44,23 @@ def test_article_display_parts_wb_color_and_real_size() -> None:
         size_from_order="L",
     )
     assert base == "ALCOHOLICA"
-    assert color == "manblack"
+    assert color == "black"
     assert size == "L"
+
+
+def test_article_display_parts_wb_strips_girl_woman_prefixes() -> None:
+    _, _, color_girl = _article_display_parts(
+        "BDSM_girlblack",
+        marketplace_type=MarketplaceType.WILDBERRIES,
+        size_from_order="M",
+    )
+    _, _, color_woman = _article_display_parts(
+        "BLACK_SABATH_womanblack",
+        marketplace_type=MarketplaceType.WILDBERRIES,
+        size_from_order="L",
+    )
+    assert color_girl == "black"
+    assert color_woman == "black"
 
 
 def test_article_display_parts_wb_without_order_size() -> None:
