@@ -58,7 +58,8 @@ export default function PrintSettingsPage() {
   const [labelScaleFactor, setLabelScaleFactor] = useState(1.0);
   const [autoPrint, setAutoPrint] = useState(true);
   const [autoPrintKiz, setAutoPrintKiz] = useState(true);
-  const [autoKizAutofill, setAutoKizAutofill] = useState(true);
+  const [autoKizAutofillWb, setAutoKizAutofillWb] = useState(true);
+  const [autoKizAutofillOzon, setAutoKizAutofillOzon] = useState(true);
   const [agentAvailable, setAgentAvailable] = useState(false);
   const [agentPrinters, setAgentPrinters] = useState<string[]>([]);
   const [testPrinting, setTestPrinting] = useState(false);
@@ -88,7 +89,8 @@ export default function PrintSettingsPage() {
       setLabelScaleFactor(settings.label_scale_factor ?? 1.0);
       setAutoPrint(settings.auto_print_on_click !== false);
       setAutoPrintKiz(settings.auto_print_kiz_duplicate !== false);
-      setAutoKizAutofill(settings.auto_kiz_autofill !== false);
+      setAutoKizAutofillWb(settings.auto_kiz_autofill_wb !== false);
+      setAutoKizAutofillOzon(settings.auto_kiz_autofill_ozon !== false);
     }
   }, [settings]);
 
@@ -117,7 +119,8 @@ export default function PrintSettingsPage() {
         label_scale_factor: labelScaleFactor,
         auto_print_on_click: autoPrint,
         auto_print_kiz_duplicate: autoPrintKiz,
-        auto_kiz_autofill: autoKizAutofill,
+        auto_kiz_autofill_wb: autoKizAutofillWb,
+        auto_kiz_autofill_ozon: autoKizAutofillOzon,
       }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['print-settings'] }),
   });
@@ -362,8 +365,12 @@ export default function PrintSettingsPage() {
                 label="Автопечать дубля КИЗ после скана"
               />
               <FormControlLabel
-                control={<Switch checked={autoKizAutofill} onChange={(e) => setAutoKizAutofill(e.target.checked)} />}
-                label="Автоподстановка КИЗ в заказе"
+                control={<Switch checked={autoKizAutofillWb} onChange={(e) => setAutoKizAutofillWb(e.target.checked)} />}
+                label="Автоподстановка КИЗ — Wildberries"
+              />
+              <FormControlLabel
+                control={<Switch checked={autoKizAutofillOzon} onChange={(e) => setAutoKizAutofillOzon(e.target.checked)} />}
+                label="Автоподстановка КИЗ — Ozon"
               />
 
               <Divider />

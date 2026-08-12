@@ -21,7 +21,9 @@ export interface PrintSettingsUpdate {
   label_format?: string;
   auto_print_on_click?: boolean;
   auto_print_kiz_duplicate?: boolean;
-  auto_kiz_autofill?: boolean;
+  auto_kiz_autofill?: boolean;  // legacy: выставляет оба МП
+  auto_kiz_autofill_wb?: boolean;
+  auto_kiz_autofill_ozon?: boolean;
   printer_dpi?: number;  // 203 или 300
   label_print_mode?: 'as_is_fit' | 'standard_58x40_noscale';
   label_scale_factor?: number;  // 1.0–1.5

@@ -396,7 +396,13 @@ export default function AssemblyPage() {
         order={selectedOrder}
         marketplaces={marketplaces}
         autoPrintKizDuplicate={printSettings?.auto_print_kiz_duplicate !== false}
-        autoKizAutofill={printSettings?.auto_kiz_autofill !== false}
+        autoKizAutofill={
+          selectedOrder?.marketplace_type === 'wildberries'
+            ? printSettings?.auto_kiz_autofill_wb !== false
+            : selectedOrder?.marketplace_type === 'ozon'
+              ? printSettings?.auto_kiz_autofill_ozon !== false
+              : printSettings?.auto_kiz_autofill !== false
+        }
         labelFormat={printSettings?.label_format}
         labelPrintMode={printSettings?.label_print_mode}
         agentAvailable={agentAvailable}

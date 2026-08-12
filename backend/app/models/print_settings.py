@@ -28,7 +28,9 @@ class PrintSettings(BaseModel):
     label_template = Column(Text, nullable=True)  # HTML шаблон или JSON конфиг
     auto_print_on_click = Column(String(10), nullable=True)  # "true" | "false"
     auto_print_kiz_duplicate = Column(String(10), nullable=True)  # "true" | "false" — дубль КИЗ после скана
-    auto_kiz_autofill = Column(String(10), nullable=True)  # "true" | "false" — автоподстановка КИЗ в заказе
+    auto_kiz_autofill = Column(String(10), nullable=True)  # legacy: "true" | "false"
+    auto_kiz_autofill_wb = Column(String(10), nullable=True)  # "true" | "false" — автоподстановка КИЗ для WB
+    auto_kiz_autofill_ozon = Column(String(10), nullable=True)  # "true" | "false" — автоподстановка КИЗ для Ozon
 
     # Размеры и поворот ФБС этикеток
     ozon_width_mm = Column(Integer, nullable=True, default=58)

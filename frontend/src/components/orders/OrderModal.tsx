@@ -60,7 +60,7 @@ interface OrderModalProps {
   marketplaces: Marketplace[];
   /** Автопечать дубля КИЗ после скана (из диспетчера печати) */
   autoPrintKizDuplicate?: boolean;
-  /** Автоподстановка КИЗ в заказе (глобальная настройка) */
+  /** Автоподстановка КИЗ в заказе (по маркетплейсу заказа) */
   autoKizAutofill?: boolean;
   /** Формат этикетки 58/80 мм для WB */
   labelFormat?: '58mm' | '80mm';

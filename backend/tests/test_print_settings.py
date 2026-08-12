@@ -13,6 +13,8 @@ def test_get_print_settings_empty(
     data = response.json()
     assert data.get("default_printer") is None or data.get("default_printer") == ""
     assert data.get("auto_kiz_autofill") is True
+    assert data.get("auto_kiz_autofill_wb") is True
+    assert data.get("auto_kiz_autofill_ozon") is True
 
 
 def test_update_print_settings(client: TestClient, packer_headers: dict) -> None:
@@ -30,6 +32,41 @@ def test_update_print_settings(client: TestClient, packer_headers: dict) -> None
     data = response.json()
     assert data.get("default_printer") == "Zebra"
     assert data.get("auto_print_on_click") is True
+    assert data.get("auto_kiz_autofill") is False
+    assert data.get("auto_kiz_autofill_wb") is False
+    assert data.get("auto_kiz_autofill_ozon") is False
+
+
+def test_update_auto_kiz_autofill_per_marketplace(
+    client: TestClient, packer_headers: dict
+) -> None:
+    """Автоподстановка КИЗ включается отдельно для WB и Ozon."""
+    response = client.patch(
+        "/api/v1/print-settings",
+        headers=packer_headers,
+        json={
+            "auto_kiz_autofill_wb": True,
+            "auto_kiz_autofill_ozon": False,
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data.get("auto_kiz_autofill_wb") is True
+    assert data.get("auto_kiz_autofill_ozon") is False
+    assert data.get("auto_kiz_autofill") is True  # OR
+
+    response = client.patch(
+        "/api/v1/print-settings",
+        headers=packer_headers,
+        json={
+            "auto_kiz_autofill_wb": False,
+            "auto_kiz_autofill_ozon": False,
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data.get("auto_kiz_autofill_wb") is False
+    assert data.get("auto_kiz_autofill_ozon") is False
     assert data.get("auto_kiz_autofill") is False
 
 

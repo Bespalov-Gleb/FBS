@@ -51,15 +51,31 @@ def _add_to_scanned_kiz(db: Session, user_id: int, kiz_code: str, order: Order) 
     db.add(sk)
 
 
-def _is_auto_kiz_autofill_enabled(db: Session, user_id: int) -> bool:
+def _flag_true_default(value: str | None, *, legacy: str | None = None) -> bool:
+    """True по умолчанию; 'false' выключает. Если нового флага нет — смотрим legacy."""
+    if value is not None:
+        return value == "true"
+    if legacy is not None:
+        return legacy != "false"
+    return True
+
+
+def is_auto_kiz_autofill_enabled_for_order(db: Session, user_id: int, order: Order) -> bool:
     """
-    Глобальный флаг из print_settings.
-    True по умолчанию, если настройка еще не сохранена.
+    Автоподстановка КИЗ по маркетплейсу заказа (WB / Ozon).
+    По умолчанию включена; можно выключить отдельно для каждого МП.
     """
     ps = db.query(PrintSettings).filter(PrintSettings.user_id == user_id).first()
-    if not ps or ps.auto_kiz_autofill is None:
+    if not ps:
         return True
-    return ps.auto_kiz_autofill == "true"
+    mp = order.marketplace
+    if not mp:
+        return _flag_true_default(None, legacy=ps.auto_kiz_autofill)
+    if mp.type == MarketplaceType.WILDBERRIES:
+        return _flag_true_default(ps.auto_kiz_autofill_wb, legacy=ps.auto_kiz_autofill)
+    if mp.type == MarketplaceType.OZON:
+        return _flag_true_default(ps.auto_kiz_autofill_ozon, legacy=ps.auto_kiz_autofill)
+    return False
 
 
 class OrderCompleteService:
@@ -79,7 +95,7 @@ class OrderCompleteService:
         при ошибке API исключение, коммита нет.
         Ozon: только локально.
         """
-        auto_kiz_autofill_enabled = _is_auto_kiz_autofill_enabled(db, user_id)
+        auto_kiz_autofill_enabled = is_auto_kiz_autofill_enabled_for_order(db, user_id, order)
         kiz_list = [_normalize_kiz(k)[:KIZ_STORAGE_MAX] for k in kiz_codes if k and _normalize_kiz(k)]
         if (
             order.marketplace

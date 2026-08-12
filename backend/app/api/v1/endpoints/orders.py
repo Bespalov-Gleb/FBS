@@ -25,7 +25,10 @@ from app.models.user import User
 from app.repositories.order_repository import OrderRepository
 from app.schemas.order import OrderCompleteRequest, OrderProductItem, OrderResponse, OrdersListResponse
 from app.services.marketplace.wildberries import WildberriesClient
-from app.services.order_complete_service import OrderCompleteService
+from app.services.order_complete_service import (
+    OrderCompleteService,
+    is_auto_kiz_autofill_enabled_for_order,
+)
 from app.services.kiz_pool_service import suggest_kiz_codes_fifo_for_order
 from app.services.order_sync_guard import ManualSyncLockTimeout, SyncCooldownError
 from app.services.order_sync_service import OrderSyncService
@@ -1809,6 +1812,8 @@ def suggest_kiz_for_order(
     mp = order.marketplace
     if not mp or not mp.is_kiz_enabled:
         return {"kiz_codes": [], "reason": None}
+    if not is_auto_kiz_autofill_enabled_for_order(db, current_user.id, order):
+        return {"kiz_codes": [], "reason": "Автоподстановка КИЗ отключена для этого маркетплейса"}
     try:
         codes = suggest_kiz_codes_fifo_for_order(
             db,

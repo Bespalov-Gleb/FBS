@@ -45,7 +45,9 @@ class PrintSettingsResponse(BaseModel):
     label_template: Optional[str] = None
     auto_print_on_click: Optional[bool] = None
     auto_print_kiz_duplicate: Optional[bool] = None
-    auto_kiz_autofill: Optional[bool] = None
+    auto_kiz_autofill: Optional[bool] = None  # legacy: OR(wb, ozon)
+    auto_kiz_autofill_wb: Optional[bool] = None
+    auto_kiz_autofill_ozon: Optional[bool] = None
     printer_dpi: Optional[int] = None  # 203 или 300 — DPI принтера
     print_scale: Optional[str] = None  # fit | shrink | noscale — для SumatraPDF
     label_print_mode: Optional[str] = None  # as_is_fit | standard_58x40_noscale — путь печати этикеток
@@ -63,7 +65,9 @@ class PrintSettingsUpdate(BaseModel):
     label_template: Optional[str] = None
     auto_print_on_click: Optional[bool] = None
     auto_print_kiz_duplicate: Optional[bool] = None
-    auto_kiz_autofill: Optional[bool] = None
+    auto_kiz_autofill: Optional[bool] = None  # legacy: выставляет оба МП
+    auto_kiz_autofill_wb: Optional[bool] = None
+    auto_kiz_autofill_ozon: Optional[bool] = None
     printer_dpi: Optional[int] = None  # 203 или 300
     print_scale: Optional[str] = None  # fit | shrink | noscale
     label_print_mode: Optional[str] = None  # as_is_fit | standard_58x40_noscale
@@ -72,6 +76,24 @@ class PrintSettingsUpdate(BaseModel):
     wb_labels: Optional[WbLabelsSchema] = None
     kiz_labels: Optional[KizLabelsSchema] = None
     barcode_labels: Optional[BarcodeLabelsSchema] = None
+
+
+def _flag_true_default(value: str | None, *, legacy: str | None = None) -> bool:
+    """True по умолчанию; 'false' выключает. Если нового флага нет — смотрим legacy."""
+    if value is not None:
+        return value == "true"
+    if legacy is not None:
+        return legacy != "false"
+    return True
+
+
+def _autofill_flags_from_ps(ps: PrintSettings | None) -> tuple[bool, bool, bool]:
+    """(wb, ozon, legacy_or). Без записи в БД — оба включены."""
+    if not ps:
+        return True, True, True
+    wb = _flag_true_default(ps.auto_kiz_autofill_wb, legacy=ps.auto_kiz_autofill)
+    ozon = _flag_true_default(ps.auto_kiz_autofill_ozon, legacy=ps.auto_kiz_autofill)
+    return wb, ozon, wb or ozon
 
 
 def _ozon_labels_from_ps(ps: PrintSettings) -> dict:
@@ -116,6 +138,8 @@ def get_print_settings(
     if not ps:
         return PrintSettingsResponse(
             auto_kiz_autofill=True,
+            auto_kiz_autofill_wb=True,
+            auto_kiz_autofill_ozon=True,
             printer_dpi=203,
             print_scale="fit",
             label_print_mode="standard_58x40_noscale",
@@ -125,13 +149,16 @@ def get_print_settings(
             kiz_labels={"width_mm": 40, "height_mm": 35, "rotate": 0},
             barcode_labels={"rotate": 0},
         )
+    wb_on, ozon_on, any_on = _autofill_flags_from_ps(ps)
     return PrintSettingsResponse(
         default_printer=ps.default_printer,
         label_format=ps.label_format,
         label_template=ps.label_template,
         auto_print_on_click=ps.auto_print_on_click == "true" if ps.auto_print_on_click else None,
         auto_print_kiz_duplicate=ps.auto_print_kiz_duplicate == "true" if ps.auto_print_kiz_duplicate else None,
-        auto_kiz_autofill=ps.auto_kiz_autofill == "true" if ps.auto_kiz_autofill else None,
+        auto_kiz_autofill=any_on,
+        auto_kiz_autofill_wb=wb_on,
+        auto_kiz_autofill_ozon=ozon_on,
         printer_dpi=ps.printer_dpi or 203,
         print_scale=ps.print_scale or "fit",
         label_print_mode=ps.label_print_mode or "standard_58x40_noscale",
@@ -168,7 +195,27 @@ def update_print_settings(
     if data.auto_print_kiz_duplicate is not None:
         ps.auto_print_kiz_duplicate = "true" if data.auto_print_kiz_duplicate else "false"
     if data.auto_kiz_autofill is not None:
-        ps.auto_kiz_autofill = "true" if data.auto_kiz_autofill else "false"
+        # Legacy: один флаг выставляет оба маркетплейса (если их не передали явно).
+        legacy_v = "true" if data.auto_kiz_autofill else "false"
+        ps.auto_kiz_autofill = legacy_v
+        if data.auto_kiz_autofill_wb is None:
+            ps.auto_kiz_autofill_wb = legacy_v
+        if data.auto_kiz_autofill_ozon is None:
+            ps.auto_kiz_autofill_ozon = legacy_v
+    if data.auto_kiz_autofill_wb is not None:
+        ps.auto_kiz_autofill_wb = "true" if data.auto_kiz_autofill_wb else "false"
+    if data.auto_kiz_autofill_ozon is not None:
+        ps.auto_kiz_autofill_ozon = "true" if data.auto_kiz_autofill_ozon else "false"
+    if (
+        data.auto_kiz_autofill is not None
+        or data.auto_kiz_autofill_wb is not None
+        or data.auto_kiz_autofill_ozon is not None
+    ):
+        wb_on, ozon_on, any_on = _autofill_flags_from_ps(ps)
+        ps.auto_kiz_autofill = "true" if any_on else "false"
+        # Нормализуем per-MP строки после чтения legacy.
+        ps.auto_kiz_autofill_wb = "true" if wb_on else "false"
+        ps.auto_kiz_autofill_ozon = "true" if ozon_on else "false"
     if data.ozon_labels is not None:
         if data.ozon_labels.width_mm is not None:
             ps.ozon_width_mm = max(40, min(data.ozon_labels.width_mm, 120))
@@ -207,13 +254,16 @@ def update_print_settings(
         ps.label_scale_factor = max(1.0, min(v, 1.5))
     db.commit()
     db.refresh(ps)
+    wb_on, ozon_on, any_on = _autofill_flags_from_ps(ps)
     return PrintSettingsResponse(
         default_printer=ps.default_printer,
         label_format=ps.label_format,
         label_template=ps.label_template,
         auto_print_on_click=ps.auto_print_on_click == "true" if ps.auto_print_on_click else None,
         auto_print_kiz_duplicate=ps.auto_print_kiz_duplicate == "true" if ps.auto_print_kiz_duplicate else None,
-        auto_kiz_autofill=ps.auto_kiz_autofill == "true" if ps.auto_kiz_autofill else None,
+        auto_kiz_autofill=any_on,
+        auto_kiz_autofill_wb=wb_on,
+        auto_kiz_autofill_ozon=ozon_on,
         printer_dpi=ps.printer_dpi or 203,
         print_scale=ps.print_scale or "fit",
         label_print_mode=ps.label_print_mode or "standard_58x40_noscale",
