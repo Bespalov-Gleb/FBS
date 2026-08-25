@@ -673,17 +673,23 @@ class WildberriesClient(BaseMarketplaceClient):
         
         Args:
             order_id: ID сборочного задания
-            kiz_code: Код маркировки (Data Matrix)
+            kiz_code: Полный код маркировки Честного знака.
+                WB требует GS-разделители (ASCII 29 / \\u001D) — полный код с криптохвостом
+                или короткий формат, тоже с GS. Не передавать только первые 31 символа.
             
         Returns:
             bool: True если успешно
         """
+        # httpx/json сериализует \\x1d как \\u001d — так и требует WB.
         request_body = {
             "sgtins": [kiz_code]
         }
         
         logger.info(
-            f"Adding КИЗ code to WB order {order_id}",
+            "Adding КИЗ code to WB order %s (len=%s, has_gs=%s)",
+            order_id,
+            len(kiz_code or ""),
+            "\x1d" in (kiz_code or ""),
         )
         
         try:

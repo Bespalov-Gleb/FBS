@@ -4,6 +4,8 @@
 WB: при включённом КИЗ сначала отправка КИЗ в Wildberries API (meta/sgtin), затем БД.
 Ozon: только локально (как раньше).
 """
+import re
+
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import MarketplaceAPIException
@@ -18,6 +20,8 @@ from app.utils.logger import logger
 
 # Полный КИЗ (Честный ЗНАК / GS1) для API WB и хранения в БД; на этикетке текстом часто показывают 31 символ.
 KIZ_STORAGE_MAX = 255
+# Group Separator (ASCII 29) — обязателен для WB meta/sgtin (\u001D в JSON).
+_GS = "\x1d"
 
 
 def _normalize_kiz(raw: str) -> str:
@@ -32,9 +36,45 @@ def _normalize_kiz(raw: str) -> str:
     return s
 
 
-def _kiz_31_for_wb(raw: str) -> str:
-    """Укороченный КИЗ (31) для WB meta/sgtin — первые 31 символа нормализованного кода."""
-    return _normalize_kiz(raw)[:31]
+def _ensure_gs_in_kiz(s: str) -> str:
+    """
+    Гарантирует GS-разделители между AI (01/21 → 91 → 92).
+
+    WB отклоняет код без \\u001D (статус sgtinNoGS). Браузер/поле ввода часто
+    съедает невидимый GS — тогда остаётся слитная строка ...serial91xxxx92...
+    """
+    if not s or _GS in s:
+        return s
+
+    # Типичный ЧЗ: 01+GTIN14 + 21 + serial(13) + 91+key4 + 92+crypto
+    if s.startswith("01") and len(s) > 31 and s[16:18] == "21":
+        head, tail = s[:31], s[31:]
+        if tail.startswith("91") and len(tail) >= 6:
+            ai91, rest = tail[:6], tail[6:]
+            if not rest:
+                return f"{head}{_GS}{ai91}"
+            if rest.startswith("92") or rest.startswith("93"):
+                return f"{head}{_GS}{ai91}{_GS}{rest}"
+            return f"{head}{_GS}{ai91}{_GS}{rest}"
+
+    # Переменная длина серии (без уже вставленного GS)
+    m = re.match(r"^(01\d{14}21.+?)(91[A-Za-z0-9]{4})(92.+)$", s)
+    if m:
+        return f"{m.group(1)}{_GS}{m.group(2)}{_GS}{m.group(3)}"
+    m_short = re.match(r"^(01\d{14}21.+?)(91[A-Za-z0-9]{4})$", s)
+    if m_short:
+        return f"{m_short.group(1)}{_GS}{m_short.group(2)}"
+    return s
+
+
+def _prepare_kiz_for_wb(raw: str) -> str:
+    """
+    Полный КИЗ для WB PUT .../meta/sgtin.
+
+    Не обрезаем до 31: WB принимает полный код (с криптохвостом) или короткий,
+    но в обоих случаях нужны GS-разделители \\u001D.
+    """
+    return _ensure_gs_in_kiz(_normalize_kiz(raw)[:KIZ_STORAGE_MAX])
 
 
 def _add_to_scanned_kiz(db: Session, user_id: int, kiz_code: str, order: Order) -> None:
@@ -96,7 +136,11 @@ class OrderCompleteService:
         Ozon: только локально.
         """
         auto_kiz_autofill_enabled = is_auto_kiz_autofill_enabled_for_order(db, user_id, order)
-        kiz_list = [_normalize_kiz(k)[:KIZ_STORAGE_MAX] for k in kiz_codes if k and _normalize_kiz(k)]
+        kiz_list = [
+            _ensure_gs_in_kiz(_normalize_kiz(k)[:KIZ_STORAGE_MAX])
+            for k in kiz_codes
+            if k and _normalize_kiz(k)
+        ]
         if (
             order.marketplace
             and order.marketplace.is_kiz_enabled
@@ -141,14 +185,33 @@ class OrderCompleteService:
 
         if mp.type == MarketplaceType.WILDBERRIES:
             if mp.is_kiz_enabled and first_kiz:
-                wb_kiz = _kiz_31_for_wb(first_kiz)
+                wb_kiz = _prepare_kiz_for_wb(first_kiz)
                 if not wb_kiz:
                     raise MarketplaceAPIException(
                         message="WB: пустой КИЗ после нормализации",
                         marketplace="Wildberries",
-                        detail="Не удалось выделить корректный КИЗ (31 символ) из скана.",
+                        detail="Не удалось выделить корректный КИЗ из скана.",
                         status_code=400,
                     )
+                if _GS not in wb_kiz and len(wb_kiz) <= 31:
+                    raise MarketplaceAPIException(
+                        message="WB: в КИЗ нет GS-разделителя",
+                        marketplace="Wildberries",
+                        detail=(
+                            "Код слишком короткий (только 31 символ без криптохвоста/GS). "
+                            "Нужен полный КИЗ со скана DataMatrix (с разделителем GS и хвостом 91/92), "
+                            "а не укороченная подпись под кодом."
+                        ),
+                        status_code=400,
+                    )
+                logger.info(
+                    "WB KIZ prepared for sgtin",
+                    extra={
+                        "order_id": order.id,
+                        "kiz_len": len(wb_kiz),
+                        "has_gs": _GS in wb_kiz,
+                    },
+                )
                 ed = order.extra_data or {}
                 supplier = (ed.get("supplierStatus") or ed.get("supplier_status") or "").strip().lower()
                 if supplier != "confirm":
