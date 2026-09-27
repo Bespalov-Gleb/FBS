@@ -4,6 +4,7 @@
 import asyncio
 import os
 import random
+import time
 from datetime import datetime
 from typing import Literal
 
@@ -27,6 +28,56 @@ from app.services.order_sync_guard import (
 from app.services.warehouse_service import WarehouseService
 from app.utils.cache import cache_get, cache_set
 from app.utils.logger import logger
+
+
+def agent_dbg_bc5cf5(hypothesis_id: str, location: str, message: str, data: dict) -> None:
+    # #region agent log
+    try:
+        import json
+        import time
+        import urllib.request
+
+        payload = {
+            "sessionId": "bc5cf5",
+            "runId": "pre-fix",
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data,
+            "timestamp": int(time.time() * 1000),
+        }
+        line = json.dumps(payload, ensure_ascii=False) + "\n"
+        for path in (
+            r"c:\Users\ArdorPC\PycharmProjects\FBS\debug-bc5cf5.log",
+            "/app/app/debug-bc5cf5.log",
+            "/app/logs/debug-bc5cf5.log",
+        ):
+            try:
+                with open(path, "a", encoding="utf-8") as fh:
+                    fh.write(line)
+            except Exception:
+                pass
+        body = json.dumps(payload).encode()
+        for url in (
+            "http://127.0.0.1:7463/ingest/e2404570-1ea5-4d9f-ab98-10b1a5a56c41",
+            "http://host.docker.internal:7463/ingest/e2404570-1ea5-4d9f-ab98-10b1a5a56c41",
+        ):
+            try:
+                req = urllib.request.Request(
+                    url,
+                    data=body,
+                    headers={
+                        "Content-Type": "application/json",
+                        "X-Debug-Session-Id": "bc5cf5",
+                    },
+                )
+                urllib.request.urlopen(req, timeout=0.25)
+                break
+            except Exception:
+                pass
+    except Exception:
+        pass
+    # #endregion
 
 
 class OrderSyncService:
@@ -76,24 +127,35 @@ class OrderSyncService:
         if manual_priority:
             OrderSyncGuard.request_manual_priority(marketplace.id)
 
+        outcome = "unknown"
+        err_name = ""
+        synced_count: int | None = None
+        started = time.perf_counter()
         try:
             try:
                 lock_token = OrderSyncGuard.acquire_lock(marketplace.id, sync_source)
             except ManualSyncLockTimeout as e:
+                outcome = "lock_timeout"
+                err_name = type(e).__name__
                 logger.warning("Manual sync lock timeout marketplace=%s: %s", marketplace.id, e)
                 raise
             if lock_token is None:
+                outcome = "lock_busy"
                 logger.info("Skip auto sync for marketplace %s: lock is busy", marketplace.id)
                 return 0
 
             db.refresh(marketplace)
             OrderSyncService._assert_sync_interval(marketplace, source=sync_source)
-            return await OrderSyncService._sync_marketplace_orders_unlocked(
+            synced_count = await OrderSyncService._sync_marketplace_orders_unlocked(
                 marketplace,
                 db,
                 sync_source=sync_source,
             )
+            outcome = "ok"
+            return synced_count
         except AutoSyncCancelled as e:
+            outcome = "cancelled"
+            err_name = str(e)[:180]
             db.rollback()
             logger.info(
                 "Sync cancelled for marketplace %s (source=%s): %s",
@@ -102,7 +164,29 @@ class OrderSyncService:
                 e,
             )
             return 0
+        except Exception as e:
+            if outcome == "unknown":
+                outcome = "error"
+                err_name = f"{type(e).__name__}: {e}"[:180]
+            raise
         finally:
+            # #region agent log
+            agent_dbg_bc5cf5(
+                "ABD",
+                "order_sync_service.py:sync_marketplace_orders",
+                "marketplace sync finished",
+                {
+                    "mp": marketplace.id,
+                    "mp_type": getattr(getattr(marketplace, "type", None), "value", str(marketplace.type)),
+                    "source": sync_source,
+                    "outcome": outcome,
+                    "synced": synced_count,
+                    "err": err_name,
+                    "ms": int((time.perf_counter() - started) * 1000),
+                    "got_lock": bool(lock_token),
+                },
+            )
+            # #endregion
             OrderSyncGuard.release_lock(marketplace.id, lock_token)
             if manual_priority:
                 OrderSyncGuard.clear_manual_priority(marketplace.id)
@@ -527,7 +611,24 @@ class OrderSyncService:
                         nm_to_card[nm_id] = cached_card
                     else:
                         nm_ids_to_fetch.append(nm_id)
-                if wb_enrich_content and nm_ids_to_fetch:
+                # #region agent log
+                agent_dbg_bc5cf5(
+                    "D",
+                    "order_sync_service.py:wb_enrich",
+                    "wb content enrich plan",
+                    {
+                        "mp": marketplace.id,
+                        "confirm": len(orders_new),
+                        "nm_total": len(unique_nm_ids),
+                        "nm_fetch": len(nm_ids_to_fetch),
+                        "enrich": wb_enrich_content,
+                    },
+                )
+                # #endregion
+                # Ручной синк не ждёт Content API: 2с на каждый новый nm_id растягивает
+                # один магазин на минуты, nginx обрывает ответ, а повтор упирается в lock.
+                # Уже закэшированные карточки выше всё равно подставляются.
+                if wb_enrich_content and nm_ids_to_fetch and sync_source != "manual":
                     _WB_CONTENT_SLEEP = 2.0  # 1 req / 2s = 30 req/min на воркер
                     # Случайный сдвиг 0–4s, чтобы воркеры не шли в ногу
                     await asyncio.sleep(random.uniform(0, 4))
@@ -584,6 +685,14 @@ class OrderSyncService:
 
         OrderSyncService._check_auto_cancel(sync_source, marketplace.id)
         marketplace.update_sync_time()
+        # #region agent log
+        agent_dbg_bc5cf5(
+            "A",
+            "order_sync_service.py:commit",
+            "commit sync",
+            {"mp": marketplace.id, "count": count, "source": sync_source},
+        )
+        # #endregion
         db.commit()
         logger.info(
             "Synced %s orders for marketplace %s (source=%s)",

@@ -21,12 +21,14 @@ interface MarketplaceSettingsModalProps {
   marketplaceId: number;
   onClose: () => void;
   onSyncOrders: () => void;
+  ordersSyncing?: boolean;
 }
 
 export default function MarketplaceSettingsModal({
   marketplaceId,
   onClose,
   onSyncOrders,
+  ordersSyncing = false,
 }: MarketplaceSettingsModalProps) {
   const queryClient = useQueryClient();
   const [name, setName] = useState('');
@@ -160,8 +162,8 @@ export default function MarketplaceSettingsModal({
             >
               {testMutation.data?.success ? 'Подключение OK' : 'Тест подключения'}
             </Button>
-            <Button variant="outlined" onClick={onSyncOrders}>
-              Синхронизировать заказы
+            <Button variant="outlined" onClick={onSyncOrders} disabled={ordersSyncing}>
+              {ordersSyncing ? 'Синхронизация…' : 'Синхронизировать заказы'}
             </Button>
           </Box>
         )}

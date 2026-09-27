@@ -137,22 +137,33 @@ export default function AssemblyPage() {
       const totalMp = data.total_marketplaces ?? data.results?.length ?? 0;
       const cooldownCount = data.cooldown_count ?? data.results?.filter((r) => r.skipped === 'cooldown').length ?? 0;
       const lockBusyCount = data.lock_busy_count ?? data.results?.filter((r) => r.skipped === 'lock_busy').length ?? 0;
+      const errorCount = data.error_count ?? data.results?.filter((r) => r.skipped === 'error').length ?? 0;
+      const errorNotes = (data.results ?? [])
+        .map((r) => r.error)
+        .filter((text): text is string => Boolean(text));
       const syncedMp = data.synced_marketplaces ?? data.results?.filter((r) => (r.synced ?? 0) > 0).length ?? 0;
 
       if (totalMp === 0) {
         setSnackbar({ message: 'Синхронизация не запущена: нет доступных маркетплейсов.' });
         return;
       }
-      if (totalSynced > 0) {
+      if (totalSynced > 0 || syncedMp > 0) {
+        const errPart = errorNotes.length > 0
+          ? ` ${errorNotes.join(' ')}`
+          : errorCount > 0
+            ? ` Не синхронизировано магазинов: ${errorCount}.`
+            : '';
         setSnackbar({
-          message: `Синк завершен: +${totalSynced} заказов, магазинов с обновлениями: ${syncedMp}/${totalMp}.`,
+          message: `Синк завершен: +${totalSynced} заказов, магазинов с обновлениями: ${syncedMp}/${totalMp}.${errPart}`,
         });
         return;
       }
 
       const parts: string[] = ['Синк не дал новых заказов.'];
       if (cooldownCount > 0) parts.push(`cooldown: ${cooldownCount}`);
-      if (lockBusyCount > 0) parts.push(`lock_busy: ${lockBusyCount}`);
+      if (lockBusyCount > 0) parts.push(`уже выполняется: ${lockBusyCount}`);
+      if (errorNotes.length > 0) parts.push(errorNotes.join(' '));
+      else if (errorCount > 0) parts.push(`ошибка API: ${errorCount}`);
       setSnackbar({ message: parts.join(' ') });
     },
     onError: () => {

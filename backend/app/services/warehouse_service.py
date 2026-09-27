@@ -5,7 +5,6 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from app.core.exceptions import RateLimitException
 from app.core.security import decrypt_api_key
 from app.models.marketplace import Marketplace, MarketplaceType
 from app.repositories.warehouse_repository import WarehouseRepository
@@ -43,22 +42,34 @@ class WarehouseService:
                     extra={"marketplace_id": marketplace.id},
                 )
                 return 0
-            async with OzonClient(
-                api_key=api_key,
-                client_id=marketplace.client_id,
-            ) as client:
-                try:
+            try:
+                async with OzonClient(
+                    api_key=api_key,
+                    client_id=marketplace.client_id,
+                ) as client:
                     warehouses_data = await client.get_warehouses()
-                except RateLimitException:
-                    logger.warning(
-                        "Ozon: лимит запросов при получении складов — пропускаем обновление складов "
-                        "(заказы синхронизируются; склады в БД остаются от прошлого успешного синка)",
-                        extra={"marketplace_id": marketplace.id},
-                    )
-                    return 0
+            except Exception as e:
+                # Список складов не должен ронять синк заказов: Ozon часто отвечает 403/502,
+                # а middleware превращает это в ошибку всего HTTP-запроса.
+                logger.warning(
+                    "Пропуск обновления складов Ozon (%s). Заказы синхронизируются, "
+                    "склады в БД остаются от прошлого успешного синка.",
+                    e,
+                    extra={"marketplace_id": marketplace.id},
+                )
+                return 0
         elif marketplace.type == MarketplaceType.WILDBERRIES:
-            async with WildberriesClient(api_key=api_key) as client:
-                warehouses_data = await client.get_warehouses()
+            try:
+                async with WildberriesClient(api_key=api_key) as client:
+                    warehouses_data = await client.get_warehouses()
+            except Exception as e:
+                logger.warning(
+                    "Пропуск обновления складов WB (%s). Заказы синхронизируются, "
+                    "склады в БД остаются от прошлого успешного синка.",
+                    e,
+                    extra={"marketplace_id": marketplace.id},
+                )
+                return 0
         else:
             logger.warning(f"Unknown marketplace type: {marketplace.type}")
             return 0

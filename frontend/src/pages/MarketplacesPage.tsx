@@ -59,6 +59,7 @@ export default function MarketplacesPage() {
   const [settingsId, setSettingsId] = useState<number | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: number; name: string } | null>(null);
   const [snackbar, setSnackbar] = useState<{ message: string; severity: 'success' | 'error' } | null>(null);
+  const [ordersSyncing, setOrdersSyncing] = useState(false);
 
   const { data: marketplaces = [], isLoading, error, refetch } = useQuery({
     queryKey: ['marketplaces'],
@@ -191,10 +192,25 @@ export default function MarketplacesPage() {
           marketplaceId={settingsId}
           onClose={handleSettingsClose}
           onSyncOrders={() => {
-            ordersApi.syncMarketplace(settingsId).then(() => {
-              setSnackbar({ message: 'Заказы синхронизированы', severity: 'success' });
-            });
+            if (ordersSyncing) return;
+            setOrdersSyncing(true);
+            ordersApi.syncMarketplace(settingsId)
+              .then(() => {
+                setSnackbar({ message: 'Заказы синхронизированы', severity: 'success' });
+              })
+              .catch((error: unknown) => {
+                const status = (error as { response?: { status?: number } }).response?.status;
+                const detail = (error as { response?: { data?: { detail?: unknown } } }).response?.data?.detail;
+                const text = status === 409
+                  ? 'Этот магазин уже синхронизируется. Дождитесь окончания текущего запуска.'
+                  : typeof detail === 'string' && detail
+                    ? detail
+                    : 'Не удалось синхронизировать заказы';
+                setSnackbar({ message: text, severity: 'error' });
+              })
+              .finally(() => setOrdersSyncing(false));
           }}
+          ordersSyncing={ordersSyncing}
         />
       )}
 

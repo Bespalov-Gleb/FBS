@@ -56,8 +56,9 @@ export interface OrdersListResponse {
 export interface SyncAllResultItem {
   marketplace_id: number;
   synced: number;
-  skipped?: 'cooldown' | 'lock_busy' | string;
+  skipped?: 'cooldown' | 'lock_busy' | 'error' | string;
   seconds_left?: number;
+  error?: string;
 }
 
 export interface SyncAllResponse {
@@ -67,6 +68,7 @@ export interface SyncAllResponse {
   synced_marketplaces?: number;
   cooldown_count?: number;
   lock_busy_count?: number;
+  error_count?: number;
 }
 
 /** Сериализация params с массивами: marketplace_ids=1&marketplace_ids=2 для FastAPI */
@@ -129,15 +131,45 @@ export const ordersApi = {
   },
 
   syncAll: async (): Promise<SyncAllResponse> => {
-    const { data } = await apiClient.post<SyncAllResponse>('/orders/sync/all');
-    return data;
+    const started = Date.now();
+    // #region agent log
+    fetch('http://127.0.0.1:7463/ingest/e2404570-1ea5-4d9f-ab98-10b1a5a56c41',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'bc5cf5'},body:JSON.stringify({sessionId:'bc5cf5',runId:'pre-fix',hypothesisId:'A',location:'orders.ts:syncAll',message:'syncAll request start',data:{},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
+    try {
+      const { data, status } = await apiClient.post<SyncAllResponse>('/orders/sync/all');
+      // #region agent log
+      fetch('http://127.0.0.1:7463/ingest/e2404570-1ea5-4d9f-ab98-10b1a5a56c41',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'bc5cf5'},body:JSON.stringify({sessionId:'bc5cf5',runId:'pre-fix',hypothesisId:'A',location:'orders.ts:syncAll',message:'syncAll response',data:{status,ms:Date.now()-started,total_synced:data.total_synced,total_marketplaces:data.total_marketplaces,synced_marketplaces:data.synced_marketplaces,cooldown_count:data.cooldown_count,lock_busy_count:data.lock_busy_count,results:(data.results||[]).map((r)=>({mp:r.marketplace_id,synced:r.synced,skipped:r.skipped??null}))},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+      return data;
+    } catch (error: unknown) {
+      const err = error as { code?: string; message?: string; response?: { status?: number; data?: { detail?: unknown } } };
+      // #region agent log
+      fetch('http://127.0.0.1:7463/ingest/e2404570-1ea5-4d9f-ab98-10b1a5a56c41',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'bc5cf5'},body:JSON.stringify({sessionId:'bc5cf5',runId:'pre-fix',hypothesisId:'AE',location:'orders.ts:syncAll',message:'syncAll failed',data:{ms:Date.now()-started,code:err.code??null,status:err.response?.status??null,detail:typeof err.response?.data?.detail==='string'?err.response.data.detail:null,message:err.message??null},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+      throw error;
+    }
   },
 
   syncMarketplace: async (marketplaceId: number): Promise<{ synced: number }> => {
-    const { data } = await apiClient.post<{ synced: number }>(
-      `/orders/sync/marketplace/${marketplaceId}`,
-    );
-    return data;
+    const started = Date.now();
+    // #region agent log
+    fetch('http://127.0.0.1:7463/ingest/e2404570-1ea5-4d9f-ab98-10b1a5a56c41',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'bc5cf5'},body:JSON.stringify({sessionId:'bc5cf5',runId:'pre-fix',hypothesisId:'E',location:'orders.ts:syncMarketplace',message:'single sync request start',data:{mp:marketplaceId},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
+    try {
+      const { data, status } = await apiClient.post<{ synced: number }>(
+        `/orders/sync/marketplace/${marketplaceId}`,
+      );
+      // #region agent log
+      fetch('http://127.0.0.1:7463/ingest/e2404570-1ea5-4d9f-ab98-10b1a5a56c41',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'bc5cf5'},body:JSON.stringify({sessionId:'bc5cf5',runId:'pre-fix',hypothesisId:'E',location:'orders.ts:syncMarketplace',message:'single sync response',data:{mp:marketplaceId,status,ms:Date.now()-started,synced:data.synced},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+      return data;
+    } catch (error: unknown) {
+      const err = error as { code?: string; message?: string; response?: { status?: number; data?: { detail?: unknown } } };
+      // #region agent log
+      fetch('http://127.0.0.1:7463/ingest/e2404570-1ea5-4d9f-ab98-10b1a5a56c41',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'bc5cf5'},body:JSON.stringify({sessionId:'bc5cf5',runId:'pre-fix',hypothesisId:'BE',location:'orders.ts:syncMarketplace',message:'single sync failed',data:{mp:marketplaceId,ms:Date.now()-started,code:err.code??null,status:err.response?.status??null,detail:typeof err.response?.data?.detail==='string'?err.response.data.detail:null,message:err.message??null},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+      throw error;
+    }
   },
 
   getLabelUrl: (id: number, format = 'pdf'): string => {

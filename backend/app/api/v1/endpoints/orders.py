@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 import os
 import re
+import time
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -31,7 +32,7 @@ from app.services.order_complete_service import (
 )
 from app.services.kiz_pool_service import suggest_kiz_codes_fifo_for_order
 from app.services.order_sync_guard import ManualSyncLockTimeout, SyncCooldownError
-from app.services.order_sync_service import OrderSyncService
+from app.services.order_sync_service import OrderSyncService, agent_dbg_bc5cf5
 
 router = APIRouter(prefix="/orders", tags=["Orders"])
 
@@ -1694,6 +1695,18 @@ def _marketplace_for_order_sync(
     return mp
 
 
+def _marketplace_sync_error_text(exc: Exception, marketplace_name: str) -> str:
+    """Короткий текст для UI. Код 7 Ozon — истёкший ключ, не смена метода API."""
+    detail = getattr(exc, "detail", None)
+    blob = str(detail if detail is not None else exc).lower()
+    if "api-key has expired" in blob or "generate a new one" in blob:
+        return (
+            f"{marketplace_name}: ключ API Ozon истёк. "
+            "В кабинете продавца выпустите новый ключ и сохраните его в настройках магазина."
+        )
+    return f"{marketplace_name}: ошибка API, этот магазин пропущен."
+
+
 @router.post("/sync/marketplace/{marketplace_id}")
 async def sync_orders(
     marketplace_id: int,
@@ -1709,6 +1722,15 @@ async def sync_orders(
     Доступ: администратор (свои магазины) или упаковщик (магазины владельца по доступу).
     """
     marketplace = _marketplace_for_order_sync(marketplace_id, current_user, db)
+    started = time.perf_counter()
+    # #region agent log
+    agent_dbg_bc5cf5(
+        "E",
+        "orders.py:sync_marketplace",
+        "single sync start",
+        {"mp": marketplace_id},
+    )
+    # #endregion
     try:
         count = await OrderSyncService.sync_marketplace_orders(
             marketplace,
@@ -1721,10 +1743,49 @@ async def sync_orders(
             detail=f"Синхронизацию можно запускать не чаще 1 раза в час. Повторите через {e.seconds_left} сек.",
         ) from e
     except ManualSyncLockTimeout as e:
+        # #region agent log
+        agent_dbg_bc5cf5(
+            "B",
+            "orders.py:sync_marketplace",
+            "single sync lock timeout",
+            {"mp": marketplace_id, "ms": int((time.perf_counter() - started) * 1000)},
+        )
+        # #endregion
         raise HTTPException(
             status_code=409,
             detail="Сейчас уже идёт синхронизация этого маркетплейса. Повторите чуть позже.",
         ) from e
+    except Exception as e:
+        from app.core.exceptions import MarketplaceAPIException
+
+        # #region agent log
+        agent_dbg_bc5cf5(
+            "C",
+            "orders.py:sync_marketplace",
+            "single sync error",
+            {
+                "mp": marketplace_id,
+                "err": type(e).__name__,
+                "msg": str(e)[:240],
+                "ms": int((time.perf_counter() - started) * 1000),
+            },
+        )
+        # #endregion
+        if isinstance(e, MarketplaceAPIException):
+            db.rollback()
+            raise HTTPException(
+                status_code=400,
+                detail=_marketplace_sync_error_text(e, marketplace.name),
+            ) from e
+        raise
+    # #region agent log
+    agent_dbg_bc5cf5(
+        "E",
+        "orders.py:sync_marketplace",
+        "single sync ok",
+        {"mp": marketplace_id, "synced": count, "ms": int((time.perf_counter() - started) * 1000)},
+    )
+    # #endregion
     return {"synced": count, "marketplace_id": marketplace_id}
 
 
@@ -1750,7 +1811,19 @@ async def sync_all_orders(
     results = []
     cooldown_count = 0
     lock_busy_count = 0
+    error_count = 0
+    started = time.perf_counter()
+    # #region agent log
+    agent_dbg_bc5cf5(
+        "A",
+        "orders.py:sync_all",
+        "sync_all start",
+        {"n": len(marketplaces), "ids": [mp.id for mp in marketplaces]},
+    )
+    # #endregion
     for mp in marketplaces:
+        mp_started = time.perf_counter()
+        shop_name = mp.name
         try:
             count = await OrderSyncService.sync_marketplace_orders(
                 mp,
@@ -1759,6 +1832,20 @@ async def sync_all_orders(
             )
             results.append({"marketplace_id": mp.id, "synced": count})
             total += count
+            # #region agent log
+            agent_dbg_bc5cf5(
+                "A",
+                "orders.py:sync_all",
+                "sync_all marketplace ok",
+                {
+                    "mp": mp.id,
+                    "synced": count,
+                    "ms": int((time.perf_counter() - mp_started) * 1000),
+                    "done": len(results),
+                    "total_mp": len(marketplaces),
+                },
+            )
+            # #endregion
         except SyncCooldownError as e:
             cooldown_count += 1
             results.append(
@@ -1769,6 +1856,14 @@ async def sync_all_orders(
                     "seconds_left": e.seconds_left,
                 }
             )
+            # #region agent log
+            agent_dbg_bc5cf5(
+                "B",
+                "orders.py:sync_all",
+                "sync_all cooldown",
+                {"mp": mp.id, "seconds_left": e.seconds_left},
+            )
+            # #endregion
         except ManualSyncLockTimeout:
             lock_busy_count += 1
             results.append(
@@ -1778,6 +1873,48 @@ async def sync_all_orders(
                     "skipped": "lock_busy",
                 }
             )
+            # #region agent log
+            agent_dbg_bc5cf5(
+                "B",
+                "orders.py:sync_all",
+                "sync_all lock_busy",
+                {
+                    "mp": mp.id,
+                    "ms": int((time.perf_counter() - mp_started) * 1000),
+                    "done": len(results),
+                    "total_mp": len(marketplaces),
+                },
+            )
+            # #endregion
+        except Exception as e:
+            error_count += 1
+            err_text = _marketplace_sync_error_text(e, shop_name)
+            db.rollback()
+            logger.exception("Manual sync/all skipped marketplace %s after API error", mp.id)
+            results.append(
+                {
+                    "marketplace_id": mp.id,
+                    "synced": 0,
+                    "skipped": "error",
+                    "error": err_text,
+                }
+            )
+            # #region agent log
+            agent_dbg_bc5cf5(
+                "C",
+                "orders.py:sync_all",
+                "sync_all marketplace error, continue",
+                {
+                    "mp": mp.id,
+                    "err": type(e).__name__,
+                    "msg": str(e)[:240],
+                    "done": len(results),
+                    "total_mp": len(marketplaces),
+                    "ms": int((time.perf_counter() - mp_started) * 1000),
+                    "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                },
+            )
+            # #endregion
 
     payload = {
         "total_synced": total,
@@ -1786,7 +1923,23 @@ async def sync_all_orders(
         "synced_marketplaces": len([r for r in results if (r.get("synced") or 0) > 0]),
         "cooldown_count": cooldown_count,
         "lock_busy_count": lock_busy_count,
+        "error_count": error_count,
     }
+    # #region agent log
+    agent_dbg_bc5cf5(
+        "A",
+        "orders.py:sync_all",
+        "sync_all response",
+        {
+            "total_synced": total,
+            "total_marketplaces": len(marketplaces),
+            "results": len(results),
+            "cooldown_count": cooldown_count,
+            "lock_busy_count": lock_busy_count,
+            "elapsed_ms": int((time.perf_counter() - started) * 1000),
+        },
+    )
+    # #endregion
     logger.info(
         "Manual sync/all summary",
         extra={
@@ -1797,6 +1950,7 @@ async def sync_all_orders(
             "synced_marketplaces": payload["synced_marketplaces"],
             "cooldown_count": payload["cooldown_count"],
             "lock_busy_count": payload["lock_busy_count"],
+            "error_count": payload["error_count"],
         },
     )
     return payload
