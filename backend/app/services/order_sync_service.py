@@ -645,6 +645,10 @@ class OrderSyncService:
                     chrt_id = (mo.metadata or {}).get("chrt_id")
                     if mo.metadata is None:
                         mo.metadata = {}
+                    prev: dict = {}
+                    existing = order_repo.get_by_external_id(marketplace.id, mo.external_id)
+                    if existing and isinstance(existing.extra_data, dict):
+                        prev = existing.extra_data
                     if nm_id is not None:
                         card = nm_to_card.get(nm_id)
                         if card:
@@ -662,10 +666,24 @@ class OrderSyncService:
                             if size:
                                 mo.metadata["size"] = size
                         if not mo.metadata.get("product_image_url"):
-                            mo.metadata["product_image_url"] = WildberriesClient.build_product_image_url(nm_id) or ""
+                            prev_url = prev.get("product_image_url") if isinstance(prev.get("product_image_url"), str) else ""
+                            # Угаданный CDN (basket-18 для больших nm_id) отдаёт 404.
+                            # Уже сохранённое фото с Content API не подменяем.
+                            if prev_url.startswith("http") and "basket-18.wbbasket.ru" not in prev_url:
+                                mo.metadata["product_image_url"] = prev_url
+                            else:
+                                mo.metadata["product_image_url"] = WildberriesClient.build_product_image_url(nm_id) or ""
+                        if not mo.metadata.get("size"):
+                            prev_size = prev.get("size") if isinstance(prev.get("size"), str) else ""
+                            if prev_size.strip():
+                                mo.metadata["size"] = prev_size.strip()
                 with_images = sum(1 for mo in orders_new if (mo.metadata or {}).get("product_image_url"))
+                with_sizes = sum(1 for mo in orders_new if (mo.metadata or {}).get("size"))
                 if orders_new:
-                    logger.info(f"WB product images: {with_images}/{len(orders_new)} orders got photo")
+                    logger.info(
+                        f"WB product images: {with_images}/{len(orders_new)} orders got photo, "
+                        f"sizes={with_sizes}"
+                    )
                 for mo in orders_new:
                     OrderSyncService._check_auto_cancel(sync_source, marketplace.id)
                     count += OrderSyncService._upsert_order(
