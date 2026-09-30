@@ -625,10 +625,9 @@ class OrderSyncService:
                     },
                 )
                 # #endregion
-                # Ручной синк не ждёт Content API: 2с на каждый новый nm_id растягивает
-                # один магазин на минуты, nginx обрывает ответ, а повтор упирается в lock.
-                # Уже закэшированные карточки выше всё равно подставляются.
-                if wb_enrich_content and nm_ids_to_fetch and sync_source != "manual":
+                # Без карточки WB ручной синк пишет нерабочий basket-18 и стирает размер.
+                # Кэш выше подставляется сразу; в API ходим только за отсутствующими nm_id.
+                if wb_enrich_content and nm_ids_to_fetch:
                     _WB_CONTENT_SLEEP = 2.0  # 1 req / 2s = 30 req/min на воркер
                     # Случайный сдвиг 0–4s, чтобы воркеры не шли в ногу
                     await asyncio.sleep(random.uniform(0, 4))
