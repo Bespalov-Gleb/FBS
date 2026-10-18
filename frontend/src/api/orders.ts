@@ -5,7 +5,7 @@ export interface OrdersParams {
   skip?: number;
   limit?: number;
   marketplace_ids?: number[];
-  marketplace_types?: ('ozon' | 'wildberries')[];
+  marketplace_types?: ('ozon' | 'wildberries' | 'yandex')[];
   warehouse_ids?: number[];
   status?: string;
   search?: string;

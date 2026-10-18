@@ -33,13 +33,20 @@ const MARKETPLACE_OPTIONS = [
     bg: 'linear-gradient(135deg, #8B5CF6 0%, #A855F7 50%, #7C3AED 100%)',
     disabled: false,
   },
+  {
+    type: 'yandex',
+    label: 'ЯНДЕКС МАРКЕТ',
+    color: '#111111',
+    bg: '#FFCC00',
+    disabled: false,
+  },
 ];
 
 function getTypeLabel(type: string): string {
   const map: Record<string, string> = {
     ozon: 'Ozon',
     wildberries: 'Wildberries',
-    yandex: 'Яндекс.Маркет',
+    yandex: 'Яндекс Маркет',
     sber: 'СберМегаМаркет',
   };
   return map[type] ?? type;
@@ -49,6 +56,7 @@ function getTypeColor(type: string): string {
   const map: Record<string, string> = {
     ozon: '#005BFF',
     wildberries: '#8B5CF6',
+    yandex: '#111111',
   };
   return map[type] ?? '#4a5568';
 }

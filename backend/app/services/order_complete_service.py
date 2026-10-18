@@ -176,7 +176,7 @@ class OrderCompleteService:
             db.commit()
             return True
 
-        if mp.type == MarketplaceType.OZON:
+        if mp.type in (MarketplaceType.OZON, MarketplaceType.YANDEX):
             for kiz in kiz_list:
                 _add_to_scanned_kiz(db, user_id, kiz, order)
             order.complete(user_id=user_id, kiz_code=first_kiz)

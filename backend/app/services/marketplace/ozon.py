@@ -697,6 +697,35 @@ class OzonClient(BaseMarketplaceClient):
                     result[k] = v
         return result
 
+    async def get_product_barcodes(self, offer_ids: list[str]) -> dict[str, list[str]]:
+        """Все штрихкоды товара из POST /v3/product/info/list, поле barcodes."""
+        found: dict[str, list[str]] = {}
+        unique = list(dict.fromkeys(str(offer_id) for offer_id in offer_ids if offer_id))
+        for offset in range(0, len(unique), 100):
+            batch = unique[offset : offset + 100]
+            response = await self._request(
+                method="POST",
+                endpoint="/v3/product/info/list",
+                json_data={"offer_id": batch},
+            )
+            items = response.get("items")
+            result = response.get("result")
+            if items is None:
+                items = result.get("items", []) if isinstance(result, dict) else []
+            for item in items or []:
+                offer_id = item.get("offer_id")
+                if not offer_id:
+                    continue
+                raw_codes = item.get("barcodes") or []
+                if isinstance(raw_codes, str):
+                    raw_codes = [raw_codes]
+                codes = [str(code).strip() for code in raw_codes if str(code).strip()]
+                single = str(item.get("barcode") or "").strip()
+                if single and single not in codes:
+                    codes.insert(0, single)
+                found[str(offer_id)] = codes
+        return found
+
     def _extract_pictures_info_url(self, item: dict) -> str:
         """
         Извлечь URL фото из ответа /v2/product/pictures/info.

@@ -23,7 +23,7 @@ const PAGE_SIZE_OPTIONS = [25, 50, 100, 200, 500] as const;
 
 export interface OrderFiltersState {
   /** Выбранные типы маркетплейсов: ozon, wildberries */
-  marketplace_types: ('ozon' | 'wildberries')[];
+  marketplace_types: ('ozon' | 'wildberries' | 'yandex')[];
   /** Выбранные ID конкретных маркетплейсов */
   marketplace_ids: number[];
   /** Выбранные ID складов */
@@ -78,7 +78,7 @@ export default function OrderFilters({
     }, 300);
   };
 
-  const toggleMarketplaceType = (t: 'ozon' | 'wildberries') => {
+  const toggleMarketplaceType = (t: 'ozon' | 'wildberries' | 'yandex') => {
     const next = filters.marketplace_types.includes(t)
       ? filters.marketplace_types.filter((x) => x !== t)
       : [...filters.marketplace_types, t];
@@ -143,6 +143,16 @@ export default function OrderFilters({
                 />
               }
               label={<Typography variant="body2">WB (все)</Typography>}
+            />
+            <FormControlLabel
+              control={
+                <Checkbox
+                  size="small"
+                  checked={filters.marketplace_types.includes('yandex')}
+                  onChange={() => toggleMarketplaceType('yandex')}
+                />
+              }
+              label={<Typography variant="body2">Яндекс (все)</Typography>}
             />
             {marketplaces.map((mp) => (
               <FormControlLabel

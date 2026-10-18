@@ -14,6 +14,7 @@ class MarketplaceType(str, enum.Enum):
     """Типы маркетплейсов"""
     OZON = "ozon"
     WILDBERRIES = "wildberries"
+    YANDEX = "yandex"
 
 
 class Marketplace(BaseModel):
@@ -69,6 +70,11 @@ class Marketplace(BaseModel):
     def is_wildberries(self) -> bool:
         """Проверка, является ли маркетплейс Wildberries"""
         return self.type == MarketplaceType.WILDBERRIES
+
+    @property
+    def is_yandex(self) -> bool:
+        """Проверка, является ли маркетплейс Яндекс Маркетом"""
+        return self.type == MarketplaceType.YANDEX
     
     def update_sync_time(self) -> None:
         """Обновление времени последней синхронизации"""

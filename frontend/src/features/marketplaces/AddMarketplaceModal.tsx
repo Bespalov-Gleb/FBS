@@ -35,6 +35,8 @@ export default function AddMarketplaceModal({ type, onClose, onSuccess }: AddMar
   const [error, setError] = useState<string | null>(null);
 
   const isOzon = type === 'ozon';
+  const isYandex = type === 'yandex';
+  const title = isOzon ? 'Ozon' : isYandex ? 'Яндекс Маркет' : 'Wildberries';
 
   const {
     register,
@@ -76,7 +78,7 @@ export default function AddMarketplaceModal({ type, onClose, onSuccess }: AddMar
 
   return (
     <Dialog open onClose={onClose} maxWidth="sm" fullWidth>
-      <DialogTitle>Подключить {type === 'ozon' ? 'Ozon' : 'Wildberries'}</DialogTitle>
+      <DialogTitle>Подключить {title}</DialogTitle>
       <form onSubmit={handleSubmit(onSubmit)}>
         <DialogContent>
           <TextField
@@ -104,16 +106,20 @@ export default function AddMarketplaceModal({ type, onClose, onSuccess }: AddMar
               margin="normal"
             />
           )}
-          <FormControlLabel
-            control={<Checkbox {...register('is_kiz_enabled')} />}
-            label={`Режим КИЗ (${isOzon ? 'Ozon' : 'WB'})`}
-            sx={{ mt: 1, display: 'block' }}
-          />
-          <FormControlLabel
-            control={<Checkbox {...register('save_kiz_to_file')} />}
-            label="Сохранять КИЗ в файл после упаковки"
-            sx={{ mt: 0.5, display: 'block' }}
-          />
+          {!isYandex && (
+            <>
+              <FormControlLabel
+                control={<Checkbox {...register('is_kiz_enabled')} />}
+                label={`Режим КИЗ (${isOzon ? 'Ozon' : 'WB'})`}
+                sx={{ mt: 1, display: 'block' }}
+              />
+              <FormControlLabel
+                control={<Checkbox {...register('save_kiz_to_file')} />}
+                label="Сохранять КИЗ в файл после упаковки"
+                sx={{ mt: 0.5, display: 'block' }}
+              />
+            </>
+          )}
           {error && (
             <Typography color="error" variant="body2" sx={{ mt: 1 }}>
               {error}

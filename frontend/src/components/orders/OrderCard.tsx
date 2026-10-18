@@ -59,7 +59,7 @@ export default function OrderCard({ order, onClick, muted = false }: OrderCardPr
   const isLockedByMe = order.is_locked_by_me;
   const isCompleted = order.status === 'completed';
   const borderColor = order.warehouse_color || palette.sidebar.lighter;
-  const isOzonMulti = order.marketplace_type === 'ozon' && order.products && order.products.length > 1;
+  const isOzonMulti = (order.marketplace_type === 'ozon' || order.marketplace_type === 'yandex') && order.products && order.products.length > 1;
 
   return (
     <Card
@@ -198,7 +198,7 @@ export default function OrderCard({ order, onClick, muted = false }: OrderCardPr
                 )}
                 {order.marketplace_type && (
                   <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.65rem' }}>
-                    {order.marketplace_type === 'ozon' ? 'Ozon' : order.marketplace_type === 'wildberries' ? 'WB' : order.marketplace_type}
+                    {order.marketplace_type === 'ozon' ? 'Ozon' : order.marketplace_type === 'wildberries' ? 'WB' : order.marketplace_type === 'yandex' ? 'Яндекс' : order.marketplace_type}
                   </Typography>
                 )}
               </Box>

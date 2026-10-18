@@ -58,6 +58,9 @@ class WarehouseService:
                     extra={"marketplace_id": marketplace.id},
                 )
                 return 0
+        elif marketplace.type == MarketplaceType.YANDEX:
+            # Склад FBS приходит в отгрузке и создаётся вместе с заказом.
+            return 0
         elif marketplace.type == MarketplaceType.WILDBERRIES:
             try:
                 async with WildberriesClient(api_key=api_key) as client:

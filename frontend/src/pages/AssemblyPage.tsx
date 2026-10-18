@@ -254,7 +254,7 @@ export default function AssemblyPage() {
       // ТЗ: при клике печатать 2 этикетки (если включено в диспетчере)
       if (shouldAutoPrint) {
         // PDF при агенте — точный размер 58×40 мм, печать 100% (noscale)
-        const labelFormat = agentAvailable ? 'pdf' : (order.marketplace_type === 'ozon' ? 'pdf' : 'svg');
+        const labelFormat = agentAvailable || order.marketplace_type !== 'wildberries' ? 'pdf' : 'svg';
         const ozonWidth = printSettings?.ozon_labels?.width_mm ?? (printSettings?.label_format === '80mm' ? 80 : 58);
         const wbWidth = printSettings?.wb_labels?.width_mm ?? (printSettings?.label_format === '80mm' ? 80 : 58);
         const wbHeight = printSettings?.wb_labels?.height_mm ?? 40;

@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 class MarketplaceCreate(BaseModel):
     """Создание маркетплейса"""
-    type: str  # ozon | wildberries
+    type: str  # ozon | wildberries | yandex
     name: str
     api_key: str
     client_id: Optional[str] = None  # для Ozon
