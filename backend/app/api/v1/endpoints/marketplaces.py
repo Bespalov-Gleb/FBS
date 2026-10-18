@@ -18,6 +18,7 @@ from app.schemas.marketplace import (
 )
 from app.services.marketplace.ozon import OzonClient
 from app.services.marketplace.wildberries import WildberriesClient
+from app.services.marketplace.yandex import YandexMarketClient, pick_fbs_campaign
 
 router = APIRouter(prefix="/marketplaces", tags=["Marketplaces"])
 
@@ -49,7 +50,7 @@ def list_marketplaces(
 
 
 @router.post("", response_model=MarketplaceResponse)
-def create_marketplace(
+async def create_marketplace(
     data: MarketplaceCreate,
     db: Session = Depends(get_db),
     current_user: User = CurrentUser,
@@ -58,16 +59,29 @@ def create_marketplace(
     try:
         type_ = MarketplaceType(data.type)
     except ValueError:
-        raise HTTPException(400, detail="type must be 'ozon' or 'wildberries'")
+        raise HTTPException(400, detail="type must be 'ozon', 'wildberries' or 'yandex'")
     if type_ == MarketplaceType.OZON and not data.client_id:
         raise HTTPException(400, detail="client_id required for Ozon")
+    client_id = data.client_id
+    if type_ == MarketplaceType.YANDEX:
+        from app.core.exceptions import MarketplaceAPIException
+
+        try:
+            async with YandexMarketClient(api_key=data.api_key) as yandex:
+                campaigns = await yandex.list_campaigns()
+        except MarketplaceAPIException as exc:
+            raise HTTPException(400, detail=f"Не удалось прочитать кампании Яндекс Маркета: {exc.message}") from exc
+        campaign, error = pick_fbs_campaign(campaigns, data.client_id)
+        if error or not campaign:
+            raise HTTPException(400, detail=error or "Не найден магазин FBS")
+        client_id = str(campaign["id"])
     repo = MarketplaceRepository(db)
     mp = repo.create(
         user_id=current_user.id,
         type_=type_,
         name=data.name,
         api_key_encrypted=encrypt_api_key(data.api_key),
-        client_id=data.client_id,
+        client_id=client_id,
         is_kiz_enabled=data.is_kiz_enabled,
         save_kiz_to_file=data.save_kiz_to_file,
     )
@@ -173,6 +187,9 @@ async def test_marketplace(
             ok = await client.test_connection()
     elif mp.type == MarketplaceType.WILDBERRIES:
         async with WildberriesClient(api_key=api_key) as client:
+            ok = await client.test_connection()
+    elif mp.type == MarketplaceType.YANDEX:
+        async with YandexMarketClient(api_key=api_key, client_id=mp.client_id) as client:
             ok = await client.test_connection()
     else:
         ok = False

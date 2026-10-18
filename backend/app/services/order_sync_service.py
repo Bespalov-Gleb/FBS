@@ -17,8 +17,11 @@ from app.models.order import OrderStatus
 from app.repositories.order_repository import OrderRepository
 from app.repositories.warehouse_repository import WarehouseRepository
 from app.services.marketplace.base import MarketplaceOrder
+from app.models.order import Order
 from app.services.marketplace.ozon import OzonClient
 from app.services.marketplace.wildberries import WildberriesClient
+from app.services.marketplace.yandex import YandexMarketClient, action_for_left_order
+from app.services.product_barcode import choose_product_barcode
 from app.services.order_sync_guard import (
     AutoSyncCancelled,
     ManualSyncLockTimeout,
@@ -526,6 +529,7 @@ class OrderSyncService:
                             )
                         if len(still_missing) > 3:
                             logger.info("Ozon size MISSING: ... and %s more orders", len(still_missing) - 3)
+                await OrderSyncService._attach_ozon_product_barcodes(client, orders)
                 api_external_ids = {mo.external_id for mo in orders}
                 for mo in orders:
                     OrderSyncService._check_auto_cancel(sync_source, marketplace.id)
@@ -696,6 +700,10 @@ class OrderSyncService:
                         f"WB marketplace {marketplace.id}: marked {cancelled} cancelled "
                         f"(not in API response for last 30 days)"
                     )
+        elif marketplace.type == MarketplaceType.YANDEX:
+            count += await OrderSyncService._sync_yandex_orders(
+                marketplace, db, order_repo, api_key, sync_source,
+            )
         else:
             logger.warning(f"Unknown marketplace type: {marketplace.type}")
             return 0
@@ -717,6 +725,88 @@ class OrderSyncService:
             marketplace.id,
             sync_source,
         )
+        return count
+
+    @staticmethod
+    async def _attach_ozon_product_barcodes(client: OzonClient, orders: list) -> None:
+        """Кладём выбранный ШК (с нуля, иначе OZN+SKU) в товары новых заказов Ozon."""
+        offer_ids: list[str] = []
+        for mo in orders:
+            for product in (mo.metadata or {}).get("products") or []:
+                offer_id = product.get("offer_id")
+                if offer_id:
+                    offer_ids.append(str(offer_id))
+        if not offer_ids:
+            return
+        try:
+            barcode_map = await client.get_product_barcodes(offer_ids)
+        except Exception as exc:
+            logger.warning("Ozon barcodes fetch failed: %s", exc)
+            return
+        for mo in orders:
+            for product in (mo.metadata or {}).get("products") or []:
+                offer_id = str(product.get("offer_id") or "")
+                codes = barcode_map.get(offer_id) or []
+                sku = product.get("sku")
+                fallback = None
+                if sku is not None and str(sku).strip():
+                    try:
+                        fallback = f"OZN{int(sku)}"
+                    except (TypeError, ValueError):
+                        fallback = f"OZN{sku}"
+                chosen = choose_product_barcode(codes, fallback=fallback)
+                if chosen:
+                    product["barcode"] = chosen
+                    product["barcodes"] = codes
+
+    @staticmethod
+    async def _sync_yandex_orders(
+        marketplace: Marketplace,
+        db: Session,
+        order_repo: OrderRepository,
+        api_key: str,
+        sync_source: str,
+    ) -> int:
+        """Заказы только из отгрузок «Готова к отправке»."""
+        if not marketplace.client_id:
+            logger.warning("Yandex without campaign id, skipping sync")
+            return 0
+        count = 0
+        async with YandexMarketClient(api_key=api_key, client_id=marketplace.client_id) as client:
+            ready_orders, ready_ids = await client.fetch_ready_orders()
+            for mo in ready_orders:
+                OrderSyncService._check_auto_cancel(sync_source, marketplace.id)
+                count += OrderSyncService._upsert_order(db, order_repo, marketplace, mo)
+            open_orders = (
+                db.query(Order)
+                .filter(
+                    Order.marketplace_id == marketplace.id,
+                    Order.status.notin_(
+                        [OrderStatus.DELIVERED, OrderStatus.CANCELLED, OrderStatus.COMPLETED]
+                    ),
+                    Order.collected_in_app.is_(False),
+                )
+                .all()
+            )
+            for existing in open_orders:
+                if existing.external_id in ready_ids:
+                    continue
+                OrderSyncService._check_auto_cancel(sync_source, marketplace.id)
+                remote_status = ""
+                try:
+                    remote = await client.get_order(marketplace.client_id, existing.external_id)
+                    remote_status = str(remote.get("status") or "")
+                except Exception as exc:
+                    logger.warning(
+                        "Yandex order %s status check failed: %s",
+                        existing.external_id,
+                        exc,
+                    )
+                if action_for_left_order(remote_status) == "cancel":
+                    if order_repo.mark_cancelled_by_marketplace(marketplace.id, existing.external_id):
+                        count += 1
+                elif order_repo.mark_delivered_by_marketplace(marketplace.id, existing.external_id):
+                    count += 1
         return count
 
     @staticmethod

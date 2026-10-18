@@ -16,6 +16,7 @@ from app.services.marketplace.base import (
 )
 from app.services.marketplace.ozon import OzonClient
 from app.services.marketplace.wildberries import WildberriesClient
+from app.services.marketplace.yandex import YandexMarketClient
 
 __all__ = [
     "BaseMarketplaceClient",
@@ -24,4 +25,5 @@ __all__ = [
     "Product",
     "OzonClient",
     "WildberriesClient",
+    "YandexMarketClient",
 ]

@@ -26,6 +26,7 @@ from app.models.user import User
 from app.repositories.order_repository import OrderRepository
 from app.schemas.order import OrderCompleteRequest, OrderProductItem, OrderResponse, OrdersListResponse
 from app.services.marketplace.wildberries import WildberriesClient
+from app.services.product_barcode import choose_product_barcode
 from app.services.order_complete_service import (
     OrderCompleteService,
     is_auto_kiz_autofill_enabled_for_order,
@@ -104,29 +105,36 @@ def _ozon_product_size(
     return None
 
 
+def _ozon_fallback_barcode(p: dict) -> Optional[str]:
+    sku = p.get("sku")
+    if sku is None or not str(sku).strip():
+        return None
+    try:
+        return f"OZN{int(sku)}"
+    except (ValueError, TypeError):
+        return f"OZN{sku}"
+
+
 def _ozon_product_barcode_for_ui(p: dict) -> Optional[str]:
     """
-    ШК для карточки заказа Ozon: поля из Seller API или OZN+SKU (как GET .../product-barcode).
-    В unfulfilled/list часто есть sku, а barcode на товаре — только при with.barcodes или в /posting/fbs/get.
+    ШК карточки: код с нуля из barcodes, иначе уже выбранный barcode, иначе OZN+SKU.
     """
     if not isinstance(p, dict):
         return None
-    for k in ("barcode", "product_barcode", "ean", "product_ean"):
-        v = str(p.get(k) or "").strip()
-        if v:
-            return v
-    sku = p.get("sku")
-    if sku is not None and str(sku).strip():
-        try:
-            return f"OZN{int(sku)}"
-        except (ValueError, TypeError):
-            return f"OZN{sku}"
-    return None
+    codes: list[str] = []
+    raw_list = p.get("barcodes")
+    if isinstance(raw_list, list):
+        codes.extend(str(code) for code in raw_list)
+    for key in ("barcode", "product_barcode", "ean", "product_ean"):
+        value = str(p.get(key) or "").strip()
+        if value:
+            codes.append(value)
+    return choose_product_barcode(codes, fallback=_ozon_fallback_barcode(p))
 
 
 def _order_products(o: Order) -> list[OrderProductItem]:
     """Список товаров в заказе (Ozon: несколько в одном posting)."""
-    if not o.marketplace or o.marketplace.type.value != "ozon":
+    if not o.marketplace or o.marketplace.type.value not in ("ozon", "yandex"):
         return []
     ed = o.extra_data or {}
     prods = ed.get("products", [])
@@ -150,7 +158,7 @@ def _order_barcode(o: Order) -> Optional[str]:
     """Основной ШК заказа для UI модалки (Ozon: товарный ШК; WB: первый sku)."""
     ed = o.extra_data or {}
     mp = o.marketplace
-    if mp and mp.type.value == "ozon" and isinstance(ed, dict):
+    if mp and mp.type.value in ("ozon", "yandex") and isinstance(ed, dict):
         prods = ed.get("products")
         if isinstance(prods, list) and prods:
             first = prods[0]
@@ -165,11 +173,10 @@ def _order_barcode(o: Order) -> Optional[str]:
                 if v:
                     return v
     skus = ed.get("skus") if isinstance(ed, dict) else None
-    if isinstance(skus, list):
-        for s in skus:
-            val = str(s or "").strip()
-            if val:
-                return val
+    sku_codes = [str(sku) for sku in skus] if isinstance(skus, list) else []
+    chosen = choose_product_barcode(sku_codes)
+    if chosen:
+        return chosen
     val = str(ed.get("barcode", "")).strip() if isinstance(ed, dict) else ""
     return val or None
 
@@ -2283,6 +2290,7 @@ def _generate_product_barcode_pdf(
     size: Optional[str] = None,
     label_width_mm: int = 58,
     top_offset_mm: float = 0,
+    show_size: bool = False,
 ) -> bytes:
     """
     Штрихкод товара: Ozon (OZN+SKU) или WB (EAN13).
@@ -2371,7 +2379,7 @@ def _generate_product_barcode_pdf(
         margin=margin,
         article=str(article or "").strip(),
         size=size,
-        is_wb=is_wb_barcode,
+        is_wb=show_size,
     )
     ty = max(margin, ay - digits_gap)
     c.setFont("Helvetica-Bold", digits_font_size)
@@ -2386,6 +2394,7 @@ def _generate_multi_product_barcode_pdf(
     items: list[tuple[str, str, str, Optional[str]]],
     label_width_mm: int = 58,
     top_offset_mm: float = 0,
+    show_size: bool = False,
 ) -> bytes:
     """
     PDF с несколькими страницами — по одному штрихкоду на каждый товар (Ozon двойные заказы).
@@ -2402,7 +2411,13 @@ def _generate_multi_product_barcode_pdf(
         raise ValueError("No items for barcode PDF")
     if len(items) == 1:
         return _generate_product_barcode_pdf(
-            items[0][0], items[0][1], items[0][2], items[0][3], label_width_mm, top_offset_mm
+            items[0][0],
+            items[0][1],
+            items[0][2],
+            items[0][3],
+            label_width_mm,
+            top_offset_mm,
+            show_size=show_size,
         )
 
     label_w = label_width_mm * mm
@@ -2466,7 +2481,7 @@ def _generate_multi_product_barcode_pdf(
             margin=margin,
             article=str(article or "").strip(),
             size=size,
-            is_wb=is_wb_barcode,
+            is_wb=show_size,
         )
         ty = max(margin, ay - digits_gap)
         c.setFont("Helvetica-Bold", digits_font_size)
@@ -3022,24 +3037,33 @@ async def get_order_barcodes_pdf(
     items: list[tuple[str, str, str, Optional[str]]] = []
 
     if mp.type == MarketplaceType.WILDBERRIES:
-        # WB: товарный баркод хранится в extra_data["skus"] (EAN13 или Code128)
         extra = order.extra_data or {}
         skus: list = extra.get("skus") or []
         article = str(order.article or "").strip()
         wb_size = _sanitize_size(extra.get("size"))
-        for sku_val in skus:
-            code = str(sku_val).strip()
-            if code:
-                items.append((code, code, article, wb_size))
+        code = choose_product_barcode([str(sku) for sku in skus])
+        if code:
+            items.append((code, code, article, wb_size))
         if not items:
             raise HTTPException(404, detail="Товарный баркод не найден в заказе WB (skus пустой)")
     elif mp.type == MarketplaceType.OZON:
         if not mp.client_id:
             raise HTTPException(400, detail="Ozon client_id missing")
         api_key = decrypt_api_key(mp.api_key)
+        ozon_barcode_map: dict[str, list[str]] = {}
         try:
             async with OzonClient(api_key=api_key, client_id=mp.client_id) as client:
                 details = await client.get_posting_details(order.posting_number, with_barcodes=True)
+                offer_ids = [
+                    str(product.get("offer_id"))
+                    for product in (details.get("products") or [])
+                    if product.get("offer_id")
+                ]
+                try:
+                    ozon_barcode_map = await client.get_product_barcodes(offer_ids)
+                except Exception as barcode_exc:
+                    logger.warning("Ozon product barcodes failed: %s", barcode_exc)
+                    ozon_barcode_map = {}
         except MarketplaceAPIException as e:
             err_str = str(e).lower()
             detail = getattr(e, "detail", None)
@@ -3067,20 +3091,86 @@ async def get_order_barcodes_pdf(
         barcodes = details.get("barcodes") or {}
         products = details.get("products") or []
         upper = (barcodes.get("upper_barcode") or "").strip() if isinstance(barcodes, dict) else ""
+        stored_products = (order.extra_data or {}).get("products") or []
 
-        for p in products:
+        for index, p in enumerate(products):
             sku = p.get("sku")
             qty = max(1, int(p.get("quantity", 1)))
-            ozn_code = f"OZN{sku}" if sku is not None else (upper if upper else None)
+            fallback = f"OZN{sku}" if sku is not None else (upper if upper else None)
+            offer_id = str(p.get("offer_id") or "")
+            catalog_codes = ozon_barcode_map.get(offer_id) or []
+            code = choose_product_barcode(catalog_codes, fallback=fallback)
             article = str(p.get("offer_id") or p.get("article") or order.article or "").strip()
-            if not ozn_code:
+            if not code:
                 continue
+            if index < len(stored_products) and isinstance(stored_products[index], dict):
+                stored_products[index]["barcode"] = code
+                stored_products[index]["barcodes"] = catalog_codes
             for _ in range(qty):
-                # Для Ozon размер не добавляем: он уже зашит в артикул/offer_id.
-                items.append((ozn_code, ozn_code, article, None))
+                items.append((code, code, article, None))
+
+        if stored_products:
+            extra = dict(order.extra_data or {})
+            extra["products"] = stored_products
+            order.extra_data = extra
+            db.commit()
 
         if not items:
             raise HTTPException(404, detail="Product barcode not found")
+    elif mp.type == MarketplaceType.YANDEX:
+        if not mp.client_id:
+            raise HTTPException(400, detail="Yandex campaign id missing")
+        extra = order.extra_data or {}
+        products = extra.get("products") or []
+        offer_ids = [
+            str(product.get("offer_id"))
+            for product in products
+            if isinstance(product, dict) and product.get("offer_id")
+        ]
+        offers: dict = {}
+        api_key = decrypt_api_key(mp.api_key)
+        try:
+            from app.services.marketplace.yandex import YandexMarketClient
+
+            async with YandexMarketClient(api_key=api_key, client_id=mp.client_id) as client:
+                business_id = await client.resolve_business_id(mp.client_id)
+                if offer_ids:
+                    offers = await client.get_offer_mappings(business_id, offer_ids)
+        except Exception as exc:
+            logger.warning("Yandex offer barcodes failed: %s", exc)
+        if not products:
+            products = [{
+                "offer_id": order.article,
+                "quantity": order.quantity or 1,
+                "size": extra.get("size"),
+                "barcode": extra.get("barcode"),
+            }]
+        for product in products:
+            if not isinstance(product, dict):
+                continue
+            offer_id = str(product.get("offer_id") or order.article or "")
+            offer = offers.get(offer_id) or {}
+            catalog_codes = offer.get("barcodes") or []
+            if isinstance(catalog_codes, str):
+                catalog_codes = [catalog_codes]
+            stored = product.get("barcode")
+            codes = [str(code) for code in catalog_codes]
+            if stored:
+                codes.append(str(stored))
+            code = choose_product_barcode(codes)
+            if not code:
+                continue
+            from app.services.marketplace.yandex import format_offer_size
+
+            params = offer.get("params") or offer.get("parameterValues") or []
+            size = _sanitize_size(product.get("size")) or format_offer_size(
+                params if isinstance(params, list) else []
+            )
+            qty = max(1, int(product.get("quantity") or 1))
+            for _ in range(qty):
+                items.append((code, code, offer_id, size))
+        if not items:
+            raise HTTPException(404, detail="Товарный штрихкод Яндекс Маркета не найден")
     else:
         raise HTTPException(400, detail="Unknown marketplace type")
 
@@ -3091,9 +3181,20 @@ async def get_order_barcodes_pdf(
     label_width = int(label_width)
     # Ozon: отступ сверху 5 мм — не обрезало принтером. WB: без отступа — обычное центрирование
     top_offset = _BARCODE_TOP_OFFSET_MM if mp.type == MarketplaceType.OZON else 0
-    pdf_bytes = _generate_multi_product_barcode_pdf(items, label_width_mm=label_width, top_offset_mm=top_offset)
+    show_size = mp.type in (MarketplaceType.WILDBERRIES, MarketplaceType.YANDEX)
+    pdf_bytes = _generate_multi_product_barcode_pdf(
+        items,
+        label_width_mm=label_width,
+        top_offset_mm=top_offset,
+        show_size=show_size,
+    )
 
-    debug_job_key = "ozon_barcode" if mp.type == MarketplaceType.OZON else "wb_barcode"
+    if mp.type == MarketplaceType.OZON:
+        debug_job_key = "ozon_barcode"
+    elif mp.type == MarketplaceType.YANDEX:
+        debug_job_key = "yandex_barcode"
+    else:
+        debug_job_key = "wb_barcode"
     _fbs_debug_write_json(
         debug_job_key,
         "00_params",
@@ -3292,6 +3393,38 @@ async def get_order_label(
         content = _wb_sticker_to_pdf(
             content, label_width_mm=w, label_height_mm=h,
             order_number=order_num, rotate=wb_rotate,
+            scale_factor=scale_factor,
+        )
+        return Response(
+            content=content,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f"inline; filename=label-{order.posting_number}.pdf"},
+        )
+    elif mp.type == MarketplaceType.YANDEX:
+        if not mp.client_id:
+            raise HTTPException(400, detail="Yandex campaign id missing")
+        from app.services.marketplace.yandex import YandexMarketClient
+
+        ps = db.query(PrintSettings).filter(PrintSettings.user_id == current_user.id).first()
+        if ps:
+            w_mm = ps.ozon_width_mm or 58
+            h_mm = ps.ozon_height_mm or 40
+            label_rotate = ps.ozon_label_rotate if ps.ozon_label_rotate is not None else 90
+            printer_dpi = ps.printer_dpi or 203
+            scale_factor = float(ps.label_scale_factor) if ps.label_scale_factor is not None else 1.0
+        else:
+            w_mm, h_mm, label_rotate, printer_dpi, scale_factor = 58, 40, 90, 203, 1.0
+        async with YandexMarketClient(api_key=api_key, client_id=mp.client_id) as client:
+            content = await client.get_order_label(order.external_id)
+        if format == "png":
+            content = _ozon_fbs_to_png(content, width_mm=w_mm, height_mm=h_mm, rotate=label_rotate)
+            return Response(content=content, media_type="image/png")
+        content = _ozon_fbs_to_standard_label(
+            content,
+            width_mm=w_mm,
+            height_mm=h_mm,
+            rotate=label_rotate,
+            dpi=printer_dpi,
             scale_factor=scale_factor,
         )
         return Response(

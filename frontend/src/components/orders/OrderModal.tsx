@@ -218,7 +218,7 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
       ? (order.posting_number || order.external_id || `#${order.id}`)
       : (order.external_id || order.posting_number || `#${order.id}`);
   // PDF при агенте — точный размер 58×40 мм, печать 100% (noscale)
-  const labelFormat = agentAvailable ? 'pdf' : (order.marketplace_type === 'ozon' ? 'pdf' : 'svg');
+  const labelFormat = agentAvailable || order.marketplace_type !== 'wildberries' ? 'pdf' : 'svg';
   const labelWidth = labelFormatProp === '80mm' ? 80 : 58;
 
   // Вариант 1: агент печатает строго `noscale`, без поворота/переопределения ориентации.
@@ -304,7 +304,7 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
       <DialogTitle>{displayId}</DialogTitle>
       <DialogContent>
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-          {order.marketplace_type === 'ozon' && order.products && order.products.length > 1 ? (
+          {(order.marketplace_type === 'ozon' || order.marketplace_type === 'yandex') && order.products && order.products.length > 1 ? (
             <>
               <Typography variant="body2">
                 <strong>Количество:</strong>{' '}
@@ -329,10 +329,15 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
                       <Typography variant="body1" sx={{ wordBreak: 'break-word', overflowWrap: 'anywhere', fontWeight: 600 }}>
                         <strong>{p.offer_id}</strong>
                       </Typography>
-                      <Typography variant="body2">
+                        <Typography variant="body2">
                         <strong>ШК:</strong>{' '}
                         {(p.barcode || (p as typeof p & { sku?: string }).sku || '—').toString().trim() || '—'}
                       </Typography>
+                      {p.size && (
+                        <Typography variant="body2">
+                          <strong>Размер:</strong> {p.size}
+                        </Typography>
+                      )}
                       <Typography variant="body1" color="text.secondary">{p.name}</Typography>
                       <Typography
                         variant="body1"
@@ -411,7 +416,7 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
           )}
           {order.marketplace_type && (
             <Typography variant="caption" color="text.secondary">
-              {order.marketplace_type === 'ozon' ? 'Ozon' : 'WB'}
+              {order.marketplace_type === 'ozon' ? 'Ozon' : order.marketplace_type === 'yandex' ? 'Яндекс' : 'WB'}
             </Typography>
           )}
           {isKizRequired && !isCompleted && (

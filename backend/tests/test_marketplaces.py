@@ -66,6 +66,45 @@ def test_create_marketplace_ozon(
     assert data["type"] == "ozon"
 
 
+def test_create_marketplace_yandex_single_fbs(client: TestClient, packer_headers: dict, monkeypatch) -> None:
+    """Один FBS записывается как campaign id, FBY не мешает."""
+    from app.services.marketplace.yandex import YandexMarketClient
+
+    async def _campaigns(self):
+        return [
+            {"id": 22174799, "domain": "основной", "placementType": "FBS"},
+            {"id": 84688355, "domain": "Giston", "placementType": "FBY"},
+        ]
+
+    monkeypatch.setattr(YandexMarketClient, "list_campaigns", _campaigns)
+    response = client.post(
+        "/api/v1/marketplaces",
+        headers=packer_headers,
+        json={"type": "yandex", "name": "Яндекс", "api_key": "read-only-key"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["type"] == "yandex"
+
+
+def test_create_marketplace_yandex_several_fbs(client: TestClient, packer_headers: dict, monkeypatch) -> None:
+    from app.services.marketplace.yandex import YandexMarketClient
+
+    async def _campaigns(self):
+        return [
+            {"id": 1, "domain": "a", "placementType": "FBS"},
+            {"id": 2, "domain": "b", "placementType": "FBS"},
+        ]
+
+    monkeypatch.setattr(YandexMarketClient, "list_campaigns", _campaigns)
+    response = client.post(
+        "/api/v1/marketplaces",
+        headers=packer_headers,
+        json={"type": "yandex", "name": "Яндекс", "api_key": "read-only-key"},
+    )
+    assert response.status_code == 400
+    assert "1" in response.text and "2" in response.text
+
+
 def test_create_marketplace_invalid_type(
     client: TestClient, packer_headers: dict
 ) -> None:
