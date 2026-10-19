@@ -255,17 +255,19 @@ class OrderSyncService:
                 client_id=marketplace.client_id,
             ) as client:
                 orders = []
-                offset = 0
+                cursor = None
+                seen_cursors: set[str] = set()
                 while True:
                     OrderSyncService._check_auto_cancel(sync_source, marketplace.id)
-                    batch, has_next = await client.get_orders_unfulfilled_by_status(
+                    batch, has_next, cursor = await client.get_orders_unfulfilled_by_status(
                         status=ozon_sync_status,
-                        limit=1000, offset=offset
+                        limit=100,
+                        cursor=cursor,
                     )
                     orders.extend(batch)
-                    if not has_next or len(batch) < 1000:
+                    if not has_next or not cursor or cursor in seen_cursors:
                         break
-                    offset += 1000
+                    seen_cursors.add(cursor)
                 logger.info(
                     "Ozon sync unfulfilled status=%s, fetched=%s",
                     ozon_sync_status,
@@ -541,12 +543,13 @@ class OrderSyncService:
                 # filter: since, to — по irenicaa/ozon-seller (GetPostingFBSListFilter)
                 delivered_ids: set[str] = set()
                 try:
-                    off = 0
+                    delivered_cursor = None
+                    seen_delivered_cursors: set[str] = set()
                     marked_delivered = 0
                     while True:
                         OrderSyncService._check_auto_cancel(sync_source, marketplace.id)
-                        batch, has_next = await client.get_orders_delivered_or_delivering(
-                            limit=1000, offset=off, days_back=30
+                        batch, has_next, delivered_cursor = await client.get_orders_delivered_or_delivering(
+                            limit=100, days_back=30, cursor=delivered_cursor
                         )
                         for mo in batch:
                             delivered_ids.add(mo.external_id)
@@ -558,9 +561,13 @@ class OrderSyncService:
                                 ):
                                     marked_delivered += 1
                                     count += 1
-                        if not has_next or len(batch) < 1000:
+                        if (
+                            not has_next
+                            or not delivered_cursor
+                            or delivered_cursor in seen_delivered_cursors
+                        ):
                             break
-                        off += 1000
+                        seen_delivered_cursors.add(delivered_cursor)
                     if delivered_ids:
                         logger.info(
                             f"Ozon marketplace {marketplace.id}: {marked_delivered} delivering/delivered→hidden"

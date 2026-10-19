@@ -28,7 +28,7 @@ class OzonClient(BaseMarketplaceClient):
     Клиент для работы с Ozon Seller API
     
     Endpoints:
-    - POST /v3/posting/fbs/unfulfilled/list - Список необработанных отправлений
+    - POST /v4/posting/fbs/unfulfilled/list - Список необработанных отправлений
     - POST /v3/posting/fbs/get - Детали заказа + штрихкоды (upper_barcode, lower_barcode)
     - POST /v2/posting/fbs/package-label - Этикетка ФБС (PDF, стикер отправления)
     - POST /v3/posting/fbs/ship - Подтверждение отгрузки
@@ -211,7 +211,7 @@ class OzonClient(BaseMarketplaceClient):
         """
         Получение списка FBS заказов из Ozon
         
-        Endpoint: POST /v3/posting/fbs/unfulfilled/list
+        Endpoint: POST /v4/posting/fbs/unfulfilled/list
         
         Args:
             warehouse_id: ID склада для фильтрации
@@ -222,125 +222,130 @@ class OzonClient(BaseMarketplaceClient):
         Returns:
             list[MarketplaceOrder]: Список заказов
         """
-        return await self.get_orders_with_pagination(
+        orders, _has_next, _cursor = await self.get_orders_with_pagination(
             warehouse_id=warehouse_id,
             since=since,
             to=to,
             status=status,
-            limit=1000,
-        )[0]
+            limit=100,
+        )
+        return orders
     
     async def get_orders_unfulfilled_by_status(
         self,
         status: str,
         warehouse_id: Optional[str] = None,
-        limit: int = 1000,
-        offset: int = 0,
-    ) -> tuple[list[MarketplaceOrder], bool]:
+        limit: int = 100,
+        cursor: Optional[str] = None,
+    ) -> tuple[list[MarketplaceOrder], bool, Optional[str]]:
         """
         Получение необработанных FBS заказов Ozon по статусу.
 
-        Endpoint: POST /v3/posting/fbs/unfulfilled/list
+        Endpoint: POST /v4/posting/fbs/unfulfilled/list
+        Страница до 100 отправлений, следующая страница — cursor.
         """
-        orders, has_next = await self.get_orders_with_pagination(
+        return await self.get_orders_with_pagination(
             warehouse_id=warehouse_id,
             status=status,
             limit=limit,
-            offset=offset,
+            cursor=cursor,
         )
-        return orders, has_next
 
     async def get_orders_awaiting_deliver(
         self,
         warehouse_id: Optional[str] = None,
-        limit: int = 1000,
-        offset: int = 0,
-    ) -> tuple[list[MarketplaceOrder], bool]:
+        limit: int = 100,
+        cursor: Optional[str] = None,
+    ) -> tuple[list[MarketplaceOrder], bool, Optional[str]]:
         """
         Получение заказов в статусе "Ожидают отгрузки"
         
         Согласно ТЗ: для вкладки "Сборка" показываем только эти заказы.
         
-        Endpoint: POST /v3/posting/fbs/unfulfilled/list
+        Endpoint: POST /v4/posting/fbs/unfulfilled/list
         
         Args:
             warehouse_id: ID склада для фильтрации
-            limit: Лимит записей (max 1000)
-            offset: Смещение для пагинации
+            limit: Лимит записей (max 100)
+            cursor: Курсор следующей страницы
             
         Returns:
-            tuple: (список заказов, has_next)
+            tuple: (список заказов, has_next, cursor)
         """
-        orders, has_next = await self.get_orders_unfulfilled_by_status(
+        return await self.get_orders_unfulfilled_by_status(
             status="awaiting_deliver",
             warehouse_id=warehouse_id,
             limit=limit,
-            offset=offset,
+            cursor=cursor,
         )
-        return orders, has_next
 
     async def get_orders_delivered_or_delivering(
         self,
-        limit: int = 1000,
+        limit: int = 100,
         offset: int = 0,
         days_back: int = 30,
-    ) -> tuple[list[MarketplaceOrder], bool]:
+        cursor: Optional[str] = None,
+    ) -> tuple[list[MarketplaceOrder], bool, Optional[str]]:
         """
-        Получение заказов в статусе delivered или delivering.
-        Используется при синхронизации: unfulfilled/list не возвращает доставленные,
-        поэтому их нужно помечать DELIVERED (скрыть).
-        Endpoint: POST /v3/posting/fbs/list
-        Ozon API: PERIOD_IS_TOO_LONG при периоде >30 дней — days_back не более 30.
+        Заказы delivering и delivered, чтобы скрыть их из сборки.
+        Endpoint: POST /v4/posting/fbs/list. Период не больше года, страница до 100.
+        offset оставлен в сигнатуре и не используется: пагинация курсорная.
         """
+        del offset
         now = datetime.utcnow()
-        period_from = now - timedelta(days=days_back)
+        period_from = now - timedelta(days=min(max(days_back, 1), 365))
         iso_format = "%Y-%m-%dT%H:%M:%S.000Z"
-        # По док. irenicaa/ozon-seller: filter.since, filter.to (GetPostingFBSListFilter)
         filter_data: dict[str, Any] = {
             "since": period_from.strftime(iso_format),
             "to": now.strftime(iso_format),
+            "statuses": ["delivering", "delivered"],
         }
-        request_body = {
-            "dir": "asc",
+        request_body: dict[str, Any] = {
+            "sort_dir": "ASC",
             "filter": filter_data,
-            "limit": min(max(limit, 1), 1000),
-            "offset": offset,
+            "limit": min(max(limit, 1), 100),
             "with": {
                 "analytics_data": False,
                 "barcodes": False,
                 "financial_data": False,
-                "translit": False,
             },
         }
+        if cursor:
+            request_body["cursor"] = cursor
         logger.info(
-            "Fetching delivered/delivering orders from Ozon (fbs/list)",
-            extra={"filter": filter_data, "offset": offset},
+            "Fetching delivered/delivering orders from Ozon (v4 fbs/list)",
+            extra={"filter": filter_data, "cursor": bool(cursor)},
         )
         try:
             response = await self._request(
                 method="POST",
-                endpoint="/v3/posting/fbs/list",
+                endpoint="/v4/posting/fbs/list",
                 json_data=request_body,
             )
-            result = response.get("result", {})
-            postings = result.get("postings", [])
-            postings = [
-                p for p in postings
-                if p.get("status") in ("delivered", "delivering")
-            ]
-            has_next = len(postings) >= limit
+            postings, has_next, next_cursor = self._v4_posting_page(response)
             orders = self._parse_postings_to_orders(postings)
             logger.info(
                 f"Received {len(orders)} delivered/delivering orders from Ozon",
-                extra={"orders_count": len(orders)},
+                extra={"orders_count": len(orders), "has_next": has_next},
             )
-            return orders, has_next
+            return orders, has_next, next_cursor
         except Exception as e:
             logger.warning(
                 f"Could not fetch delivered orders from Ozon (fbs/list): {e}. "
                 "Delivered orders may not be marked as completed.",
             )
-            return [], False
+            return [], False, None
+
+    @staticmethod
+    def _v4_posting_page(response: dict) -> tuple[list, bool, Optional[str]]:
+        """v4 кладёт postings, has_next и cursor в корень ответа."""
+        postings = response.get("postings")
+        if postings is None and isinstance(response.get("result"), dict):
+            postings = response["result"].get("postings")
+        cursor = response.get("cursor")
+        if not isinstance(cursor, str) or not cursor.strip():
+            cursor = None
+        return list(postings or []), bool(response.get("has_next")), cursor
 
     async def get_orders_with_pagination(
         self,
@@ -348,94 +353,65 @@ class OzonClient(BaseMarketplaceClient):
         since: Optional[datetime] = None,
         to: Optional[datetime] = None,
         status: Optional[str] = None,
-        limit: int = 1000,
+        limit: int = 100,
         offset: int = 0,
         dir: str = "asc",
-    ) -> tuple[list[MarketplaceOrder], bool]:
+        cursor: Optional[str] = None,
+    ) -> tuple[list[MarketplaceOrder], bool, Optional[str]]:
         """
-        Получение FBS заказов с пагинацией
-        
-        Endpoint: POST /v3/posting/fbs/unfulfilled/list (официальная док. docs.ozon.ru)
-        Список необработанных отправлений. Период — не больше 1 года.
-        
-        Фильтр: cutoff_from/cutoff_to (дедлайн сборки). cutoff_to в будущем — новые заказы.
-        
-        Args:
-            warehouse_id: ID склада
-            since, to: Период (по умолчанию 365 дней назад, to = +30 дней)
-            status: Статус — передаётся в filter.status к Ozon API (серверная фильтрация)
-            limit: Лимит (max 1000)
-            offset: Смещение
-            dir: asc | desc
-            
-        Returns:
-            tuple: (список заказов, has_next)
+        Необработанные FBS-отправления.
+
+        Endpoint: POST /v4/posting/fbs/unfulfilled/list.
+        Период cutoff не больше года, страница не больше 100, дальше cursor.
+        offset оставлен в сигнатуре и не используется.
         """
+        del offset
         now = datetime.utcnow()
-        period_from = since or (now - timedelta(days=365))  # макс. 1 год по док. Ozon
-        period_to = to or (now + timedelta(days=30))  # +30 дней: новые заказы с дедлайном в будущем
+        period_from = since or (now - timedelta(days=335))
+        period_to = to or (now + timedelta(days=30))
+        if period_to - period_from > timedelta(days=365):
+            period_from = period_to - timedelta(days=365)
         iso_format = "%Y-%m-%dT%H:%M:%S.000Z"
 
-        # cutoff_from/cutoff_to — фильтр по времени сборки (дедлайн). cutoff_to в будущем — новые заказы.
-        # status передаём серверному API напрямую — Ozon /v3/posting/fbs/unfulfilled/list поддерживает
-        # filter.status (awaiting_packaging, awaiting_deliver и др.), поэтому фильтруем на стороне Ozon,
-        # а не у себя после получения ответа.
         filter_data: dict[str, Any] = {
             "cutoff_from": period_from.strftime(iso_format),
             "cutoff_to": period_to.strftime(iso_format),
         }
         if status:
-            filter_data["status"] = status
-        
-        request_body = {
-            "dir": dir.lower() if dir else "asc",
+            filter_data["statuses"] = [status]
+        if warehouse_id:
+            filter_data["warehouse_ids"] = [str(warehouse_id)]
+
+        request_body: dict[str, Any] = {
+            "sort_dir": "DESC" if str(dir).lower() == "desc" else "ASC",
             "filter": filter_data,
-            "limit": min(max(limit, 1), 1000),
-            "offset": offset,
+            "limit": min(max(limit, 1), 100),
             "with": {
                 "analytics_data": False,
                 "barcodes": True,
                 "financial_data": False,
-                "translit": False,
             },
         }
-        
+        if cursor:
+            request_body["cursor"] = cursor
+
         logger.info(
-            "Fetching FBS orders from Ozon (unfulfilled list)",
-            extra={"filter": filter_data, "offset": offset},
+            "Fetching FBS orders from Ozon (v4 unfulfilled list)",
+            extra={"filter": filter_data, "cursor": bool(cursor)},
         )
-        
+
         try:
             response = await self._request(
                 method="POST",
-                endpoint="/v3/posting/fbs/unfulfilled/list",
+                endpoint="/v4/posting/fbs/unfulfilled/list",
                 json_data=request_body,
             )
-            
-            result = response.get("result", {})
-            postings = result.get("postings", [])
-            # unfulfilled/list возвращает count, не has_next — считаем по количеству
-            has_next = len(postings) >= limit
-
-            # warehouse_id фильтруем на нашей стороне (API не поддерживает)
-            if warehouse_id:
-                try:
-                    wh_id = int(warehouse_id)
-                    postings = [
-                        p for p in postings
-                        if (p.get("delivery_method") or {}).get("warehouse_id") == wh_id
-                    ]
-                except ValueError:
-                    logger.warning(f"Invalid warehouse_id: {warehouse_id}")
-            
+            postings, has_next, next_cursor = self._v4_posting_page(response)
             logger.info(
                 f"Received {len(postings)} orders from Ozon",
                 extra={"orders_count": len(postings), "has_next": has_next},
             )
-            
-            orders = self._parse_postings_to_orders(postings)
-            return orders, has_next
-            
+            return self._parse_postings_to_orders(postings), has_next, next_cursor
         except Exception as e:
             logger.error(
                 "Failed to fetch orders from Ozon",
