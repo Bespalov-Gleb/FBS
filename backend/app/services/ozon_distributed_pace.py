@@ -18,33 +18,79 @@ from app.utils.cache import get_redis_client
 from app.utils.logger import logger
 
 _pace_fallback_logged = False
+_local_guard = asyncio.Lock()
+_local_next: dict[str, float] = {}
+
+
+def pace_wait_ms(now_ms: int, last_ms: int, gap_ms: int) -> int:
+    """Сколько миллисекунд ждать, чтобы новый запрос начался не раньше last + gap."""
+    if last_ms <= 0 or gap_ms <= 0:
+        return 0
+    return max(0, last_ms + gap_ms - now_ms)
+
+
+def _redis_now_ms(client) -> int:
+    sec, micro = client.time()
+    return int(sec) * 1000 + int(micro) // 1000
 
 
 def _redis_pace_sync(client_id: str, interval_ms: int, spin_cap_sec: float) -> None:
+    """Занять слот: следующий запрос этого Client-Id стартует не раньше чем через interval_ms."""
     r = get_redis_client()
-    key = f"fbs:ozon:pace:{client_id}"
+    key = f"fbs:ozon:last:{client_id}"
+    lock = f"fbs:ozon:lock:{client_id}"
     deadline = time.monotonic() + spin_cap_sec
     step = max(0.02, min(interval_ms / 4000.0, 0.12))
     while time.monotonic() < deadline:
-        ok = r.set(name=key, value="1", nx=True, px=interval_ms)
-        if ok:
-            return
-        time.sleep(step)
+        if not r.set(lock, "1", nx=True, px=2000):
+            time.sleep(step)
+            continue
+        wait_ms = 0
+        try:
+            now_ms = _redis_now_ms(r)
+            last_raw = r.get(key)
+            last_ms = int(last_raw) if last_raw else 0
+            wait_ms = pace_wait_ms(now_ms, last_ms, interval_ms)
+            if wait_ms <= 0:
+                r.set(key, str(now_ms), px=120_000)
+                return
+        finally:
+            r.delete(lock)
+        time.sleep(min(wait_ms / 1000.0, 0.2))
     raise TimeoutError(f"Ozon Redis pace: не удалось занять слот за {spin_cap_sec}s")
 
 
-async def acquire_ozon_pace_slot(client_id: Optional[str]) -> None:
+async def _local_pace(client_id: str, interval_ms: int) -> None:
+    """Та же пауза внутри процесса, если Redis недоступен."""
+    async with _local_guard:
+        now = time.monotonic()
+        start = max(now, _local_next.get(client_id, 0.0))
+        _local_next[client_id] = start + interval_ms / 1000.0
+        wait = start - now
+    if wait > 0:
+        await asyncio.sleep(wait)
+
+
+async def acquire_ozon_pace_slot(
+    client_id: Optional[str],
+    min_interval_ms: Optional[int] = None,
+) -> None:
     """
     Подождать глобально (Redis), пока можно сделать следующий запрос к Ozon для этого Client-Id.
-    При ошибке Redis — один warning и продолжаем (остаётся только локальный лимит в OzonClient).
+
+    min_interval_ms — пауза именно этого вызова от предыдущего запроса кабинета.
+    Этикетка package-label передаёт больший интервал, чем обычные методы.
+    При ошибке Redis остаётся локальная пауза в процессе.
     """
     global _pace_fallback_logged
     if not client_id or not str(client_id).strip():
         return
-    if not settings.OZON_REDIS_PACE_ENABLED:
-        return
-    interval_ms = max(80, min(int(settings.OZON_REDIS_PACE_MS), 10_000))
+    interval_ms = int(settings.OZON_REDIS_PACE_MS if min_interval_ms is None else min_interval_ms)
+    interval_ms = max(80, min(interval_ms, 10_000))
     cid = str(client_id).strip()
+    if not settings.OZON_REDIS_PACE_ENABLED:
+        await _local_pace(cid, interval_ms)
+        return
     try:
         await asyncio.to_thread(
             _redis_pace_sync,
@@ -59,6 +105,7 @@ async def acquire_ozon_pace_slot(client_id: Optional[str]) -> None:
                 e,
             )
             _pace_fallback_logged = True
+        await _local_pace(cid, interval_ms)
 
 
 def should_skip_ozon_warehouse_list(marketplace_id: int) -> bool:
