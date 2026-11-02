@@ -14,6 +14,8 @@ import time
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
+import httpx
+
 from app.config import settings
 from app.core.exceptions import MarketplaceAPIException, RateLimitException
 from app.services.marketplace.base import (
@@ -25,9 +27,12 @@ from app.services.ozon_distributed_pace import acquire_ozon_pace_slot
 from app.utils.cache import cache_get, cache_set
 from app.utils.logger import logger
 
-OZON_LABEL_ENDPOINT = "/v2/posting/fbs/package-label"
-OZON_LABEL_RATE_LIMIT_MESSAGE = (
-    "Ozon ограничил печать этикеток. Подождите немного и нажмите печать ещё раз."
+# С 2 ноября 2026 старый POST /v2/posting/fbs/package-label отключён.
+OZON_LABEL_CREATE_ENDPOINT = "/v3/posting/fbs/package-label/create"
+OZON_LABEL_GET_ENDPOINT = "/v2/posting/fbs/package-label/get"
+OZON_LABEL_POLL_DELAYS_SEC = (0, 1, 2, 3, 5, 8)
+OZON_LABEL_NOT_READY_MESSAGE = (
+    "Этикетка Ozon ещё не готова. Подождите немного и нажмите печать ещё раз."
 )
 
 
@@ -70,6 +75,84 @@ def _store_cached_ozon_label(
         logger.warning("Ozon label cache store failed for %s: %s", posting_number, exc)
 
 
+def _pick_label_task_id(payload: dict[str, Any]) -> int:
+    tasks = payload.get("tasks")
+    if not isinstance(tasks, list):
+        result = payload.get("result")
+        tasks = result.get("tasks") if isinstance(result, dict) else None
+    chosen: Optional[dict[str, Any]] = None
+    if isinstance(tasks, list):
+        for task in tasks:
+            if isinstance(task, dict) and task.get("task_type") == "small_label":
+                chosen = task
+                break
+        if chosen is None:
+            chosen = next((task for task in tasks if isinstance(task, dict)), None)
+    task_id = (chosen or {}).get("task_id")
+    if not task_id:
+        raise MarketplaceAPIException(
+            message="Ozon не вернул задание на этикетку",
+            marketplace="Ozon",
+            detail="Ozon не вернул задание на этикетку",
+            status_code=502,
+        )
+    return int(task_id)
+
+
+def _label_payload_body(payload: dict[str, Any]) -> dict[str, Any]:
+    if "file_url" in payload or "status" in payload or "error" in payload:
+        return payload
+    result = payload.get("result")
+    if isinstance(result, dict):
+        return result
+    return payload
+
+
+def _label_file_url(payload: dict[str, Any], posting_number: str) -> Optional[str]:
+    """Ссылка на PDF, если задание уже готово. None — ещё рано опрашивать снова."""
+    body = _label_payload_body(payload)
+    error = body.get("error")
+    if isinstance(error, dict) and (error.get("message") or error.get("code")):
+        raise MarketplaceAPIException(
+            message="Ozon не сформировал этикетку",
+            marketplace="Ozon",
+            detail=str(error.get("message") or error.get("code")),
+            status_code=502,
+        )
+    status = body.get("status") if isinstance(body.get("status"), dict) else {}
+    for item in status.get("unprinted_postings") or []:
+        number = item.get("posting_number") if isinstance(item, dict) else item
+        if str(number) == posting_number:
+            return None
+    url = body.get("file_url")
+    if not isinstance(url, str) or not url.startswith("https://"):
+        return None
+    code = str(status.get("code") or "").lower()
+    if code in ("pending", "in_progress", "processing", "waiting"):
+        return None
+    return url
+
+
+async def _download_ozon_label_pdf(url: str) -> bytes:
+    if not url.startswith("https://"):
+        raise MarketplaceAPIException(
+            message="Ozon вернул некорректную ссылку на этикетку",
+            marketplace="Ozon",
+            detail="Ozon вернул некорректную ссылку на этикетку",
+            status_code=502,
+        )
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+        response = await client.get(url)
+    if response.status_code >= 400 or not response.content:
+        raise MarketplaceAPIException(
+            message="Не удалось скачать этикетку Ozon",
+            marketplace="Ozon",
+            detail=f"Не удалось скачать этикетку Ozon: HTTP {response.status_code}",
+            status_code=502,
+        )
+    return response.content
+
+
 class OzonClient(BaseMarketplaceClient):
     """
     Клиент для работы с Ozon Seller API
@@ -77,7 +160,7 @@ class OzonClient(BaseMarketplaceClient):
     Endpoints:
     - POST /v4/posting/fbs/unfulfilled/list - Список необработанных отправлений
     - POST /v3/posting/fbs/get - Детали заказа + штрихкоды (upper_barcode, lower_barcode)
-    - POST /v2/posting/fbs/package-label - Этикетка ФБС (PDF, стикер отправления)
+    - POST /v3/posting/fbs/package-label/create + /v2/posting/fbs/package-label/get - Этикетка ФБС
     - POST /v3/posting/fbs/ship - Подтверждение отгрузки
     - POST /v1/warehouse/list - Список складов
 
@@ -148,7 +231,9 @@ class OzonClient(BaseMarketplaceClient):
         json_data: Optional[dict[str, Any]] = None,
     ) -> bytes:
         label_gap_ms = (
-            int(settings.OZON_LABEL_PACE_MS) if endpoint == OZON_LABEL_ENDPOINT else None
+            int(settings.OZON_LABEL_PACE_MS)
+            if endpoint in (OZON_LABEL_CREATE_ENDPOINT, OZON_LABEL_GET_ENDPOINT)
+            else None
         )
         local_interval = self._ozon_min_interval
         if label_gap_ms:
@@ -558,68 +643,68 @@ class OzonClient(BaseMarketplaceClient):
     
     async def get_order_label(self, posting_number: str) -> bytes:
         """
-        Получение этикетки FBS заказа (PDF).
+        Этикетка FBS: задание на формирование и скачивание готового PDF.
 
-        Endpoint: POST /v2/posting/fbs/package-label
+        POST /v3/posting/fbs/package-label/create
+        POST /v2/posting/fbs/package-label/get
 
-        Успешный PDF кэшируется по номеру отправления. При 429 «per second»
-        запрос повторяется: перед каждой попыткой пауза OZON_LABEL_PACE_MS.
+        Успешный PDF кэшируется по номеру отправления.
         """
         cached = _load_cached_ozon_label(self.client_id, posting_number)
         if cached:
             logger.info("Ozon label cache hit for posting %s", posting_number)
             return cached
 
-        request_body = {
-            "posting_number": [posting_number]
-        }
-        attempts = max(1, int(settings.OZON_LABEL_MAX_ATTEMPTS))
-        logger.info(f"Fetching label for Ozon posting {posting_number}")
+        logger.info("Fetching label for Ozon posting %s", posting_number)
+        try:
+            created = await self._request(
+                method="POST",
+                endpoint=OZON_LABEL_CREATE_ENDPOINT,
+                json_data={"posting_numbers": [posting_number]},
+            )
+            task_id = _pick_label_task_id(created)
+            content = await self._wait_ozon_label_pdf(task_id, posting_number)
+        except MarketplaceAPIException:
+            raise
+        except Exception as e:
+            logger.error(
+                "Failed to fetch label for Ozon posting %s",
+                posting_number,
+                extra={"error": str(e)},
+                exc_info=True,
+            )
+            raise MarketplaceAPIException(
+                message=f"Failed to fetch Ozon label: {str(e)}",
+                marketplace=self.marketplace_name,
+                detail=str(e),
+            ) from e
 
-        last_rate_limit: Optional[MarketplaceAPIException] = None
-        for attempt in range(1, attempts + 1):
-            try:
-                content = await self._request_content(
-                    method="POST",
-                    endpoint=OZON_LABEL_ENDPOINT,
-                    json_data=request_body,
-                )
-                logger.info(
-                    f"Received label for posting {posting_number}",
-                    extra={"size_bytes": len(content)},
-                )
-                _store_cached_ozon_label(self.client_id, posting_number, content)
-                return content
-            except MarketplaceAPIException as exc:
-                if exc.status_code != 429:
-                    raise
-                last_rate_limit = exc
-                if attempt >= attempts:
-                    break
-                logger.warning(
-                    "Ozon package-label 429 for %s, повтор %s/%s",
-                    posting_number,
-                    attempt,
-                    attempts,
-                )
-            except Exception as e:
-                logger.error(
-                    f"Failed to fetch label for Ozon posting {posting_number}",
-                    extra={"error": str(e)},
-                    exc_info=True,
-                )
-                raise MarketplaceAPIException(
-                    message=f"Failed to fetch Ozon label: {str(e)}",
-                    marketplace=self.marketplace_name,
-                    detail=str(e),
-                ) from e
+        logger.info(
+            "Received label for posting %s",
+            posting_number,
+            extra={"size_bytes": len(content)},
+        )
+        _store_cached_ozon_label(self.client_id, posting_number, content)
+        return content
 
+    async def _wait_ozon_label_pdf(self, task_id: int, posting_number: str) -> bytes:
+        for delay in OZON_LABEL_POLL_DELAYS_SEC:
+            if delay:
+                await asyncio.sleep(delay)
+            payload = await self._request(
+                method="POST",
+                endpoint=OZON_LABEL_GET_ENDPOINT,
+                json_data={"task_id": task_id},
+            )
+            file_url = _label_file_url(payload, posting_number)
+            if file_url:
+                return await _download_ozon_label_pdf(file_url)
         raise MarketplaceAPIException(
-            message="Ozon ограничил печать этикеток",
+            message=OZON_LABEL_NOT_READY_MESSAGE,
             marketplace=self.marketplace_name,
-            detail=OZON_LABEL_RATE_LIMIT_MESSAGE,
-            status_code=429,
-        ) from last_rate_limit
+            detail=OZON_LABEL_NOT_READY_MESSAGE,
+            status_code=503,
+        )
     
     async def ship_posting(
         self,
