@@ -229,15 +229,23 @@ export default function OrderModal({ order, marketplaces, autoPrintKizDuplicate 
 
     try {
       const lw = labelFormatProp === '80mm' ? 80 : 58;
-      // Загружаем оба blob одновременно; при выключенном агенте открываем окна синхронно
-      const [barcodesBlob, blob] = await Promise.all([
-        ordersApi.getBarcodesPdfBlob(order.id, lw).catch(() => null),
-        ordersApi.getLabelBlob(
-          order.id,
-          labelFormat,
-          order.marketplace_type === 'wildberries' ? labelWidth : undefined,
-        ),
-      ]);
+      // Ozon package-label режется лимитом «раз в секунду»: этикетку запрашиваем
+      // раньше штрихкода, чтобы два вызова не попали в одно окно.
+      let barcodesBlob: Blob | null = null;
+      let blob: Blob;
+      if (order.marketplace_type === 'ozon') {
+        blob = await ordersApi.getLabelBlob(order.id, labelFormat);
+        barcodesBlob = await ordersApi.getBarcodesPdfBlob(order.id, lw).catch(() => null);
+      } else {
+        [barcodesBlob, blob] = await Promise.all([
+          ordersApi.getBarcodesPdfBlob(order.id, lw).catch(() => null),
+          ordersApi.getLabelBlob(
+            order.id,
+            labelFormat,
+            order.marketplace_type === 'wildberries' ? labelWidth : undefined,
+          ),
+        ]);
+      }
       if (agentAvailable) {
         if (barcodesBlob) await printViaAgent(barcodesBlob, defaultPrinter, 'noscale', 'barcode');
         await printViaAgent(blob, defaultPrinter, labelPrintSettingsAgent, 'fbs');

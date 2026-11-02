@@ -119,6 +119,11 @@ class Settings(BaseSettings):
     OZON_REDIS_PACE_ENABLED: bool = True
     OZON_REDIS_PACE_MS: int = 380
     OZON_REDIS_PACE_SPIN_CAP_SEC: float = 90.0
+    # package-label режется отдельно: не чаще одного запроса в секунду.
+    # Перед этикеткой ждём дольше, чем перед обычным методом, и несколько раз повторяем 429.
+    OZON_LABEL_PACE_MS: int = 1500
+    OZON_LABEL_MAX_ATTEMPTS: int = 5
+    OZON_LABEL_CACHE_TTL_SEC: int = 86400
 
     # Ozon: реже звать /v1/warehouse/list (список складов меняется редко)
     OZON_WAREHOUSE_SYNC_CACHE_SEC: int = 900

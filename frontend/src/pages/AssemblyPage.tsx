@@ -27,6 +27,32 @@ import { isPrintAgentAvailable, printViaAgent } from '../api/printAgent';
 import { openBlobInNewWindow, openBlobInSameTab } from '../utils/printUtils';
 import type { Order } from '../types/api';
 
+async function readPrintError(err: unknown): Promise<string> {
+  const res = err && typeof err === 'object' && 'response' in err
+    ? (err as { response?: { data?: unknown } }).response
+    : null;
+  let data = res?.data;
+  if (data instanceof Blob) {
+    try {
+      const text = await data.text();
+      if (text.trim().startsWith('{')) data = JSON.parse(text);
+      else return text.slice(0, 200) || 'Ошибка печати этикетки';
+    } catch {
+      return 'Ошибка печати этикетки';
+    }
+  }
+  if (data && typeof data === 'object') {
+    const obj = data as Record<string, unknown>;
+    const block = obj.error;
+    if (block && typeof block === 'object') {
+      const msg = (block as Record<string, unknown>).detail ?? (block as Record<string, unknown>).message;
+      if (typeof msg === 'string' && msg) return msg;
+    }
+    if (typeof obj.detail === 'string' && obj.detail) return obj.detail;
+  }
+  return 'Ошибка печати этикетки';
+}
+
 export default function AssemblyPage() {
   const queryClient = useQueryClient();
 
@@ -261,16 +287,23 @@ export default function AssemblyPage() {
         try {
           const labelWidthForBarcode =
             order.marketplace_type === 'ozon' ? ozonWidth : wbWidth;
-          // Загружаем оба blob одновременно; при выключенном агенте открываем окна синхронно
-          const [barcodesBlob, labelBlob] = await Promise.all([
-            ordersApi.getBarcodesPdfBlob(order.id, labelWidthForBarcode).catch(() => null),
-            ordersApi.getLabelBlob(
-              order.id,
-              labelFormat,
-              order.marketplace_type === 'wildberries' ? wbWidth : undefined,
-              order.marketplace_type === 'wildberries' ? wbHeight : undefined,
-            ),
-          ]);
+          // Ozon: сначала этикетка FBS, потом штрихкод. Иначе package-label ловит 429.
+          let barcodesBlob: Blob | null = null;
+          let labelBlob: Blob;
+          if (order.marketplace_type === 'ozon') {
+            labelBlob = await ordersApi.getLabelBlob(order.id, labelFormat);
+            barcodesBlob = await ordersApi.getBarcodesPdfBlob(order.id, labelWidthForBarcode).catch(() => null);
+          } else {
+            [barcodesBlob, labelBlob] = await Promise.all([
+              ordersApi.getBarcodesPdfBlob(order.id, labelWidthForBarcode).catch(() => null),
+              ordersApi.getLabelBlob(
+                order.id,
+                labelFormat,
+                order.marketplace_type === 'wildberries' ? wbWidth : undefined,
+                order.marketplace_type === 'wildberries' ? wbHeight : undefined,
+              ),
+            ]);
+          }
           if (agentAvailable) {
             if (barcodesBlob) await printBlob(barcodesBlob, { printScale: 'noscale', jobType: 'barcode' });
             await printBlob(labelBlob, { noFallback: !!barcodesBlob, printScale: labelPrintSettingsAgent, jobType: 'fbs' });
@@ -281,8 +314,8 @@ export default function AssemblyPage() {
               setSnackbar({ message: 'ФБС этикетка не сформировалась (labelBlob пустой)' });
             }
           }
-        } catch {
-          // игнорируем ошибки печати
+        } catch (err: unknown) {
+          setSnackbar({ message: await readPrintError(err) });
         }
       }
     } catch (err: unknown) {
