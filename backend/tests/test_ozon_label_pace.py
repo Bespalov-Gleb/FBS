@@ -1,10 +1,12 @@
-"""Пауза, повтор и кэш этикетки Ozon package-label."""
+"""Пауза и получение этикетки Ozon через задание create/get."""
 import pytest
 
 from app.core.exceptions import MarketplaceAPIException
 from app.services.marketplace.ozon import (
-    OZON_LABEL_RATE_LIMIT_MESSAGE,
+    OZON_LABEL_NOT_READY_MESSAGE,
     OzonClient,
+    _label_file_url,
+    _pick_label_task_id,
 )
 from app.services.ozon_distributed_pace import _redis_pace_sync, pace_wait_ms
 
@@ -54,28 +56,51 @@ def test_redis_pace_holds_label_gap(monkeypatch) -> None:
     assert sum(slept) == pytest.approx(1.5, abs=0.05)
 
 
-def _rate_limit() -> MarketplaceAPIException:
-    return MarketplaceAPIException(
-        message="Ozon API error: HTTP 429",
-        marketplace="Ozon",
-        detail="You have reached request rate limit per second",
-        status_code=429,
-    )
+def test_pick_small_label_task() -> None:
+    payload = {
+        "tasks": [
+            {"task_id": 1, "task_type": "big_label"},
+            {"task_id": 2, "task_type": "small_label"},
+        ]
+    }
+    assert _pick_label_task_id(payload) == 2
+
+
+def test_file_url_waits_while_posting_unprinted() -> None:
+    payload = {
+        "file_url": "https://cdn.example/label.pdf",
+        "status": {
+            "code": "completed",
+            "unprinted_postings": [{"posting_number": "0135467400-0220-1", "message": "not ready"}],
+        },
+    }
+    assert _label_file_url(payload, "0135467400-0220-1") is None
+    assert _label_file_url(payload, "other") == "https://cdn.example/label.pdf"
 
 
 @pytest.mark.asyncio
-async def test_label_retries_429_then_uses_cache(monkeypatch) -> None:
+async def test_label_create_get_then_cache(monkeypatch) -> None:
     client = OzonClient(api_key="key", client_id="8816")
     calls: list[str] = []
     store: dict[str, bytes] = {}
 
-    async def request_content(method, endpoint, json_data=None):
+    async def request(method, endpoint, json_data=None, max_retries=3):
         calls.append(endpoint)
-        if len(calls) < 3:
-            raise _rate_limit()
-        return b"%PDF-1.4 cached"
+        if endpoint.endswith("/create"):
+            assert json_data == {"posting_numbers": ["0135467400-0220-1"]}
+            return {"tasks": [{"task_id": 42, "task_type": "small_label"}]}
+        assert json_data == {"task_id": 42}
+        return {
+            "file_url": "https://cdn.ozon.ru/small_label/42.pdf",
+            "status": {"code": "completed", "unprinted_postings": []},
+        }
 
-    monkeypatch.setattr(client, "_request_content", request_content)
+    async def download(url: str) -> bytes:
+        assert url.startswith("https://")
+        return b"%PDF-1.4 official"
+
+    monkeypatch.setattr(client, "_request", request)
+    monkeypatch.setattr("app.services.marketplace.ozon._download_ozon_label_pdf", download)
     monkeypatch.setattr(
         "app.services.marketplace.ozon._load_cached_ozon_label",
         lambda client_id, posting: store.get(posting),
@@ -84,32 +109,66 @@ async def test_label_retries_429_then_uses_cache(monkeypatch) -> None:
         "app.services.marketplace.ozon._store_cached_ozon_label",
         lambda client_id, posting, content: store.__setitem__(posting, content),
     )
-    monkeypatch.setattr("app.services.marketplace.ozon.settings.OZON_LABEL_MAX_ATTEMPTS", 5)
 
     pdf = await client.get_order_label("0135467400-0220-1")
-    assert pdf.startswith(b"%PDF")
-    assert len(calls) == 3
+    assert pdf == b"%PDF-1.4 official"
+    assert calls == [
+        "/v3/posting/fbs/package-label/create",
+        "/v2/posting/fbs/package-label/get",
+    ]
 
     again = await client.get_order_label("0135467400-0220-1")
     assert again == pdf
-    assert len(calls) == 3
+    assert len(calls) == 2
 
 
 @pytest.mark.asyncio
-async def test_label_does_not_retry_other_errors(monkeypatch) -> None:
+async def test_label_polls_until_file_is_ready(monkeypatch) -> None:
     client = OzonClient(api_key="key", client_id="8816")
-    calls = {"n": 0}
+    gets = {"n": 0}
 
-    async def request_content(method, endpoint, json_data=None):
-        calls["n"] += 1
-        raise MarketplaceAPIException(
-            message="Ozon API error: HTTP 400",
-            marketplace="Ozon",
-            detail="label not allowed for delivered postings",
-            status_code=400,
-        )
+    async def request(method, endpoint, json_data=None, max_retries=3):
+        if endpoint.endswith("/create"):
+            return {"tasks": [{"task_id": 7, "task_type": "small_label"}]}
+        gets["n"] += 1
+        if gets["n"] == 1:
+            return {"status": {"code": "in_progress", "unprinted_postings": []}}
+        return {
+            "file_url": "https://cdn.ozon.ru/small_label/7.pdf",
+            "status": {"code": "completed"},
+        }
 
-    monkeypatch.setattr(client, "_request_content", request_content)
+    async def download(url: str) -> bytes:
+        return b"%PDF-ready"
+
+    monkeypatch.setattr(client, "_request", request)
+    monkeypatch.setattr("app.services.marketplace.ozon._download_ozon_label_pdf", download)
+    monkeypatch.setattr("app.services.marketplace.ozon.asyncio.sleep", _no_sleep)
+    monkeypatch.setattr(
+        "app.services.marketplace.ozon._load_cached_ozon_label",
+        lambda client_id, posting: None,
+    )
+    monkeypatch.setattr(
+        "app.services.marketplace.ozon._store_cached_ozon_label",
+        lambda client_id, posting, content: None,
+    )
+
+    pdf = await client.get_order_label("0135467400-0220-1")
+    assert pdf == b"%PDF-ready"
+    assert gets["n"] == 2
+
+
+@pytest.mark.asyncio
+async def test_label_not_ready_after_polls(monkeypatch) -> None:
+    client = OzonClient(api_key="key", client_id="8816")
+
+    async def request(method, endpoint, json_data=None, max_retries=3):
+        if endpoint.endswith("/create"):
+            return {"tasks": [{"task_id": 7, "task_type": "small_label"}]}
+        return {"status": {"code": "in_progress"}}
+
+    monkeypatch.setattr(client, "_request", request)
+    monkeypatch.setattr("app.services.marketplace.ozon.asyncio.sleep", _no_sleep)
     monkeypatch.setattr(
         "app.services.marketplace.ozon._load_cached_ozon_label",
         lambda client_id, posting: None,
@@ -117,28 +176,9 @@ async def test_label_does_not_retry_other_errors(monkeypatch) -> None:
 
     with pytest.raises(MarketplaceAPIException) as exc:
         await client.get_order_label("0135467400-0220-1")
-    assert exc.value.status_code == 400
-    assert calls["n"] == 1
+    assert exc.value.status_code == 503
+    assert exc.value.detail == OZON_LABEL_NOT_READY_MESSAGE
 
 
-@pytest.mark.asyncio
-async def test_label_429_after_attempts_is_russian(monkeypatch) -> None:
-    client = OzonClient(api_key="key", client_id="8816")
-    calls = {"n": 0}
-
-    async def request_content(method, endpoint, json_data=None):
-        calls["n"] += 1
-        raise _rate_limit()
-
-    monkeypatch.setattr(client, "_request_content", request_content)
-    monkeypatch.setattr(
-        "app.services.marketplace.ozon._load_cached_ozon_label",
-        lambda client_id, posting: None,
-    )
-    monkeypatch.setattr("app.services.marketplace.ozon.settings.OZON_LABEL_MAX_ATTEMPTS", 4)
-
-    with pytest.raises(MarketplaceAPIException) as exc:
-        await client.get_order_label("0135467400-0220-1")
-    assert exc.value.status_code == 429
-    assert exc.value.detail == OZON_LABEL_RATE_LIMIT_MESSAGE
-    assert calls["n"] == 4
+async def _no_sleep(_delay: float) -> None:
+    return None
